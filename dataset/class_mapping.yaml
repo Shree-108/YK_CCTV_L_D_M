@@ -1,0 +1,104 @@
+# Original 25 classes mapping for Litter Detection System
+mapping:
+  - original_class_id: 0
+    original_class_name: chips_packet
+    target_class_id: 0
+    target_class_name: chips_packet
+  - original_class_id: 1
+    original_class_name: food_wrapper
+    target_class_id: 1
+    target_class_name: plastic_wrapper
+  - original_class_id: 2
+    original_class_name: plastic_packaging
+    target_class_id: 2
+    target_class_name: plastic_packaging
+  - original_class_id: 3
+    original_class_name: plastic_bag
+    target_class_id: 3
+    target_class_name: plastic_bag
+  - original_class_id: 4
+    original_class_name: plastic_bottle
+    target_class_id: 4
+    target_class_name: plastic_bottle
+  - original_class_id: 5
+    original_class_name: disposable_cup
+    target_class_id: 5
+    target_class_name: plastic_cup
+  - original_class_id: 6
+    original_class_name: metal_can
+    target_class_id: 6
+    target_class_name: metal_can
+  - original_class_id: 7
+    original_class_name: paper_scrap
+    target_class_id: 7
+    target_class_name: paper
+  - original_class_id: 8
+    original_class_name: cardboard_box
+    target_class_id: 8
+    target_class_name: cardboard
+  - original_class_id: 9
+    original_class_name: cigarette_butt
+    target_class_id: 9
+    target_class_name: cigarette_butt
+  - original_class_id: 10
+    original_class_name: glass_bottle
+    target_class_id: 10
+    target_class_name: glass_bottle
+  - original_class_id: 11
+    original_class_name: styrofoam_piece
+    target_class_id: 11
+    target_class_name: styrofoam
+  - original_class_id: 12
+    original_class_name: plastic_utensil
+    target_class_id: 12
+    target_class_name: plastic_utensil
+  - original_class_id: 13
+    original_class_name: straw
+    target_class_id: 13
+    target_class_name: plastic_straw
+  - original_class_id: 14
+    original_class_name: mask
+    target_class_id: 14
+    target_class_name: face_mask
+  - original_class_id: 15
+    original_class_name: paper_cup
+    target_class_id: 15
+    target_class_name: paper_cup
+  - original_class_id: 16
+    original_class_name: juice_box
+    target_class_id: 16
+    target_class_name: tetra_pack
+  - original_class_id: 17
+    original_class_name: receipt
+    target_class_id: 17
+    target_class_name: paper
+  - original_class_id: 18
+    original_class_name: tissue
+    target_class_id: 18
+    target_class_name: paper
+  - original_class_id: 19
+    original_class_name: bottle_cap
+    target_class_id: 19
+    target_class_name: plastic_cap
+  - original_class_id: 20
+    original_class_name: plastic_container
+    target_class_id: 20
+    target_class_name: plastic_container
+  - original_class_id: 21
+    original_class_name: candy_wrapper
+    target_class_id: 21
+    target_class_name: plastic_wrapper
+  - original_class_id: 22
+    original_class_name: foil
+    target_class_id: 22
+    target_class_name: metal_foil
+  - original_class_id: 23
+    original_class_name: rubber_glove
+    target_class_id: 23
+    target_class_name: rubber_glove
+  - original_class_id: 24
+    original_class_name: unknown_litter
+    target_class_id: 24
+    target_class_name: unclassified_litter
+
+# Note: The mapping merges duplicate/semantic equivalents (e.g. tissue/receipt -> paper, candy_wrapper -> plastic_wrapper).

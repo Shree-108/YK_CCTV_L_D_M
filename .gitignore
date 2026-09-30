@@ -1,0 +1,45 @@
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
+
+# Environment variables
+.env*.local
+
+# Common ignores
+node_modules
+.next/
+.DS_Store
+# --- litter monitor ---
+.env
+.env.*
+!.env.example
+storage/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.pt
+*.pkl
+*.db
+*.db-shm
+*.db-wal
+runs/
+backend/runs/
+storage/
+dataset/**/images/
+dataset/**/labels/
+dataset/**/review/
+models/open_vocab/
+.claude/
+
+# --- large / derived artefacts (kept out of git) ---
+runs/
+tsconfig.tsbuildinfo
+*.pt
+!models/litter_yolo/v3_store_cctv/best.pt
+dataset/**/images/
+dataset/**/*.cache
+dataset/**/labels_source.json

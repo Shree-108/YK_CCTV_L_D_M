@@ -1,0 +1,164 @@
+{
+  "_comment": "Class metadata for all 25 legacy classes (preserved). The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
+  "classes": {
+    "chips_packet": {
+      "priority": "critical",
+      "bin": "general"
+    },
+    "food_wrapper": {
+      "priority": "high",
+      "bin": "general"
+    },
+    "plastic_bottle": {
+      "priority": "medium",
+      "bin": "plastic"
+    },
+    "plastic_cup": {
+      "priority": "medium",
+      "bin": "plastic"
+    },
+    "metal_can": {
+      "priority": "medium",
+      "bin": "metal"
+    },
+    "paper": {
+      "priority": "medium",
+      "bin": "paper"
+    },
+    "cardboard": {
+      "priority": "low",
+      "bin": "paper"
+    },
+    "plastic_bag": {
+      "priority": "critical",
+      "bin": "general"
+    },
+    "food_container": {
+      "priority": "high",
+      "bin": "general"
+    },
+    "tissue": {
+      "priority": "low",
+      "bin": "general"
+    },
+    "cigarette_packet": {
+      "priority": "high",
+      "bin": "general"
+    },
+    "plastic_packaging": {
+      "priority": "high",
+      "bin": "plastic"
+    },
+    "other_litter": {
+      "priority": "low",
+      "bin": "general"
+    },
+    "cigarette_butt": {
+      "priority": "high",
+      "bin": "general"
+    },
+    "bottle_cap": {
+      "priority": "low",
+      "bin": "metal"
+    },
+    "straw": {
+      "priority": "medium",
+      "bin": "plastic"
+    },
+    "carton": {
+      "priority": "low",
+      "bin": "paper"
+    },
+    "paper_cup": {
+      "priority": "low",
+      "bin": "general"
+    },
+    "glass_bottle": {
+      "priority": "critical",
+      "bin": "glass"
+    },
+    "lid": {
+      "priority": "low",
+      "bin": "plastic"
+    },
+    "styrofoam": {
+      "priority": "high",
+      "bin": "general"
+    },
+    "foil": {
+      "priority": "low",
+      "bin": "metal"
+    },
+    "plastic_film": {
+      "priority": "medium",
+      "bin": "plastic"
+    },
+    "pop_tab": {
+      "priority": "low",
+      "bin": "metal"
+    },
+    "cutlery": {
+      "priority": "medium",
+      "bin": "plastic"
+    }
+  },
+  "priority_colors": {
+    "critical": "#f87171",
+    "high": "#fb923c",
+    "medium": "#fbbf24",
+    "low": "#34d399"
+  },
+  "similarity_groups": {
+    "soft_packaging": [
+      "chips_packet",
+      "food_wrapper",
+      "plastic_packaging",
+      "plastic_film",
+      "cigarette_packet",
+      "plastic_bag",
+      "foil"
+    ],
+    "cups_containers": [
+      "plastic_cup",
+      "paper_cup",
+      "food_container",
+      "styrofoam",
+      "lid"
+    ],
+    "bottles_cans": [
+      "plastic_bottle",
+      "glass_bottle",
+      "metal_can",
+      "bottle_cap",
+      "pop_tab"
+    ],
+    "paper_like": [
+      "paper",
+      "cardboard",
+      "carton",
+      "tissue"
+    ],
+    "small_items": [
+      "cigarette_butt",
+      "straw",
+      "cutlery",
+      "other_litter"
+    ]
+  },
+  "report_groups": {
+    "chips_packet": [
+      "chips_packet"
+    ],
+    "wrapper": [
+      "food_wrapper",
+      "chips_packet",
+      "plastic_film",
+      "foil"
+    ],
+    "plastic_packaging": [
+      "plastic_packaging",
+      "plastic_bag",
+      "plastic_film"
+    ]
+  }
+}

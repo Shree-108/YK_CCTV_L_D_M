@@ -1,0 +1,47 @@
+{
+ "version": "v2_yoloe_openvocab",
+ "name": "YOLOE-11L open-vocabulary litter (zero-shot)",
+ "trained_at": null,
+ "base_model": "yoloe-11l-seg",
+ "imgsz": 1280,
+ "classes": [
+  "chips_packet",
+  "food_wrapper",
+  "plastic_bottle",
+  "plastic_cup",
+  "metal_can",
+  "paper",
+  "cardboard",
+  "plastic_bag",
+  "food_container",
+  "tissue",
+  "cigarette_packet",
+  "plastic_packaging",
+  "other_litter"
+ ],
+ "metrics": {},
+ "registered_at": "2026-09-24T16:22:54.732338+00:00",
+ "notes": "Zero-shot: not trained on litter data. Text prompts mapped to litter classes; distractor prompts (cars, people, posters, bins, leaves...) suppress false positives. Scores are lower than a fine-tuned model; use the recommended thresholds. Slow on CPU (~4-5 s/frame).",
+ "recommended_settings": {
+  "confidence": {
+   "weak_threshold": 0.08,
+   "candidate_threshold": 0.12,
+   "confirmed_threshold": 0.2
+  },
+  "inference": {
+   "image_size": 960,
+   "agnostic_nms": true
+  },
+  "tiling": {
+   "enabled": true,
+   "mode": "auto",
+   "tile_size": 640,
+   "overlap": 0.25
+  },
+  "video": {
+   "live_process_fps": 0.5,
+   "sample_fps": 1.0,
+   "tiling": false
+  }
+ }
+}

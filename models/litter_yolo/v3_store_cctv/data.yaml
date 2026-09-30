@@ -1,0 +1,15 @@
+path: D:\YATRIKART\CCTV-LD\CCTV-Litter-detection-main\dataset\cctv_store_v2
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: plastic_bag
+  1: plastic_packaging
+  2: food_wrapper
+  3: paper
+  4: cardboard
+  5: plastic_bottle
+  6: cup
+  7: newspaper
+  8: plastic_piece
+  9: other_litter

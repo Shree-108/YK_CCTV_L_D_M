@@ -1,0 +1,18 @@
+path: C:\Users\PATIL\Downloads\smart-cctv-litter-system\dataset\cctv_real_v1_autolabel
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: chips_packet
+  1: food_wrapper
+  2: plastic_bottle
+  3: plastic_cup
+  4: metal_can
+  5: paper
+  6: cardboard
+  7: plastic_bag
+  8: food_container
+  9: tissue
+  10: cigarette_packet
+  11: plastic_packaging
+  12: other_litter

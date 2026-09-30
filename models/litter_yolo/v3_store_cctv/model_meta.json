@@ -1,0 +1,31 @@
+{
+  "version": "v3_store_cctv",
+  "name": "v3_store_cctv",
+  "trained_at": "2026-09-30T09:06:48.366428+05:30",
+  "base_model": "models/litter_yolo/v1_litter_s1_synthetic/best.pt",
+  "imgsz": 640,
+  "classes": [
+    "plastic_bag",
+    "plastic_packaging",
+    "food_wrapper",
+    "paper",
+    "cardboard",
+    "plastic_bottle",
+    "cup",
+    "newspaper",
+    "plastic_piece",
+    "other_litter"
+  ],
+  "metrics": {
+    "epoch": 22,
+    "epochs_run": 30,
+    "precision": 0.9616,
+    "recall": 0.9944,
+    "f1": 0.9777,
+    "mAP50": 0.995,
+    "mAP50_95": 0.8387,
+    "source": "ultralytics validation during training (val split)"
+  },
+  "registered_at": "2026-09-30T04:05:06.716+00:00",
+  "notes": "Trained on dataset/cctv_store_v2/data.yaml (imgsz 640)."
+}

@@ -1,0 +1,8 @@
+{
+  "experimentalServices": {
+    "vision-api": {
+      "entrypoint": "backend/main.py",
+      "routePrefix": "/api"
+    }
+  }
+}
