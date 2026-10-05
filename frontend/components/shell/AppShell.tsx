@@ -42,7 +42,7 @@ function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
         <div className="flex size-9 items-center justify-center rounded-xl bg-info text-white shadow-sm"><Zap className="size-5" aria-hidden /></div>
         {!collapsed && (
           <div className="min-w-0 leading-tight">
-            <div className="truncate text-[14px] font-bold tracking-[0.06em] text-fg">SIGHTLINE</div>
+            <div className="truncate text-[14px] font-bold tracking-[0.06em] text-fg">YATRIKART</div>
             <div className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-info">Litter detection</div>
           </div>
         )}

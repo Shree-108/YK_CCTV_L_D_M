@@ -90,6 +90,49 @@ export interface RtspConfig {
   path_template: string
 }
 
+export interface ScheduleConfig {
+  min_minutes: number
+  max_minutes: number
+  task: 'litter' | 'uniform'
+  model_version: string | null
+  retry_minutes: number
+  attempts: number
+  timeout_sec: number
+  backoff_sec: number
+}
+
+export interface ScheduleStatus {
+  state: 'running' | 'paused' | 'stopped'
+  config: ScheduleConfig
+  next_run_at: string | null
+  last_run_at: string | null
+  last_status: string | null
+  last_error: string | null
+  last_success_at: string | null
+  consecutive_failures: number
+  busy: boolean
+  seconds_to_next?: number
+  model_available: boolean
+  model_note: string | null
+}
+
+export interface Capture {
+  id: string
+  camera_id: string
+  ts: string
+  trigger: 'scheduled' | 'manual' | 'recovery'
+  task: 'litter' | 'uniform'
+  status: 'running' | 'done' | 'skipped' | 'failed' | 'interrupted' | 'invalid_frame'
+  model_version: string | null
+  error: string | null
+  counts: { confirmed?: number; by_class?: Record<string, number>; highest_confidence?: number | null; outside_roi_ignored?: number }
+  detections: Detection[]
+  alert_ids: number[]
+  original_url: string | null
+  annotated_url: string | null
+  duration_ms: number | null
+}
+
 export interface CctvTestResult {
   ok: boolean
   code: 'connected' | 'invalid_config' | 'unreachable' | 'timeout' | 'auth_failed' | 'channel_unavailable' | 'stream_unavailable'

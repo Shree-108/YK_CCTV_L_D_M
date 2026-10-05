@@ -143,6 +143,23 @@ CREATE TABLE IF NOT EXISTS reviews (
     x1 REAL, y1 REAL, x2 REAL, y2 REAL,
     notes TEXT
 );
+CREATE TABLE IF NOT EXISTS captures (
+    id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    trigger TEXT NOT NULL,             -- scheduled | manual | recovery
+    task TEXT NOT NULL,                -- litter | uniform
+    status TEXT NOT NULL,              -- running | done | skipped | failed | interrupted
+    model_version TEXT,
+    error TEXT,
+    counts_json TEXT,
+    detections_json TEXT,
+    alert_ids_json TEXT,
+    original_path TEXT,
+    annotated_path TEXT,
+    duration_ms REAL
+);
+CREATE INDEX IF NOT EXISTS idx_captures_cam_ts ON captures(camera_id, ts);
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -377,6 +394,32 @@ class Database:
     def create_job(self, job_id: str, kind: str, camera_id: str | None, input_name: str, output_dir: str) -> None:
         self._write("INSERT INTO jobs(id,kind,status,camera_id,created_at,input_name,output_dir) VALUES (?,?,?,?,?,?,?)",
                     (job_id, kind, "queued", camera_id, utcnow(), input_name, output_dir))
+
+    # ------------------------------------------------------------------ scheduled captures
+    def insert_capture(self, row: dict[str, Any]) -> None:
+        cols = list(row)
+        self._write(f"INSERT INTO captures({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", [row[c] for c in cols])
+
+    def update_capture(self, cap_id: str, **fields: Any) -> None:
+        for k in ("counts", "detections", "alert_ids"):
+            if k in fields:
+                fields[f"{k}_json"] = json.dumps(fields.pop(k))
+        self._write(f"UPDATE captures SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?", [*fields.values(), cap_id])
+
+    @staticmethod
+    def _capture(r: dict[str, Any]) -> dict[str, Any]:
+        for k in ("counts_json", "detections_json", "alert_ids_json"):
+            r[k.removesuffix("_json")] = json.loads(r.pop(k) or ("{}" if k == "counts_json" else "[]"))
+        return r
+
+    def get_capture(self, cap_id: str) -> Optional[dict[str, Any]]:
+        r = self._one("SELECT * FROM captures WHERE id=?", (cap_id,))
+        return self._capture(r) if r else None
+
+    def list_captures(self, camera_id: Optional[str] = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        where, params = ("WHERE camera_id=?", [camera_id]) if camera_id else ("", [])
+        return [self._capture(r) for r in self._query(
+            f"SELECT * FROM captures {where} ORDER BY ts DESC LIMIT ? OFFSET ?", [*params, limit, offset])]
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         if "result" in fields:

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 import hashlib
 import os
 import re
@@ -262,27 +263,21 @@ def test_connection(camera_id: str, cfg: RtspConfig, password: Optional[str] = N
     if code != 200:
         return fail("stream_unavailable", f"RTSP {code}", "rtsp")
     stages.append({"stage": "rtsp", "ok": True, "detail": "RTSP DESCRIBE 200 (authenticated)"})
-    # 3) real frames
-    from backend.cameras.manager import open_capture
+    # 3) a real, valid frame - decoded in a separate killable process (FFmpeg can block in native code)
+    import tempfile
 
-    cap = open_capture(build_url(camera_id, cfg, pwd))
-    try:
-        if not cap.isOpened():
-            return fail("stream_unavailable", "decoder could not open the stream", "video")
-        got, t1, shape = 0, time.perf_counter(), None
-        while got < frames and time.perf_counter() - t1 < timeout * 2:
-            ok, frame = cap.read()
-            if ok and frame is not None:
-                got += 1
-                shape = frame.shape
-        if got < frames or shape is None:
-            return fail("stream_unavailable", f"received {got}/{frames} frames", "video")
-        fps = round(got / max(time.perf_counter() - t1, 1e-6), 1)
-    finally:
-        cap.release()
-    stages.append({"stage": "video", "ok": True, "detail": f"{got} frames decoded ({shape[1]}x{shape[0]})"})
+    from backend.cameras.grabber import grab_frame
+
+    with tempfile.TemporaryDirectory() as tmp:
+        t1 = time.perf_counter()
+        res = grab_frame(build_url(camera_id, cfg, pwd), Path(tmp) / "test.jpg", timeout=max(10.0, timeout * 4))
+    if not res.get("ok"):
+        code = "timeout" if res.get("code") == "timeout" else "stream_unavailable"
+        return fail(code, f"{res.get('code')}: {res.get('message')}", "video")
+    stages.append({"stage": "video", "ok": True,
+                   "detail": f"valid frame decoded ({res['width']}x{res['height']}, {time.perf_counter() - t1:.1f} s)"})
     return TestResult(ok=True, code="connected", message=MESSAGES["connected"], stages=stages,
-                      resolution=[int(shape[1]), int(shape[0])], fps=fps, url=display_url(cfg))
+                      resolution=[res["width"], res["height"]], fps=None, url=display_url(cfg))
 
 
 def camera_url(cam: dict[str, Any]) -> str:

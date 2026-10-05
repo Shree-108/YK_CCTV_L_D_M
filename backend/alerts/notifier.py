@@ -90,11 +90,13 @@ class EmailProvider(Provider):
 class Notifier:
     def __init__(self, camera_prefs: Callable[[str], dict[str, Any]],
                  providers: Optional[list[Provider]] = None,
-                 on_error: Optional[Callable[[str, str], None]] = None) -> None:
+                 on_error: Optional[Callable[[str, str], None]] = None,
+                 on_delivered: Optional[Callable[[str, dict[str, Any]], None]] = None) -> None:
         self.providers = providers if providers is not None else [EmailProvider(), WebhookProvider(),
                                                                   TelegramProvider()]
         self.camera_prefs = camera_prefs
         self.on_error = on_error
+        self.on_delivered = on_delivered   # called ONLY after a provider call returned without error
         self.default_min = os.getenv("NOTIFY_MIN_SEVERITY", "HIGH").upper()
         self._q: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=500)
         threading.Thread(target=self._worker, name="notifier", daemon=True).start()
@@ -126,6 +128,8 @@ class Notifier:
             for p in self.targets(alert):
                 try:
                     p.send(alert)
+                    if self.on_delivered:
+                        self.on_delivered(p.name, alert)
                 except Exception as exc:  # never crash the worker
                     log.error("Notification via %s failed: %s", p.name, exc)
                     if self.on_error:

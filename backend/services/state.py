@@ -36,7 +36,9 @@ class AppState:
         self.engine_error: Optional[str] = None
         self._engine_lock = threading.Lock()
         self.notifier = Notifier(self._notify_prefs,
-                                 on_error=lambda p, e: self.db.log_event("error", "notifier", f"{p}: {e}"))
+                                 on_error=lambda p, e: self.db.log_event("error", "notifier", f"{p}: {e}"),
+                                 on_delivered=lambda p, a: self.db.log_event(
+                                     "info", "notifier", f"alert {a.get('id')} delivered via {p}", a.get("camera_id")))
         self.alerts = AlertManager(self.db, cfg.alerts_dir, self.meta, self.notifier)
         self.jobs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-job")
         # jobs are in-process threads: any job still queued/running belongs to a previous server process
@@ -53,6 +55,9 @@ class AppState:
         self.experiments = ExperimentService([PROJECT_ROOT / "runs", PROJECT_ROOT / "backend" / "runs",
                                               cfg.storage_dir / "runs"], PROJECT_ROOT)
         self.load_engine()
+        from backend.cameras.scheduler import CaptureScheduler
+        self.scheduler = CaptureScheduler(self)
+        self.scheduler.start_loop()
 
     # ------------------------------------------------------------------ settings
     def global_settings_json(self) -> dict[str, Any]:
@@ -241,5 +246,6 @@ class AppState:
         return job_id
 
     def shutdown(self) -> None:
+        self.scheduler.shutdown()
         self.cameras.stop_all()
         self.jobs.shutdown(wait=False, cancel_futures=True)

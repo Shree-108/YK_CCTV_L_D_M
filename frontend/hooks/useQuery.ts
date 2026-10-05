@@ -69,7 +69,10 @@ export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, opts:
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') void load(key, () => fetchRef.current())
     }, opts.poll)
-    return () => clearInterval(id)
+    // polling pauses in a hidden tab; refresh as soon as the user comes back instead of waiting a full interval
+    const onVisible = () => { if (document.visibilityState === 'visible') void load(key, () => fetchRef.current()) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [key, opts.poll])
 
   return {

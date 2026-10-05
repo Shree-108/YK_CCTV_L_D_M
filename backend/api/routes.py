@@ -350,6 +350,75 @@ def cctv_stop(cam_id: str, state: AppState = Depends(get_state)) -> dict[str, An
     return _cctv_toggle(state, cam_id, False)
 
 
+# =========================================================================== scheduled captures
+def _sched_cam(state: AppState, cam_id: str) -> dict[str, Any]:
+    check_camera_id(cam_id)
+    cam = state.db.get_camera(cam_id)
+    if not cam:
+        raise HTTPException(404, "Camera not found")
+    return cam
+
+
+def _capture_out(c: dict[str, Any]) -> dict[str, Any]:
+    c = dict(c)
+    base = f"/api/captures/{c['id']}/image"
+    c["original_url"] = f"{base}?kind=original" if c.pop("original_path", None) else None
+    c["annotated_url"] = f"{base}?kind=annotated" if c.pop("annotated_path", None) else None
+    return c
+
+
+@router.get("/schedule/{cam_id}")
+def schedule_status(cam_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    _sched_cam(state, cam_id)
+    return state.scheduler.status(cam_id)
+
+
+@router.put("/schedule/{cam_id}", dependencies=ADMIN)
+def schedule_configure(cam_id: str, body: dict[str, Any], state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """min_minutes / max_minutes / task (litter|uniform) / model_version / retry_minutes / attempts."""
+    _sched_cam(state, cam_id)
+    try:
+        state.scheduler.configure(cam_id, body)
+    except ValidationError as exc:
+        e = exc.errors()[0]
+        raise HTTPException(422, f"{'.'.join(map(str, e['loc'])) or 'schedule'}: {e['msg']}") from None
+    if body.get("model_version") and body["model_version"] not in {m["version"] for m in state.db.list_models()}:
+        raise HTTPException(404, f"model {body['model_version']} not found")
+    return state.scheduler.status(cam_id)
+
+
+@router.post("/schedule/{cam_id}/{action}", dependencies=ADMIN)
+async def schedule_action(cam_id: str, action: Literal["start", "pause", "resume", "stop", "capture-now"],
+                          state: AppState = Depends(get_state)) -> dict[str, Any]:
+    _sched_cam(state, cam_id)
+    if action == "capture-now":
+        res = await asyncio.to_thread(state.scheduler.capture, cam_id, "manual")
+        if res is None:
+            raise HTTPException(409, "A capture is already running for this camera")
+        return {"capture": _capture_out(res), "schedule": state.scheduler.status(cam_id)}
+    getattr(state.scheduler, action)(cam_id)
+    return {"schedule": state.scheduler.status(cam_id)}
+
+
+@router.get("/captures")
+def list_captures(camera_id: Optional[str] = None, limit: int = Query(30, ge=1, le=200), offset: int = Query(0, ge=0),
+                  state: AppState = Depends(get_state)) -> dict[str, Any]:
+    return {"captures": [_capture_out(c) for c in state.db.list_captures(camera_id, limit, offset)]}
+
+
+@router.get("/captures/{cap_id}/image")
+def capture_image(cap_id: str, kind: Literal["original", "annotated"] = "annotated",
+                  state: AppState = Depends(get_state)) -> FileResponse:
+    c = state.db.get_capture(cap_id)
+    path = c and c.get(f"{kind}_path")
+    if not path:
+        raise HTTPException(404, "Image not available")
+    p = Path(path).resolve()
+    if not p.is_file() or (state.cfg.storage_dir / "captures").resolve() not in p.parents:
+        raise HTTPException(404, "Image not available")
+    return FileResponse(p, media_type="image/jpeg")
+
+
 # =========================================================================== ROI
 class RoiIn(BaseModel):
     model_config = ConfigDict(extra="forbid")

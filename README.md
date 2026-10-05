@@ -120,6 +120,30 @@ Admin endpoints need `Authorization: Bearer $ADMIN_API_TOKEN`. If no token is co
 Each camera runs in its own threads; a failing camera reconnects with exponential backoff (1→30 s,
 5 s open/read timeouts) without affecting the others.
 
+## Live CCTV (CP Plus NVR) and scheduled screenshots
+Full guide: [docs/LIVE_CCTV_SETUP.md](docs/LIVE_CCTV_SETUP.md). Summary:
+
+* **Connection** - Live CCTV page (admin): NVR IP/host, RTSP port, channel, main/sub stream, username,
+  password, RTSP path. The path defaults to the common CP Plus/Dahua pattern
+  `/cam/realmonitor?channel={channel}&subtype={subtype}`, which **must be confirmed** for the CP-UNR-104F1.
+  The password goes to the gitignored `.env` (`CCTV_<CAMERA_ID>_PASSWORD`); it is never stored in the
+  database, returned by the API, shown in the browser or written to logs (URLs are masked `user:********@`).
+* **Test Connection** - TCP reachability -> RTSP DESCRIBE with Digest/Basic auth -> one valid decoded frame.
+  Safe errors: unable to reach NVR, network timeout, authentication failed, channel unavailable,
+  RTSP stream unavailable, invalid configuration.
+* **Scheduled screenshots** - backend scheduler (runs without the dashboard open): random time between
+  min and max minutes (min = max for a fixed interval, e.g. 45 or 120), Start/Pause/Resume/Stop/Capture Now,
+  one capture per camera at a time, state persisted (a missed capture runs once after a restart).
+* **Fault tolerance** - every camera read runs in a separate process (`backend/cameras/grabber.py`) with a
+  hard timeout and is killed if it hangs; bounded retries with exponential backoff; blank/corrupted frames
+  are rejected (`invalid_frame`) and never reach the model; failures are recorded and retried after
+  `retry_minutes`; image/video uploads are unaffected by camera problems.
+* **Results** - `storage/captures/<camera>/<id>/original.jpg`, `annotated.jpg`, `result.json` + `captures`
+  table (timestamp, camera, model version, detections, confidence, status, alert ids). Repeated detections
+  of the same litter update one alert (`occurrences`). A notification is logged as delivered only after the
+  provider call succeeded.
+* Keep the NVR on the LAN/VPN. Never port-forward RTSP or the NVR web UI.
+
 ## Registering a trained model
 ```bash
 python -m training.register_model --run runs/detect/<run> --version v2_real_cctv --data <data.yaml> [--activate]

@@ -4,7 +4,7 @@ import { AppProvider } from '@/frontend/stores/app'
 import { AppShell } from '@/frontend/components/shell/AppShell'
 
 export const metadata: Metadata = {
-  title: { default: 'Sightline | Litter Detection', template: '%s · Sightline' },
+  title: { default: 'Yatrikart | Litter Detection', template: '%s · Yatrikart' },
   description: 'CCTV litter detection: live monitoring, alert investigation, model evaluation and dataset management.',
   icons: { icon: [{ url: '/icon.svg', type: 'image/svg+xml' }] },
 }

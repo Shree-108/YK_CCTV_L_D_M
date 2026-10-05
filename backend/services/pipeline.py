@@ -254,9 +254,11 @@ def open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> tuple[cv
 def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSettings,
                  roi: Optional[ROISet] = None, meta: Optional[ClassMetadata] = None,
                  db: Optional[Database] = None, alerts: Optional[AlertManager] = None,
-                 camera_id: str = "upload", filename: str = "") -> dict[str, Any]:
+                 camera_id: str = "upload", filename: str = "", job_id: Optional[str] = None) -> dict[str, Any]:
     """Detect litter in one image. A still image has no temporal evidence, so
-    'confirmed' here means: passed every filter AND confidence >= confirmed_threshold."""
+    'confirmed' here means: passed every filter AND confidence >= confirmed_threshold.
+    ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
+    scheduled screenshots of one fixed camera share one so persisting litter updates its alert."""
     dets, info = detect_in_roi(engine, [image], settings, roi)[0]
     apply_filters(dets, image.shape, settings, roi)
     confirm_single_image(dets, settings)
@@ -280,7 +282,7 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
                 camera_id=camera_id, session_id=session, track_id=d.track_id or 0, cls_name=d.cls_name,
                 confidence=d.confidence, bbox=[round(v, 1) for v in d.bbox], frame=image, annotated=annotated,
                 video_time_sec=None, first_seen_ts=utcnow(), hits=1, active_objects=len(confirmed),
-                job_id=f"image:{session}", source_type="image", model_version=engine.version,
+                job_id=job_id or f"image:{session}", source_type="image", model_version=engine.version,
                 live_track_ids=frozenset(x.track_id for x in confirmed)), settings)
             if a:
                 alerts_out.append(a)

@@ -2,7 +2,7 @@ import { api, qs } from './client'
 import type {
   Alert, AlertStatus, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
   DetectionRow, Evaluation, EvaluationListItem, Experiment, ExperimentDetail, HardExample, Health,
-  CctvTestResult, ImageDetectResult, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
+  Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
   TestLabResponse, VideoResult,
 } from './types'
 
@@ -41,6 +41,11 @@ export const Api = {
   cctvSave: (id: string, body: Record<string, unknown>) => api<Camera>(`/api/cctv/${encodeURIComponent(id)}`, { method: 'PUT', body }),
   cctvConnect: (id: string) => api<Camera>(`/api/cctv/${encodeURIComponent(id)}/connect`, { method: 'POST' }),
   cctvStop: (id: string) => api<Camera>(`/api/cctv/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  schedule: (id: string) => api<ScheduleStatus>(`/api/schedule/${encodeURIComponent(id)}`),
+  saveSchedule: (id: string, body: Partial<ScheduleConfig>) => api<ScheduleStatus>(`/api/schedule/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  scheduleAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop' | 'capture-now') =>
+    api<{ schedule: ScheduleStatus; capture?: Capture }>(`/api/schedule/${encodeURIComponent(id)}/${action}`, { method: 'POST' }),
+  captures: (camera_id?: string, limit = 12) => api<{ captures: Capture[] }>(`/api/captures${qs({ camera_id, limit })}`),
   roi: (cameraId: string) => api<RoiConfig>(`/api/roi/${encodeURIComponent(cameraId)}`),
   saveRoi: (cameraId: string, zones: RoiZone[]) => api<RoiConfig>(`/api/roi/${encodeURIComponent(cameraId)}`, { method: 'PUT', body: { zones } }),
 

@@ -14,6 +14,7 @@ import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/states'
 import { RoiSetup, litterName } from '../detection/common'
+import { SchedulePanel } from './SchedulePanel'
 
 const NEW = '__new__'
 
@@ -53,8 +54,11 @@ export default function LiveCctvPage() {
   const cams = useQuery('cameras:list', Api.cameras, { poll: 2000 })
   const defaults = useQuery('cctv:defaults', Api.cctvDefaults)
   const cctvCams = useMemo(() => (cams.data?.cameras ?? []).filter((c) => c.source.startsWith('cctv:')), [cams.data])
+  // sample-video / file cameras: scheduler testing before the authorised RTSP details are available
+  const testCams = useMemo(() => (cams.data?.cameras ?? []).filter((c) => !c.source.startsWith('cctv:')), [cams.data])
   const [sel, setSel] = useState<string>(NEW)
-  const cam = cctvCams.find((c) => c.id === sel)
+  const testCam = testCams.find((c) => c.id === sel)
+  const cam = cctvCams.find((c) => c.id === sel) ?? testCam
   const [form, setForm] = useState<Form>(EMPTY)
   const [test, setTest] = useState<CctvTestResult | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -62,7 +66,7 @@ export default function LiveCctvPage() {
   // pick the first configured camera; prefill a new form from non-secret CCTV_* env defaults
   useEffect(() => { if (sel === NEW && cctvCams.length) setSel(cctvCams[0].id) }, [cctvCams.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (cam) setForm(formFrom(cam))
+    if (cam && !testCam) setForm(formFrom(cam))
     else if (sel === NEW) {
       const d = defaults.data?.defaults ?? {}
       setForm({ ...EMPTY, host: d.host ?? '', port: String(d.port ?? 554), channel: String(d.channel ?? 1),
@@ -113,10 +117,10 @@ export default function LiveCctvPage() {
           <Link href="/settings?tab=security" className="underline">Sign in as admin</Link>
         </div>
       )}
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex min-w-0 flex-col gap-3">
           <Panel title={cam ? cam.name : 'Live CCTV'} icon={Cctv}
-            subtitle={cam?.rtsp_url ?? 'CCTV configuration required'}
+            subtitle={testCam ? 'Test source — recorded video, not the NVR' : cam?.rtsp_url ?? 'CCTV configuration required'}
             actions={<Badge tone={st.tone} dot className={cx(st.pulse && 'animate-pulse')}>{st.label}</Badge>}>
             {live ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -128,7 +132,7 @@ export default function LiveCctvPage() {
                 <p className="text-[13px] text-fg">{!cam ? 'CCTV configuration required' : !cam.enabled ? 'Stream stopped' : 'Connecting to the NVR…'}</p>
                 <p className="max-w-md text-[12px] text-fg-3">
                   {!cam ? 'Enter the NVR details provided by your CCTV administrator, then Test Connection. Image and Video Analysis keep working without it.'
-                    : !cam.enabled ? 'Click “Connect Live CCTV” to start live litter detection.' : (s?.last_error ?? 'Waiting for the first frame.')}
+                    : !cam.enabled ? (testCam ? 'Live view is off for this test source; scheduled screenshots below still work.' : 'Click “Connect Live CCTV” to start live litter detection.') : (s?.last_error ?? 'Waiting for the first frame.')}
                 </p>
               </div>
             )}
@@ -142,14 +146,15 @@ export default function LiveCctvPage() {
                 <MetricCard label="Reconnects" value={num(s?.reconnects)} tone={(s?.reconnects ?? 0) > 1 ? 'warn' : undefined} />
               </div>
             )}
-            {cam && (
+            {cam && !testCam && (
               <div className="mt-3 flex flex-wrap justify-end gap-2">
                 {cam.enabled
-                  ? <Button variant="danger" icon={Square} disabled={!isAdmin} loading={busy === 'Stop'} onClick={stop}>Stop Stream</Button>
+                  ? <Button variant="danger" icon={Square} disabled={!isAdmin} loading={busy === 'Stop'} onClick={stop}>Disconnect</Button>
                   : <Button variant="primary" icon={PlugZap} disabled={!isAdmin || !configured} loading={busy === 'Connect'} onClick={connect}>Connect Live CCTV</Button>}
               </div>
             )}
           </Panel>
+          {cam && <SchedulePanel cameraId={cam.id} cameraState={testCam ? `${st.label} (test source)` : st.label} />}
           {cam && s?.state === 'online' && <LiveRoi cam={cam} />}
           {cam && <LiveEvents cameraId={cam.id} />}
         </div>
@@ -160,8 +165,16 @@ export default function LiveCctvPage() {
               <Select value={sel} onChange={(e) => setSel(e.target.value)}>
                 {cctvCams.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.id})</option>)}
                 <option value={NEW}>+ New CCTV camera</option>
+                {testCams.length > 0 && <optgroup label="Test sources (recorded video — not CCTV)">
+                  {testCams.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.id})</option>)}
+                </optgroup>}
               </Select>
             </Field>
+            {testCam ? (
+              <p className="rounded-md border border-warn/40 bg-warn-bg px-2 py-1.5 text-[12px] text-warn">
+                TEST SOURCE — this camera reads a recorded video file, not the NVR. Use it only to try the scheduler and models.
+              </p>
+            ) : <>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Camera ID"><Input value={form.id} onChange={set('id')} disabled={!!cam} placeholder="cctv_cam1" /></Field>
               <Field label="Camera Name"><Input value={form.name} onChange={set('name')} placeholder="IFFCO CHOWK - CAM 1" /></Field>
@@ -205,6 +218,7 @@ export default function LiveCctvPage() {
               {!cam?.enabled && <Button variant="primary" icon={PlugZap} disabled={!isAdmin || !form.host} loading={busy === 'Connect'} onClick={connect}>Connect Live CCTV</Button>}
             </div>
             {test && <TestResult r={test} />}
+            </>}
             <p className="text-[11px] text-fg-3">Credentials are never shown, logged or stored in the database. Use the NVR only over the local network or a VPN — do not expose it to the internet.</p>
           </div>
         </Panel>
