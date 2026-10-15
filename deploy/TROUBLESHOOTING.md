@@ -11,7 +11,8 @@ Hover over the badge: it shows the API address the UI is calling and the error.
 |---|---|
 | **The UI's address is not allowed by the API (CORS).** This was the original problem: the UI ran on `:3010` but `.env` allowed only `http://localhost:3000`, so the browser blocked every request although the API was running. | Start with `deploy\start-ldm.ps1`, which adds the UI port automatically and refuses to continue if a running API would block it. If you start things by hand, add the exact address (e.g. `http://localhost:3010`) to `CORS_ORIGINS` in `.env` and restart the API. |
 | The API is not running or is still loading the model (up to ~1 min) | wait: the UI re-checks every 15 s; otherwise run `start-ldm` again |
-| The UI was opened from another PC | without `-Lan`, `localhost` means *that* PC. Use `start-ldm -Lan` (with IT approval) |
+| The UI was opened from another PC | not supported yet: the API answers only requests from this PC ("Remote access … disabled", HTTP 403) until login protection is added. Open the demo on this PC |
+| `/docs` returns 404 | API docs are off by default. For local development set `LM_ENABLE_API_DOCS=true` in `.env` and restart the API |
 | The API is hung | the health check times out after 8 s and shows offline. Restart: `stop-ldm`, then `start-ldm` |
 
 Quick checks:

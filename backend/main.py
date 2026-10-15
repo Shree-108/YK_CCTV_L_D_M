@@ -1,7 +1,7 @@
 """CCTV Litter Monitor - FastAPI backend.
 
-Run from the project root:
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000
+Run from the project root (local only - there is no login yet, see backend/api/local_only.py):
+    uvicorn backend.main:app --host 127.0.0.1 --port 8000
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.local_only import LocalOnlyMiddleware
 from backend.api.routes import router
 from backend.api.routes_invoice import router as invoice_router
 from backend.api.routes_lab import router as lab_router
@@ -35,9 +36,14 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
         st.shutdown()
         st.db.log_event("info", "system", "backend stopped")
 
-    app = FastAPI(title="CCTV Litter Monitor API", version="3.0.0", lifespan=lifespan)
+    docs = cfg.enable_api_docs   # off by default: LM_ENABLE_API_DOCS=true turns /docs, /redoc, /openapi.json on
+    app = FastAPI(title="CCTV Litter Monitor API", version="3.0.0", lifespan=lifespan,
+                  docs_url="/docs" if docs else None, redoc_url="/redoc" if docs else None,
+                  openapi_url="/openapi.json" if docs else None)
     app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"],
                        allow_headers=["Authorization", "Content-Type", "X-Admin-Token"])
+    # Added last = outermost: no login exists yet, so only this computer may call the API (any --host).
+    app.add_middleware(LocalOnlyMiddleware, extra_hosts=cfg.local_extra_hosts)
     app.include_router(invoice_router)
     app.include_router(lab_router)
     app.include_router(router)

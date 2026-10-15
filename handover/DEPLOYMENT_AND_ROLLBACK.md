@@ -45,8 +45,9 @@ powershell -ExecutionPolicy Bypass -File deploy\start-ldm.ps1
 1. **Approved internal server or VM** (IT): run the same steps there. Put it behind the company's authenticated
    reverse proxy / SSO with HTTPS. Set `CORS_ORIGINS` to the exact UI URL, and set `NEXT_PUBLIC_API_URL` to the API
    URL as seen by browsers (`start-ldm` does this for `-Lan`).
-2. **Temporary LAN demo** with `start-ldm.ps1 -Lan`, only with IT approval, on a trusted office network and with
-   non-sensitive data. It is untested, and there is **no user login (defect D-08)**.
+2. ~~Temporary LAN demo with `start-ldm.ps1 -Lan`~~: **disabled** since API security Step 1 (2026-10-15). There is
+   no user login yet (defect D-08), so `-Lan` refuses to start and the API rejects every non-local request. It
+   becomes available again only after login protection (security plan Steps 2–4), HTTPS and IT approval.
 
 Never expose the app or the NVR to the internet, and never port-forward RTSP (554) or the NVR web UI.
 

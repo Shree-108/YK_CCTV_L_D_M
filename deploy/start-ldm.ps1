@@ -11,7 +11,8 @@
   Safe to run twice: running LDM processes are detected and re-used, nothing is started twice.
   Stop with deploy\stop-ldm.ps1 (only processes started by this script are stopped).
 
-  Local only by default (127.0.0.1). -Lan makes the demo reachable from other PCs on the local network.
+  Local only (127.0.0.1). -Lan (reachable from other PCs) is DISABLED until login protection is enabled
+  (API security plan Step 2-4): the API itself also rejects every non-local request until then.
   CCTV cameras are NOT started (LM_START_CAMERAS=false) unless -EnableCameras is given.
   The model used is whatever is active in the app (production: v3_store_cctv); this script never changes it.
 
@@ -81,6 +82,13 @@ function Show-LogTail([string]$path, [int]$n = 30) {
 
 Write-Host "Yatrikart Litter Detection - demo startup" -ForegroundColor Cyan
 Write-Host "project: $Root"
+
+# The API has no user login yet: never offer it to the network (API security plan, Step 1).
+if ($Lan) {
+  Fail ("-Lan is disabled: the application has no login protection yet, so CCTV video, snapshots and data would be " +
+        "readable by anyone on the network. The API also rejects non-local requests until then. Run without -Lan and " +
+        "open the demo on this PC (http://localhost:$FrontendPort).")
+}
 
 # ------------------------------------------------------------------ 1. checks
 Step "1/5 Checking dependencies and configuration"
@@ -282,7 +290,7 @@ if ($fl) {
 Step "5/5 Ready"
 Write-Host ""
 Write-Host "  Open:        $UiUrl" -ForegroundColor Green
-Write-Host "  API:         $ApiUrl/api/health   (docs: $ApiUrl/docs)"
+Write-Host "  API:         $ApiUrl/api/health   (API docs are off; LM_ENABLE_API_DOCS=true enables $ApiUrl/docs locally)"
 Write-Host "  Logs:        $LogDir"
 Write-Host "  Stop:        powershell -ExecutionPolicy Bypass -File deploy\stop-ldm.ps1"
 Write-Host ""

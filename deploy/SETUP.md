@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File deploy\start-ldm.ps1
 | `-BackendPort` | 8000 | API port |
 | `-Dev` | off | `next dev` (hot reload) instead of an optimised production build |
 | `-Rebuild` | off | force a fresh UI build (normally automatic when sources or the API address change) |
-| `-Lan` | off | bind to all interfaces and use this PC's LAN IP so other PCs can open the demo. **Ask IT first**; Windows Firewall will prompt. Never on public networks |
+| `-Lan` | off | **disabled until login protection exists**: the script refuses to start, and the API rejects every non-local request. Later (with login, HTTPS and IT approval) it will make the demo reachable from other PCs |
 | `-EnableCameras` | off | keep `LM_START_CAMERAS` from `.env` |
 | `-Python` | auto | explicit python.exe |
 

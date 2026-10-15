@@ -21,10 +21,15 @@ with tracking, temporal confirmation, deduplicated alerts, snapshots, and a REST
 ```bash
 pip install -r requirements.txt
 cp .env.example .env              # set ADMIN_API_TOKEN (a random one was generated locally)
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
 python -m pytest                  # 38 tests, uses the real model
 ```
-Interactive API docs: http://localhost:8000/docs
+**Local only.** The API has no user login yet, so it must only be used on this computer: bind to `127.0.0.1`
+(as above, or use `deploy\start-ldm.ps1`). Do not use `--host 0.0.0.0`. The API also rejects every request that
+does not come from this computer (`backend/api/local_only.py`) until login protection is added.
+
+Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are **off by default**. For local development set
+`LM_ENABLE_API_DOCS=true` in `.env` and open http://localhost:8000/docs (still local-only).
 
 ## Architecture
 ```

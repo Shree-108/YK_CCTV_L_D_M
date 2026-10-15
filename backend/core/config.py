@@ -50,6 +50,11 @@ class AppConfig:
         o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
         if o.strip()])
     start_cameras: bool = field(default_factory=lambda: os.getenv("LM_START_CAMERAS", "true").lower() == "true")
+    # /docs, /redoc and /openapi.json are off unless explicitly enabled (and even then only reachable locally)
+    enable_api_docs: bool = field(default_factory=lambda: os.getenv("LM_ENABLE_API_DOCS", "false").lower() == "true")
+    # Client names treated as local by the local-only safeguard in addition to loopback IPs. Tests only
+    # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
+    local_extra_hosts: tuple[str, ...] = ()
 
     @property
     def alerts_dir(self) -> Path:

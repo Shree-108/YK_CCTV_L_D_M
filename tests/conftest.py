@@ -39,6 +39,7 @@ def cfg(tmp_path: Path) -> AppConfig:
     c.db_path = tmp_path / "storage" / "test.db"
     c.admin_token = "test-admin-token"
     c.start_cameras = False
+    c.local_extra_hosts = ("testclient",)   # TestClient's client name; real servers only see IP addresses
     c.ensure_dirs()
     return c
 

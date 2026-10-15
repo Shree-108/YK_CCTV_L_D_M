@@ -48,8 +48,8 @@ Good demo inputs: short clips from `C:\SHREE\Screen Captures\cctv_litter_poc_3mi
   database). Use the Alerts page to mark test alerts resolved or false positive.
 - **No messages are sent.** No email, webhook or Telegram provider is configured.
 - **No CCTV cameras are connected.** `start-ldm` starts the API with `LM_START_CAMERAS=false`.
-- **Local only:** the demo is reachable only from this PC. Opening it from other PCs (`-Lan`) is possible but needs
-  IT approval; see `SETUP.md`.
+- **Local only:** the demo is reachable only from this PC. Opening it from other PCs is **disabled** until login
+  protection is added (`-Lan` refuses to start, and the API rejects non-local requests).
 - **Admin functions** (cameras, settings, model activation, saving labels) need the admin token from `.env`, entered
   in Settings → Security. Do not share the token.
 - Typical speed on this laptop (CPU): about 0.13–0.14 s per frame for detection, and about 4 s to process a

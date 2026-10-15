@@ -1,0 +1,121 @@
+{
+ "recorded_at": "2026-10-15",
+ "git_snapshot": "d0ea84d (branch snapshot/pre-api-security-20261015)",
+ "model": {
+  "active_version": "v3_store_cctv",
+  "path": "models/litter_yolo/v3_store_cctv/best.pt",
+  "sha256": "d1de9cb6ca7a8fe4348bd9a8c81bc3fdc5d0699965c263639b494486e2862bc6",
+  "classes": [
+   "plastic_bag",
+   "plastic_packaging",
+   "food_wrapper",
+   "paper",
+   "cardboard",
+   "plastic_bottle",
+   "cup",
+   "newspaper",
+   "plastic_piece",
+   "other_litter"
+  ]
+ },
+ "settings_rows_in_live_db": [],
+ "effective_detection_settings": {
+  "confidence": {
+   "weak_threshold": 0.3,
+   "candidate_threshold": 0.45,
+   "confirmed_threshold": 0.6
+  },
+  "inference": {
+   "image_size": 640,
+   "iou_threshold": 0.5,
+   "max_detections": 300,
+   "device": "auto",
+   "half": true,
+   "agnostic_nms": false
+  },
+  "tiling": {
+   "enabled": true,
+   "mode": "auto",
+   "tile_size": 1024,
+   "overlap": 0.2,
+   "auto_min_ratio": 1.25,
+   "include_full_frame": true,
+   "merge_iou": 0.5,
+   "cross_tile_ios": 0.75
+  },
+  "filters": {
+   "class_allowlist": null,
+   "class_blocklist": [],
+   "min_box_area_px": 36.0,
+   "max_box_area_frac": 0.25,
+   "max_aspect_ratio": 12.0,
+   "roi_enabled": true,
+   "roi_anchor": "footpoint",
+   "roi_margin_frac": 0.02,
+   "roi_crop_inference": true,
+   "roi_crop_pad_frac": 0.08
+  },
+  "tracking": {
+   "iou_match": 0.3,
+   "low_iou_match": 0.5,
+   "max_missed_frames": 15,
+   "temporal_window": 5,
+   "min_confirmations": 3,
+   "stationarity_enabled": true,
+   "max_center_shift_frac": 0.05
+  },
+  "severity": {
+   "high": [
+    {
+     "priorities": [
+      "critical"
+     ],
+     "classes": [],
+     "min_confidence": 0.75,
+     "min_active_objects": 0
+    },
+    {
+     "priorities": [],
+     "classes": [],
+     "min_confidence": 0.0,
+     "min_active_objects": 5
+    }
+   ],
+   "medium": [
+    {
+     "priorities": [
+      "critical",
+      "high"
+     ],
+     "classes": [],
+     "min_confidence": 0.0,
+     "min_active_objects": 0
+    }
+   ]
+  },
+  "alerts": {
+   "enabled": true,
+   "one_alert_per_track": true,
+   "dedup_window_sec": 900.0,
+   "dedup_iou": 0.3,
+   "dedup_center_frac": 0.04,
+   "class_match": "group",
+   "snapshot_jpeg_quality": 90,
+   "crop_padding_frac": 0.25,
+   "alert_on_image_uploads": true
+  },
+  "video": {
+   "sample_fps": 2.0,
+   "tiling": false,
+   "skip_static_frames": true,
+   "static_diff_threshold": 2.0,
+   "max_reuse_sec": 5.0,
+   "batch_size": 8,
+   "live_process_fps": 2.0,
+   "live_frame_skip": 0,
+   "live_log_interval_sec": 1.0,
+   "annotate_all_frames": true,
+   "max_video_seconds": 3600.0
+  }
+ }
+}
