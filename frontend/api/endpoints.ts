@@ -3,7 +3,7 @@ import type {
   Alert, AlertStatus, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
   DetectionRow, Evaluation, EvaluationListItem, Experiment, ExperimentDetail, HardExample, Health,
   Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
-  TestLabResponse, VideoResult, InvoiceEngineStatus, InvoiceExtractResponse,
+  TestLabResponse, VideoResult,
 } from './types'
 
 export type AlertQuery = {
@@ -83,8 +83,6 @@ export const Api = {
     api<TestLabResponse>('/api/testlab/run', { method: 'POST', body }),
   testlabUpload: (form: FormData) => api<TestLabResponse>('/api/testlab/upload', { form }),
 
-  invoiceEngine: () => api<InvoiceEngineStatus>('/api/invoices/engine'),
-  extractInvoices: (form: FormData, signal?: AbortSignal) => api<InvoiceExtractResponse>('/api/invoices/extract', { form, signal }),
   addReview: (body: { dataset: string; image: string; model_version: string; verdict: string; cls?: string; confidence?: number; bbox: number[] }) =>
     api<{ id: number }>('/api/testlab/reviews', { method: 'POST', body }),
 

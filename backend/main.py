@@ -15,7 +15,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.local_only import LocalOnlyMiddleware
 from backend.api.routes_auth import router as auth_router
 from backend.api.routes import router
-from backend.api.routes_invoice import router as invoice_router
 from backend.api.routes_lab import router as lab_router
 from backend.core.config import AppConfig
 from backend.services.state import AppState
@@ -53,7 +52,6 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
         from backend.auth import build_service
         app.state.auth = build_service(cfg)
     app.include_router(auth_router)
-    app.include_router(invoice_router)
     app.include_router(lab_router)
     app.include_router(router)
     return app

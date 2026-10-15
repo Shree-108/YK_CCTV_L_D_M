@@ -50,7 +50,7 @@ def test_local_requests_still_work(strict_cfg, host):
     ("/api/health", "GET"), ("/api/alerts", "GET"), ("/api/alerts/1/snapshot", "GET"),
     ("/api/cameras/cam1/stream", "GET"), ("/api/cameras/cam1/frame.jpg", "GET"), ("/api/captures/x/image", "GET"),
     ("/api/datasets/ds/image?id=a.jpg", "GET"), ("/api/export/alerts.csv", "GET"), ("/api/stream", "GET"),
-    ("/api/invoices/engine", "GET"), ("/api/alerts/1", "PATCH"), ("/api/detect/image", "POST"),
+    ("/api/alerts/1", "PATCH"), ("/api/detect/image", "POST"),
     ("/api/evaluations", "POST"), ("/docs", "GET"), ("/openapi.json", "GET"),
 ])
 def test_remote_requests_are_rejected_before_any_route(strict_cfg, path, method):
