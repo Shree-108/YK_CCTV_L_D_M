@@ -1,0 +1,42 @@
+[
+ {
+  "name": "plastic_bag",
+  "attributes": []
+ },
+ {
+  "name": "plastic_packaging",
+  "attributes": []
+ },
+ {
+  "name": "food_wrapper",
+  "attributes": []
+ },
+ {
+  "name": "paper",
+  "attributes": []
+ },
+ {
+  "name": "cardboard",
+  "attributes": []
+ },
+ {
+  "name": "plastic_bottle",
+  "attributes": []
+ },
+ {
+  "name": "cup",
+  "attributes": []
+ },
+ {
+  "name": "newspaper",
+  "attributes": []
+ },
+ {
+  "name": "plastic_piece",
+  "attributes": []
+ },
+ {
+  "name": "other_litter",
+  "attributes": []
+ }
+]

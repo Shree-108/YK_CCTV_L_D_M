@@ -1,0 +1,60 @@
+{
+ "source_file": "C:\\Users\\chinm\\AppData\\Local\\Temp\\ldm_ingest_test\\export\\ch1\\ch1_20260925154100.mp4",
+ "sha256": "113630450b57fec171828b4a8cfec6c691fdbf043841fa9bcac0ac8968aaa467",
+ "camera_id": "ch1",
+ "recording_start": "2026-09-25T15:41:00",
+ "recording_start_source": "file name",
+ "file_modified": "2026-10-12T22:59:09",
+ "video": {
+  "fps": 19.971,
+  "frames": 199,
+  "width": 640,
+  "height": 368,
+  "duration_sec": 9.96
+ },
+ "job_id": "20261012_230003_6d61c713",
+ "model_version": "v3_store_cctv",
+ "sample_fps": 2.0,
+ "processing_seconds": 6.2,
+ "processed_at": "2026-10-12T23:00:09+05:30",
+ "notes": [],
+ "job_status": "done",
+ "frames_analysed": 20,
+ "litter": {
+  "total": 1,
+  "roi_active": false,
+  "inside_roi": 1,
+  "outside_roi_ignored": 0,
+  "highest_confidence": 0.855,
+  "average_confidence": 0.8225,
+  "classes": [
+   {
+    "class": "food_wrapper",
+    "count": 1,
+    "max_confidence": 0.855,
+    "timestamps_sec": [
+     1.0014521055530519
+    ],
+    "avg_confidence": 0.8225
+   }
+  ],
+  "objects": [
+   {
+    "track_id": 1,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.855,
+    "avg_confidence": 0.8225
+   }
+  ]
+ },
+ "events": 1,
+ "alert_ids": [
+  1
+ ],
+ "snapshots": [
+  "alert_1_1s.jpg"
+ ],
+ "annotated_video": "storage/videos/20261012_230003_6d61c713/annotated.mp4",
+ "timestamps": "wall_time = recording_start + video_time_sec"
+}

@@ -3,7 +3,7 @@ import type {
   Alert, AlertStatus, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
   DetectionRow, Evaluation, EvaluationListItem, Experiment, ExperimentDetail, HardExample, Health,
   Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
-  TestLabResponse, VideoResult,
+  TestLabResponse, VideoResult, InvoiceEngineStatus, InvoiceExtractResponse,
 } from './types'
 
 export type AlertQuery = {
@@ -12,7 +12,8 @@ export type AlertQuery = {
 }
 
 export const Api = {
-  health: () => api<Health>('/api/health'),
+  // bounded: a hung backend must read as offline, not as 'checking' forever
+  health: () => api<Health>('/api/health', { signal: AbortSignal.timeout(8000) }),
   systemHealth: () => api<SystemHealth>('/api/system/health'),
   classes: () => api<{ classes: ClassInfo[] }>('/api/classes'),
   events: (limit = 100, camera_id?: string) => api<{ events: SystemEvent[] }>(`/api/events${qs({ limit, camera_id })}`),
@@ -81,6 +82,9 @@ export const Api = {
   testlabRun: (body: { dataset: string; image: string; versions: string[]; confidence: number; iou?: number; image_size?: number; tiling: string }) =>
     api<TestLabResponse>('/api/testlab/run', { method: 'POST', body }),
   testlabUpload: (form: FormData) => api<TestLabResponse>('/api/testlab/upload', { form }),
+
+  invoiceEngine: () => api<InvoiceEngineStatus>('/api/invoices/engine'),
+  extractInvoices: (form: FormData, signal?: AbortSignal) => api<InvoiceExtractResponse>('/api/invoices/extract', { form, signal }),
   addReview: (body: { dataset: string; image: string; model_version: string; verdict: string; cls?: string; confidence?: number; bbox: number[] }) =>
     api<{ id: number }>('/api/testlab/reviews', { method: 'POST', body }),
 

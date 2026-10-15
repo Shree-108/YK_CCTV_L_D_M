@@ -1,0 +1,21 @@
+# Invoice Image-to-CSV extraction - Python 3.10+ (tested on Python 3.14, Windows 11)
+# Everything runs locally/offline. No cloud services, no paid APIs.
+
+# OCR engine (default): PP-OCR models on ONNX Runtime; the models ship inside the package.
+rapidocr>=3.0
+onnxruntime>=1.17
+
+# image handling
+numpy>=1.26
+pillow>=10.1
+# cv2 is provided by opencv-python-headless (pulled in by rapidocr). If this environment already
+# has opencv-python (e.g. the CCTV backend), see README "Installing into the CCTV backend environment".
+
+# optional OCR fallback: needs the separate Tesseract program (UB Mannheim build on Windows)
+pytesseract>=0.3.10
+
+# web section (backend/api/routes_invoice.py) and tests
+fastapi>=0.115
+python-multipart>=0.0.9
+pytest>=8.0
+httpx>=0.27

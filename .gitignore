@@ -43,3 +43,18 @@ tsconfig.tsbuildinfo
 dataset/**/images/
 dataset/**/*.cache
 dataset/**/labels_source.json
+
+# --- demo startup (deploy/start-ldm.ps1) ---
+.next-demo/
+deploy/logs/
+deploy/run/
+
+# CCTV frames used as handover evidence (privacy: same rule as storage/)
+handover/evidence/**/*.jpg
+
+# --- invoice extraction: real invoices and their extracted data are business data, keep out of git ---
+invoices/input/*
+!invoices/input/.gitkeep
+invoices/output/*
+!invoices/output/.gitkeep
+.venv-invoice/

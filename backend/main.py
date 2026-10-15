@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
+from backend.api.routes_invoice import router as invoice_router
 from backend.api.routes_lab import router as lab_router
 from backend.core.config import AppConfig
 from backend.services.state import AppState
@@ -37,6 +38,7 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
     app = FastAPI(title="CCTV Litter Monitor API", version="3.0.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"],
                        allow_headers=["Authorization", "Content-Type", "X-Admin-Token"])
+    app.include_router(invoice_router)
     app.include_router(lab_router)
     app.include_router(router)
     return app

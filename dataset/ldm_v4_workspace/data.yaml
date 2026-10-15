@@ -1,0 +1,15 @@
+# ANNOTATION WORKSPACE - not a training dataset (no val split on purpose).
+# images/train holds EVERY candidate frame; the real split happens in training/build_ldm_dataset.py.
+# Class mapping copied from models/litter_yolo/v3_store_cctv - do not reorder.
+train: images/train
+names:
+  0: plastic_bag
+  1: plastic_packaging
+  2: food_wrapper
+  3: paper
+  4: cardboard
+  5: plastic_bottle
+  6: cup
+  7: newspaper
+  8: plastic_piece
+  9: other_litter

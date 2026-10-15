@@ -2,16 +2,17 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { AppProvider } from '@/frontend/stores/app'
 import { AppShell } from '@/frontend/components/shell/AppShell'
+import { BRAND, MODULE_NAME } from '@/frontend/lib/module'
 
 export const metadata: Metadata = {
-  title: { default: 'Yatrikart | Litter Detection', template: '%s · Yatrikart' },
+  title: { default: `${BRAND} | ${MODULE_NAME}`, template: `%s · ${BRAND}` },
   description: 'CCTV litter detection: live monitoring, alert investigation, model evaluation and dataset management.',
   icons: { icon: [{ url: '/icon.svg', type: 'image/svg+xml' }] },
 }
 
 export const viewport: Viewport = {
   colorScheme: 'dark light',
-  themeColor: '#0a1020',
+  themeColor: '#0a0a0a',
 }
 
 // Applies the saved theme before first paint (prevents a light/dark flash).

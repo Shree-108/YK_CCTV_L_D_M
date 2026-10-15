@@ -1,0 +1,7 @@
+event,class,confidence,video_time_sec,wall_time,frame_idx,track_id,alert_id
+confirmed,food_wrapper,0.9098,1.001,2026-09-25T15:42:41,20,1,5
+confirmed,food_wrapper,0.8498,1.001,2026-09-25T15:42:41,20,2,6
+confirmed,food_wrapper,0.7419,1.001,2026-09-25T15:42:41,20,3,7
+confirmed,plastic_piece,0.6043,6.009,2026-09-25T15:42:46,120,4,8
+confirmed,food_wrapper,0.8641,10.515,2026-09-25T15:42:50,210,5,9
+confirmed,food_wrapper,0.7018,40.559,2026-09-25T15:43:20,810,7,10

@@ -1,0 +1,6 @@
+PASS A16 video above the upload limit is refused with a clear message  [HTTP 413 {"detail":"File too large (limit 1 MB)"}]
+PASS A18a admin can change a setting (isolated copy)  [HTTP 200]
+PASS A17 10 s video with a 4 s limit: job finishes safely  [analysed ~4.0 s of 3.96 s]
+FAIL A17b truncation is visible in the job result / stats  [keys mentioning truncation: none]
+PASS A18 after restart: changed setting and active model are kept  [max_video_seconds=4.0, model=v3_store_cctv]
+4/5 passed

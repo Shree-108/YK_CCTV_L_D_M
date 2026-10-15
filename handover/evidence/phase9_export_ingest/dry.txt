@@ -1,0 +1,10 @@
+2026-10-12 22:59:40,283 INFO    HTTP Request: GET http://127.0.0.1:8765/api/health "HTTP/1.1 200 OK"
+2026-10-12 22:59:40,296 INFO    HTTP Request: GET http://127.0.0.1:8765/api/settings "HTTP/1.1 200 OK"
+2026-10-12 22:59:40,297 INFO    5 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 22:59:40,323 INFO    would process ch1_20260925154100.mp4 (camera ch1, start 2026-09-25T15:41:00, 1 MB, 9.96s)
+2026-10-12 22:59:40,335 INFO    would process copy_of_first_export.mp4 (camera ch1, start unknown, 1 MB, 9.96s)
+2026-10-12 22:59:41,218 ERROR   cannot decode broken_export.mp4: cannot open the video (unsupported codec/container or corrupt file)
+2026-10-12 22:59:41,236 INFO    would process ch2_20260925154200.mp4 (camera ch2, start 2026-09-25T15:42:00, 1 MB, 9.96s)
+2026-10-12 22:59:41,246 WARNING unsupported container .dav (export as MP4/AVI): native_export.dav
+2026-10-12 22:59:41,248 INFO    run summary: {'would_process': 3, 'failed': 1, 'unsupported': 1}
+[mov,mp4,m4a,3gp,3g2,mj2 @ 000001f5342560c0] moov atom not found

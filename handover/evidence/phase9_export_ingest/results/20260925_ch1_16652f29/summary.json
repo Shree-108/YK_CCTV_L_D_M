@@ -1,0 +1,118 @@
+{
+ "source_file": "C:\\Users\\chinm\\AppData\\Local\\Temp\\ldm_ingest_test\\export\\ch1\\ch1_20260925154240.mp4",
+ "sha256": "16652f29d0542ccd99ef404418ba18a054425b9c1046e928f344c3fba830062b",
+ "camera_id": "ch1",
+ "recording_start": "2026-09-25T15:42:40",
+ "recording_start_source": "file name",
+ "file_modified": "2026-10-12T23:00:39",
+ "video": {
+  "fps": 19.971,
+  "frames": 1198,
+  "width": 640,
+  "height": 368,
+  "duration_sec": 59.99
+ },
+ "job_id": "20261012_230150_a0c8eba6",
+ "model_version": "v3_store_cctv",
+ "sample_fps": 2.0,
+ "processing_seconds": 30.4,
+ "processed_at": "2026-10-12T23:02:20+05:30",
+ "notes": [],
+ "job_status": "done",
+ "frames_analysed": 120,
+ "litter": {
+  "total": 6,
+  "roi_active": false,
+  "inside_roi": 6,
+  "outside_roi_ignored": 0,
+  "highest_confidence": 0.9451,
+  "average_confidence": 0.7679,
+  "classes": [
+   {
+    "class": "food_wrapper",
+    "count": 5,
+    "max_confidence": 0.9451,
+    "timestamps_sec": [
+     1.0014521055530519,
+     1.0014521055530519,
+     1.0014521055530519,
+     10.515247108307046,
+     40.558810274898605
+    ],
+    "avg_confidence": 0.8142
+   },
+   {
+    "class": "plastic_piece",
+    "count": 1,
+    "max_confidence": 0.6887,
+    "timestamps_sec": [
+     6.008712633318312
+    ],
+    "avg_confidence": 0.536
+   }
+  ],
+  "objects": [
+   {
+    "track_id": 1,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.9451,
+    "avg_confidence": 0.9109
+   },
+   {
+    "track_id": 2,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.8835,
+    "avg_confidence": 0.8241
+   },
+   {
+    "track_id": 3,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.8848,
+    "avg_confidence": 0.7792
+   },
+   {
+    "track_id": 4,
+    "class": "plastic_piece",
+    "first_seen_sec": 6.008712633318312,
+    "max_confidence": 0.6887,
+    "avg_confidence": 0.536
+   },
+   {
+    "track_id": 5,
+    "class": "food_wrapper",
+    "first_seen_sec": 10.515247108307046,
+    "max_confidence": 0.9247,
+    "avg_confidence": 0.8545
+   },
+   {
+    "track_id": 7,
+    "class": "food_wrapper",
+    "first_seen_sec": 40.558810274898605,
+    "max_confidence": 0.8006,
+    "avg_confidence": 0.7024
+   }
+  ]
+ },
+ "events": 6,
+ "alert_ids": [
+  5,
+  6,
+  7,
+  8,
+  9,
+  10
+ ],
+ "snapshots": [
+  "alert_5_1s.jpg",
+  "alert_6_1s.jpg",
+  "alert_7_1s.jpg",
+  "alert_8_6s.jpg",
+  "alert_9_11s.jpg",
+  "alert_10_41s.jpg"
+ ],
+ "annotated_video": "storage/videos/20261012_230150_a0c8eba6/annotated.mp4",
+ "timestamps": "wall_time = recording_start + video_time_sec"
+}

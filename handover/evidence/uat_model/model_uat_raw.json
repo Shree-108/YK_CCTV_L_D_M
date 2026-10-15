@@ -1,0 +1,629 @@
+[
+ {
+  "id": "M01",
+  "case": "genuine litter + fridge products (store, day)",
+  "ms": 2729,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.83,
+    "status": "confirmed",
+    "bbox": [
+     102,
+     287,
+     136,
+     305
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M02",
+  "case": "genuine litter + fridge products (store, later)",
+  "ms": 272,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.91,
+    "status": "confirmed",
+    "bbox": [
+     190,
+     240,
+     222,
+     260
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.85,
+    "status": "confirmed",
+    "bbox": [
+     102,
+     287,
+     135,
+     305
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.82,
+    "status": "confirmed",
+    "bbox": [
+     60,
+     212,
+     83,
+     229
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.59,
+    "status": "candidate",
+    "bbox": [
+     158,
+     311,
+     177,
+     322
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M03",
+  "case": "people, car + tyre, fridge products",
+  "ms": 233,
+  "detections": [
+   {
+    "class": "plastic_piece",
+    "conf": 0.56,
+    "status": "candidate",
+    "bbox": [
+     120,
+     361,
+     133,
+     368
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M04",
+  "case": "people, motorbikes, fridge products",
+  "ms": 225,
+  "detections": [
+   {
+    "class": "plastic_piece",
+    "conf": 0.63,
+    "status": "confirmed",
+    "bbox": [
+     118,
+     348,
+     133,
+     354
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M05",
+  "case": "people, car, fridge products",
+  "ms": 230,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.37,
+    "status": "weak",
+    "bbox": [
+     121,
+     260,
+     137,
+     268
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.3,
+    "status": "weak",
+    "bbox": [
+     544,
+     281,
+     558,
+     286
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M06",
+  "case": "street litter + parked cars (synthetic)",
+  "ms": 243,
+  "detections": [
+   {
+    "class": "plastic_bag",
+    "conf": 0.95,
+    "status": "confirmed",
+    "bbox": [
+     452,
+     360,
+     542,
+     405
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.92,
+    "status": "confirmed",
+    "bbox": [
+     598,
+     492,
+     617,
+     500
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.89,
+    "status": "confirmed",
+    "bbox": [
+     415,
+     457,
+     507,
+     500
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.88,
+    "status": "confirmed",
+    "bbox": [
+     652,
+     626,
+     712,
+     653
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.88,
+    "status": "confirmed",
+    "bbox": [
+     605,
+     503,
+     654,
+     533
+    ]
+   },
+   {
+    "class": "paper",
+    "conf": 0.88,
+    "status": "confirmed",
+    "bbox": [
+     436,
+     236,
+     460,
+     244
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.87,
+    "status": "confirmed",
+    "bbox": [
+     31,
+     587,
+     56,
+     597
+    ]
+   },
+   {
+    "class": "paper",
+    "conf": 0.87,
+    "status": "confirmed",
+    "bbox": [
+     682,
+     317,
+     713,
+     328
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.86,
+    "status": "confirmed",
+    "bbox": [
+     781,
+     333,
+     795,
+     340
+    ]
+   },
+   {
+    "class": "paper",
+    "conf": 0.85,
+    "status": "confirmed",
+    "bbox": [
+     809,
+     509,
+     847,
+     525
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.85,
+    "status": "confirmed",
+    "bbox": [
+     554,
+     558,
+     608,
+     578
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.85,
+    "status": "confirmed",
+    "bbox": [
+     797,
+     432,
+     862,
+     449
+    ]
+   },
+   {
+    "class": "cup",
+    "conf": 0.83,
+    "status": "confirmed",
+    "bbox": [
+     818,
+     602,
+     840,
+     627
+    ]
+   },
+   {
+    "class": "other_litter",
+    "conf": 0.82,
+    "status": "confirmed",
+    "bbox": [
+     843,
+     598,
+     876,
+     617
+    ]
+   },
+   {
+    "class": "plastic_packaging",
+    "conf": 0.82,
+    "status": "confirmed",
+    "bbox": [
+     36,
+     540,
+     73,
+     552
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.69,
+    "status": "confirmed",
+    "bbox": [
+     785,
+     252,
+     822,
+     267
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.65,
+    "status": "confirmed",
+    "bbox": [
+     390,
+     326,
+     405,
+     336
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.55,
+    "status": "candidate",
+    "bbox": [
+     548,
+     285,
+     561,
+     290
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.52,
+    "status": "candidate",
+    "bbox": [
+     856,
+     710,
+     880,
+     720
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M07",
+  "case": "street litter + cars, other scene (synthetic)",
+  "ms": 226,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.86,
+    "status": "confirmed",
+    "bbox": [
+     417,
+     509,
+     470,
+     541
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.85,
+    "status": "confirmed",
+    "bbox": [
+     530,
+     440,
+     586,
+     474
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.8,
+    "status": "confirmed",
+    "bbox": [
+     588,
+     465,
+     618,
+     482
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.8,
+    "status": "confirmed",
+    "bbox": [
+     678,
+     410,
+     703,
+     422
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.74,
+    "status": "confirmed",
+    "bbox": [
+     449,
+     471,
+     522,
+     493
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.72,
+    "status": "confirmed",
+    "bbox": [
+     773,
+     586,
+     821,
+     606
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.69,
+    "status": "confirmed",
+    "bbox": [
+     837,
+     688,
+     857,
+     700
+    ]
+   },
+   {
+    "class": "paper",
+    "conf": 0.63,
+    "status": "confirmed",
+    "bbox": [
+     252,
+     414,
+     356,
+     447
+    ]
+   },
+   {
+    "class": "paper",
+    "conf": 0.51,
+    "status": "candidate",
+    "bbox": [
+     484,
+     547,
+     537,
+     577
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.51,
+    "status": "candidate",
+    "bbox": [
+     615,
+     427,
+     633,
+     436
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.49,
+    "status": "candidate",
+    "bbox": [
+     495,
+     416,
+     518,
+     426
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.46,
+    "status": "candidate",
+    "bbox": [
+     627,
+     363,
+     659,
+     374
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.44,
+    "status": "weak",
+    "bbox": [
+     391,
+     356,
+     424,
+     374
+    ]
+   },
+   {
+    "class": "plastic_packaging",
+    "conf": 0.41,
+    "status": "weak",
+    "bbox": [
+     370,
+     416,
+     419,
+     431
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.4,
+    "status": "weak",
+    "bbox": [
+     668,
+     672,
+     681,
+     678
+    ]
+   },
+   {
+    "class": "plastic_piece",
+    "conf": 0.37,
+    "status": "weak",
+    "bbox": [
+     368,
+     414,
+     420,
+     431
+    ]
+   },
+   {
+    "class": "food_wrapper",
+    "conf": 0.36,
+    "status": "weak",
+    "bbox": [
+     0,
+     168,
+     14,
+     201
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M08",
+  "case": "M01 darkened (dusk/poorly lit)",
+  "ms": 248,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.79,
+    "status": "confirmed",
+    "bbox": [
+     101,
+     286,
+     137,
+     305
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M09",
+  "case": "M01 blurred",
+  "ms": 223,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.83,
+    "status": "confirmed",
+    "bbox": [
+     101,
+     282,
+     142,
+     305
+    ]
+   },
+   {
+    "class": "plastic_packaging",
+    "conf": 0.36,
+    "status": "weak",
+    "bbox": [
+     152,
+     310,
+     186,
+     326
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M10",
+  "case": "M01 low resolution (1/3, upscaled)",
+  "ms": 218,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.8,
+    "status": "confirmed",
+    "bbox": [
+     101,
+     283,
+     140,
+     304
+    ]
+   }
+  ]
+ },
+ {
+  "id": "M11",
+  "case": "M01 heavy JPEG compression",
+  "ms": 233,
+  "detections": [
+   {
+    "class": "food_wrapper",
+    "conf": 0.79,
+    "status": "confirmed",
+    "bbox": [
+     110,
+     287,
+     134,
+     304
+    ]
+   }
+  ]
+ }
+]

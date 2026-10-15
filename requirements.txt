@@ -17,3 +17,12 @@ pytest>=8.0
 # legacy baseline engine only
 scikit-learn>=1.4
 joblib>=1.3
+# invoice image -> CSV extraction (invoice_extractor/). rapidocr itself is installed with
+# `pip install --no-deps rapidocr` so it does not add opencv-python-headless next to opencv-python.
+onnxruntime>=1.17
+pyclipper>=1.3
+shapely>=2.0
+omegaconf>=2.3
+colorlog>=6.0
+tqdm>=4.60
+pytesseract>=0.3.10

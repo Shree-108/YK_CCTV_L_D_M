@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, Cctv, BarChart3, Boxes, Camera, ClipboardCheck, Database, FileBarChart, FileVideo,
-  FlaskConical, History, ImageIcon, LayoutGrid, Microscope, ScanSearch, Settings, Sparkles, Target, type LucideIcon,
+  FlaskConical, History, ImageIcon, LayoutGrid, Microscope, ReceiptText, ScanSearch, Settings, Sparkles, Target, type LucideIcon,
 } from 'lucide-react'
 
 export type BadgeKey = 'online' | 'newAlerts' | 'cameras' | 'hardPending'
@@ -16,6 +16,7 @@ export const NAV: NavGroup[] = [
     { href: '/detect/image', label: 'Image Analysis', icon: ImageIcon, description: 'Upload a CCTV image and detect litter' },
     { href: '/detect/video', label: 'Video Analysis', icon: FileVideo, description: 'Upload a CCTV video and detect litter' },
     { href: '/live-cctv', label: 'Live CCTV', icon: Cctv, badge: 'online', description: 'Connect an authorized NVR/RTSP stream and detect litter live' },
+    { href: '/invoices', label: 'Invoice Extraction', icon: ReceiptText, description: 'Extract product line items from invoice images to CSV' },
     { href: '/alerts', label: 'Alerts', icon: AlertTriangle, badge: 'newAlerts', description: 'Detected litter incidents' },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, description: 'Detection trends and distributions' },
     { href: '/settings', label: 'Settings', icon: Settings, description: 'Detection, alerts, appearance, security' },

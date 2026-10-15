@@ -1,0 +1,4 @@
+date,change,model_version,dataset_version,evaluation_id,decision,approved_by,notes
+2026-09-30,register,v3_store_cctv,cctv_store_v2,,trained from v1 (YOLO11s 640 px); training-time validation only (same-scene val clip),,from models/litter_yolo/v3_store_cctv/model_meta.json; no approval was recorded at the time
+2026-10-05,baseline,v3_store_cctv,cctv_store_v2,,active production model when change control started (first DB registration on this PC 2026-10-05),,pre-existing: approver not recorded; this entry documents the baseline only
+2026-10-12,backup,v3_store_cctv,,,local backup models/backups/v3_store_cctv_20261012 (sha256 d1de9cb6ca7a8fe4348bd9a8c81bc3fdc5d0699965c263639b494486e2862bc6),,also in git commit 574c7e1

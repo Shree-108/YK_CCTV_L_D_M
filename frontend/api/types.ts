@@ -439,3 +439,45 @@ export interface SearchResult {
 }
 
 export interface ClassInfo { name: string; priority: string; bin: string; color: string | null; in_active_model: boolean }
+
+// ---------------------------------------------------------------- invoice extraction
+export interface InvoiceIssue { severity: 'error' | 'review' | 'warning' | 'info'; issue: string; detail: string; field: string; line_no: number | null }
+export interface InvoiceLineItem {
+  line_no: number
+  values: Partial<Record<'product_name' | 'sku' | 'hsn_code' | 'quantity' | 'unit' | 'unit_price' | 'discount' | 'taxable_value' | 'tax_rate' | 'tax_amount' | 'line_total', string>>
+  raw_text: string
+  ocr_confidence: number | null
+  method: 'table' | 'arithmetic'
+  arithmetic_check: 'ok' | 'mismatch' | 'not_checked'
+  needs_review: boolean
+  issues: InvoiceIssue[]
+}
+export interface InvoiceExtraction {
+  source_file: string
+  sha256: string
+  status: 'ok' | 'needs_review' | 'failed' | 'duplicate'
+  invoice_number: string
+  invoice_date: string
+  vendor_name: string
+  vendor_gstin: string
+  subtotal: string
+  invoice_total: string
+  duplicate_of: string
+  engine: string
+  items: InvoiceLineItem[]
+  issues: InvoiceIssue[]
+  quality: { blur_score?: number; mean_confidence?: number | null; seconds?: number; ocr_pass?: string; table_method?: string; sum_line_totals?: string; [k: string]: unknown }
+  needs_review: boolean
+}
+/** One row of products.csv (all values are strings, exactly as written to the CSV). */
+export type InvoiceProductRow = Record<string, string>
+export interface InvoiceExtractResponse {
+  engine: string
+  invoices: InvoiceExtraction[]
+  skipped_identical: string[]
+  totals: { invoices: number; rows: number; rows_needing_review: number; failed: number; duplicates: number }
+  products: InvoiceProductRow[]
+  csv: { products: string; review: string; summary: string }
+  disclaimer: string
+}
+export interface InvoiceEngineStatus { available: boolean; engine: string | null; loaded: boolean; error?: string }

@@ -1,0 +1,148 @@
+{
+ "mode": "workspace",
+ "path": "C:\\SHREE\\YATRIKART\\PROJECTS\\YK_CCTV_L_D_M_main\\YK_CCTV_L_D_M\\dataset\\ldm_v4_workspace",
+ "classes": [
+  "plastic_bag",
+  "plastic_packaging",
+  "food_wrapper",
+  "paper",
+  "cardboard",
+  "plastic_bottle",
+  "cup",
+  "newspaper",
+  "plastic_piece",
+  "other_litter"
+ ],
+ "images_listed": 215,
+ "review_status": {
+  "unreviewed": 215
+ },
+ "verified_images": 0,
+ "unverified_images": 215,
+ "verified_by_category": {},
+ "empty_label_images": 0,
+ "boxes_per_class": {},
+ "split_preview": {
+  "note": "no verified images yet - nothing to split"
+ },
+ "errors": 0,
+ "warnings": 0,
+ "infos": 16,
+ "issue_counts": {
+  "INFO:near_duplicate": 16
+ },
+ "issues": [
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000000.jpg",
+   "detail": "same session as store_entrance_poc3min__f0001120.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000000.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002680.jpg (distance 6/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000000.jpg",
+   "detail": "same session as store_entrance_poc3min__f0003240.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000440.jpg",
+   "detail": "same session as store_entrance_poc3min__f0001120.jpg (distance 4/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000440.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002040.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000440.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002680.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0000440.jpg",
+   "detail": "same session as store_entrance_poc3min__f0003240.jpg (distance 6/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0001120.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002040.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0001120.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002680.jpg (distance 3/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0001120.jpg",
+   "detail": "same session as store_entrance_poc3min__f0003240.jpg (distance 4/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0002040.jpg",
+   "detail": "same session as store_entrance_poc3min__f0002680.jpg (distance 2/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "store_entrance_poc3min__f0002680.jpg",
+   "detail": "same session as store_entrance_poc3min__f0003240.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "street_aug100__cctv_litter_006.jpg",
+   "detail": "same session as street_aug100__cctv_litter_062.jpg (distance 6/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "street_aug100__cctv_litter_015.jpg",
+   "detail": "same session as street_aug100__cctv_litter_075.jpg (distance 6/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "street_aug100__cctv_litter_060.jpg",
+   "detail": "same session as street_aug100__cctv_litter_076.jpg (distance 6/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  },
+  {
+   "severity": "INFO",
+   "type": "near_duplicate",
+   "image": "street_aug100__cctv_litter_062.jpg",
+   "detail": "same session as street_aug100__cctv_litter_094.jpg (distance 5/256)",
+   "action": "fine within one session; across sessions the build ties them to one split"
+  }
+ ]
+}

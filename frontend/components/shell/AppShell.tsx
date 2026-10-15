@@ -4,12 +4,14 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowRight, Bell, ChevronsLeft, ChevronsRight, CornerDownLeft, Menu, Search, Settings as SettingsIcon, X, Zap,
+  ArrowRight, Bell, ChevronsLeft, ChevronsRight, CornerDownLeft, Menu, Search, Settings as SettingsIcon, X,
 } from 'lucide-react'
+import { API_BASE } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SearchResult } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
 import { ago, cx, className as cls, pct } from '../../lib/format'
+import { BRAND, MODULE_NAME } from '../../lib/module'
 import { useApp } from '../../stores/app'
 import { Badge, Dot, IconButton, Kbd } from '../ui/primitives'
 import { Drawer, Toaster } from '../ui/overlay'
@@ -30,27 +32,63 @@ function useBadges(): Partial<Record<BadgeKey, number>> {
   }
 }
 
+/** Yatrikart wordmark + the active AI module (lib/module.ts). Logo is white; inverted in light theme. */
+function Brand({ collapsed }: { collapsed?: boolean }) {
+  return (
+    <div className={cx('flex h-16 shrink-0 items-center', collapsed ? 'justify-center px-0' : 'px-5')}>
+      {collapsed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/brand/yatrikart-mark.png" alt={`${BRAND} · ${MODULE_NAME}`} title={`${BRAND} · ${MODULE_NAME}`}
+          className="brand-logo h-6 w-auto select-none" draggable={false} />
+      ) : (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/yatrikart-wordmark.png" alt={BRAND} className="brand-logo h-[19px] w-auto self-start select-none" draggable={false} />
+          <div className="truncate text-[9.5px] font-semibold uppercase tracking-[0.24em] text-fg-3">{MODULE_NAME}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- backend connection status
+/** "Connected" only after /api/health actually answered; the live event stream is reported separately. */
+function useBackendStatus(): { tone: 'ok' | 'warn' | 'crit'; label: string; hint?: string; detail: string } {
+  const { stream } = useApp()
+  const health = useQuery('health', Api.health, { poll: 15000 })
+  if (health.error) {
+    return { tone: 'crit', label: 'Backend offline', hint: API_BASE,
+      detail: `${health.error.message} Retrying every 15 s. If the API is running, check that this page's address is listed in CORS_ORIGINS.` }
+  }
+  if (!health.data) return { tone: 'warn', label: 'Connecting to backend…', hint: API_BASE, detail: `Waiting for ${API_BASE}/api/health` }
+  if (!health.data.model) {
+    return { tone: 'warn', label: 'Backend online · no model', hint: 'detection unavailable',
+      detail: health.data.model_error ?? 'No model loaded' }
+  }
+  if (stream !== 'open') {
+    return { tone: 'ok', label: 'Connected to backend', hint: 'live updates reconnecting…', detail: `${API_BASE} · event stream ${stream}` }
+  }
+  return { tone: 'ok', label: 'Connected to backend', detail: `${API_BASE} · model ${health.data.model.version}` }
+}
+
 // ---------------------------------------------------------------- sidebar
 function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const pathname = usePathname()
   const badges = useBadges()
   const active = navFor(pathname)
-  const { stream } = useApp()
+  const conn = useBackendStatus()
   return (
     <nav aria-label="Primary" className="flex h-full flex-col">
-      <div className={cx('flex h-16 shrink-0 items-center gap-3', collapsed ? 'justify-center px-0' : 'px-5')}>
-        <div className="flex size-9 items-center justify-center rounded-xl bg-info text-white shadow-sm"><Zap className="size-5" aria-hidden /></div>
-        {!collapsed && (
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-[14px] font-bold tracking-[0.06em] text-fg">YATRIKART</div>
-            <div className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-info">Litter detection</div>
-          </div>
-        )}
-      </div>
+      <Brand collapsed={collapsed} />
       {!collapsed && (
-        <div className={cx('mx-4 mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]', stream === 'open' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn')}>
-          <span className={cx('size-1.5 rounded-full', stream === 'open' ? 'live-dot bg-ok' : 'bg-warn')} aria-hidden />
-          {stream === 'open' ? 'Connected to backend' : 'Connecting to backend…'}
+        <div role="status" title={conn.detail}
+          className={cx('mx-4 mb-2 rounded-lg px-3 py-2 text-[12px]',
+            conn.tone === 'ok' ? 'bg-ok-bg text-ok' : conn.tone === 'crit' ? 'bg-crit-bg text-crit' : 'bg-warn-bg text-warn')}>
+          <div className="flex items-center gap-2">
+            <span className={cx('size-1.5 shrink-0 rounded-full', conn.tone === 'ok' ? 'live-dot bg-ok' : conn.tone === 'crit' ? 'bg-crit' : 'bg-warn')} aria-hidden />
+            {conn.label}
+          </div>
+          {conn.hint && <div className="mt-0.5 truncate pl-3.5 text-[10.5px] opacity-80">{conn.hint}</div>}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
@@ -303,7 +341,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg">
-      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[70] focus:rounded focus:bg-info focus:px-2 focus:py-1 focus:text-white">Skip to content</a>
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[70] focus:rounded focus:bg-info focus:px-2 focus:py-1 focus:text-on-accent">Skip to content</a>
       <aside className={cx('relative hidden shrink-0 border-r border-line bg-panel transition-[width] duration-150 lg:block', sidebarCollapsed ? 'w-[56px]' : 'w-[228px]')}>
         <Sidebar collapsed={sidebarCollapsed} />
         <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}

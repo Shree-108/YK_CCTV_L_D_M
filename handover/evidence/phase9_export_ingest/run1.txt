@@ -1,0 +1,10 @@
+2026-10-12 23:00:03,229 INFO    5 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:03,331 INFO    submitted ch1_20260925154100.mp4 as job 20261012_230003_6d61c713 (camera ch1)
+2026-10-12 23:00:09,465 INFO    done ch1_20260925154100.mp4: 1 confirmed litter event(s), 6 s -> C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045
+2026-10-12 23:00:09,468 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): copy_of_first_export.mp4
+2026-10-12 23:00:09,633 ERROR   cannot decode broken_export.mp4: cannot open the video (unsupported codec/container or corrupt file)
+2026-10-12 23:00:09,719 INFO    submitted ch2_20260925154200.mp4 as job 20261012_230009_c682dfdd (camera ch2)
+2026-10-12 23:00:12,983 INFO    done ch2_20260925154200.mp4: 3 confirmed litter event(s), 3 s -> C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch2_e44d17fd
+2026-10-12 23:00:12,992 WARNING unsupported container .dav (export as MP4/AVI): native_export.dav
+2026-10-12 23:00:12,992 INFO    run summary: {'done': 2, 'duplicate': 1, 'failed': 1, 'unsupported': 1}
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0000018bacdd7b00] moov atom not found

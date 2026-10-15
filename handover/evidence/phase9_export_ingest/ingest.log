@@ -1,0 +1,30 @@
+2026-10-12 23:00:03,229 INFO    5 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:03,331 INFO    submitted ch1_20260925154100.mp4 as job 20261012_230003_6d61c713 (camera ch1)
+2026-10-12 23:00:09,465 INFO    done ch1_20260925154100.mp4: 1 confirmed litter event(s), 6 s -> C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045
+2026-10-12 23:00:09,468 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): copy_of_first_export.mp4
+2026-10-12 23:00:09,633 ERROR   cannot decode broken_export.mp4: cannot open the video (unsupported codec/container or corrupt file)
+2026-10-12 23:00:09,719 INFO    submitted ch2_20260925154200.mp4 as job 20261012_230009_c682dfdd (camera ch2)
+2026-10-12 23:00:12,983 INFO    done ch2_20260925154200.mp4: 3 confirmed litter event(s), 3 s -> C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch2_e44d17fd
+2026-10-12 23:00:12,992 WARNING unsupported container .dav (export as MP4/AVI): native_export.dav
+2026-10-12 23:00:12,992 INFO    run summary: {'done': 2, 'duplicate': 1, 'failed': 1, 'unsupported': 1}
+2026-10-12 23:00:35,014 INFO    5 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:35,017 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): ch1_20260925154100.mp4
+2026-10-12 23:00:35,020 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): copy_of_first_export.mp4
+2026-10-12 23:00:35,021 INFO    gave up earlier (failed: cannot open the video (unsupported codec/container or corrupt file)): broken_export.mp4
+2026-10-12 23:00:35,026 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch2_e44d17fd): ch2_20260925154200.mp4
+2026-10-12 23:00:35,030 INFO    gave up earlier (unsupported: .dav is not accepted by the app: export as MP4/AVI in KVMS (or convert)): native_export.dav
+2026-10-12 23:00:35,031 INFO    run summary: {'duplicate': 3, 'skipped': 2}
+2026-10-12 23:00:51,192 INFO    6 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:51,195 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): ch1_20260925154100.mp4
+2026-10-12 23:00:51,387 INFO    submitted ch1_20260925154240.mp4 as job 20261012_230051_e27f2ec4 (camera ch1)
+2026-10-12 23:01:32,592 ERROR   LDM API became unreachable (ConnectError on /api/jobs/20261012_230051_e27f2ec4): stopping this run; ch1_20260925154240.mp4 stays pending
+2026-10-12 23:01:32,592 INFO    run summary: {'duplicate': 1, 'api_down': 1}
+2026-10-12 23:01:49,915 INFO    6 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:01:49,919 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): ch1_20260925154100.mp4
+2026-10-12 23:01:50,113 INFO    submitted ch1_20260925154240.mp4 as job 20261012_230150_a0c8eba6 (camera ch1)
+2026-10-12 23:02:20,553 INFO    done ch1_20260925154240.mp4: 6 confirmed litter event(s), 31 s -> C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_16652f29
+2026-10-12 23:02:20,558 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): copy_of_first_export.mp4
+2026-10-12 23:02:20,560 INFO    gave up earlier (failed: cannot open the video (unsupported codec/container or corrupt file)): broken_export.mp4
+2026-10-12 23:02:20,563 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch2_e44d17fd): ch2_20260925154200.mp4
+2026-10-12 23:02:20,565 INFO    gave up earlier (unsupported: .dav is not accepted by the app: export as MP4/AVI in KVMS (or convert)): native_export.dav
+2026-10-12 23:02:20,565 INFO    run summary: {'duplicate': 3, 'done': 1, 'skipped': 2}

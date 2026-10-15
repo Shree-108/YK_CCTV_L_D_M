@@ -1,0 +1,5 @@
+2026-10-12 23:00:51,192 INFO    6 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:51,195 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): ch1_20260925154100.mp4
+2026-10-12 23:00:51,387 INFO    submitted ch1_20260925154240.mp4 as job 20261012_230051_e27f2ec4 (camera ch1)
+2026-10-12 23:01:32,592 ERROR   LDM API became unreachable (ConnectError on /api/jobs/20261012_230051_e27f2ec4): stopping this run; ch1_20260925154240.mp4 stays pending
+2026-10-12 23:01:32,592 INFO    run summary: {'duplicate': 1, 'api_down': 1}

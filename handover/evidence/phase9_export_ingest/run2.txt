@@ -1,0 +1,7 @@
+2026-10-12 23:00:35,014 INFO    5 video file(s) in C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\export; model v3_store_cctv
+2026-10-12 23:00:35,017 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): ch1_20260925154100.mp4
+2026-10-12 23:00:35,020 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch1_11363045): copy_of_first_export.mp4
+2026-10-12 23:00:35,021 INFO    gave up earlier (failed: cannot open the video (unsupported codec/container or corrupt file)): broken_export.mp4
+2026-10-12 23:00:35,026 INFO    already processed (C:\Users\chinm\AppData\Local\Temp\ldm_ingest_test\ingest\results\20260925_ch2_e44d17fd): ch2_20260925154200.mp4
+2026-10-12 23:00:35,030 INFO    gave up earlier (unsupported: .dav is not accepted by the app: export as MP4/AVI in KVMS (or convert)): native_export.dav
+2026-10-12 23:00:35,031 INFO    run summary: {'duplicate': 3, 'skipped': 2}

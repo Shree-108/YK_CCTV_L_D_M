@@ -1,0 +1,80 @@
+{
+ "source_file": "C:\\Users\\chinm\\AppData\\Local\\Temp\\ldm_ingest_test\\export\\ch2\\ch2_20260925154200.mp4",
+ "sha256": "e44d17fdc44194df0b26f93e07b32b63093778934234e938422ca20f6c6ef313",
+ "camera_id": "ch2",
+ "recording_start": "2026-09-25T15:42:00",
+ "recording_start_source": "file name",
+ "file_modified": "2026-10-12T22:59:10",
+ "video": {
+  "fps": 19.971,
+  "frames": 199,
+  "width": 640,
+  "height": 368,
+  "duration_sec": 9.96
+ },
+ "job_id": "20261012_230009_c682dfdd",
+ "model_version": "v3_store_cctv",
+ "sample_fps": 2.0,
+ "processing_seconds": 3.2,
+ "processed_at": "2026-10-12T23:00:12+05:30",
+ "notes": [],
+ "job_status": "done",
+ "frames_analysed": 20,
+ "litter": {
+  "total": 3,
+  "roi_active": false,
+  "inside_roi": 3,
+  "outside_roi_ignored": 0,
+  "highest_confidence": 0.8811,
+  "average_confidence": 0.8344,
+  "classes": [
+   {
+    "class": "food_wrapper",
+    "count": 3,
+    "max_confidence": 0.8811,
+    "timestamps_sec": [
+     1.0014521055530519,
+     1.0014521055530519,
+     1.0014521055530519
+    ],
+    "avg_confidence": 0.8344
+   }
+  ],
+  "objects": [
+   {
+    "track_id": 1,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.8572,
+    "avg_confidence": 0.8551
+   },
+   {
+    "track_id": 2,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.8811,
+    "avg_confidence": 0.8671
+   },
+   {
+    "track_id": 3,
+    "class": "food_wrapper",
+    "first_seen_sec": 1.0014521055530519,
+    "max_confidence": 0.7823,
+    "avg_confidence": 0.7811
+   }
+  ]
+ },
+ "events": 3,
+ "alert_ids": [
+  2,
+  3,
+  4
+ ],
+ "snapshots": [
+  "alert_2_1s.jpg",
+  "alert_3_1s.jpg",
+  "alert_4_1s.jpg"
+ ],
+ "annotated_video": "storage/videos/20261012_230009_c682dfdd/annotated.mp4",
+ "timestamps": "wall_time = recording_start + video_time_sec"
+}

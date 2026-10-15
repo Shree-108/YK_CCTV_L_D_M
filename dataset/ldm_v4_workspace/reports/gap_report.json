@@ -1,0 +1,232 @@
+{
+ "workspace": "C:\\SHREE\\YATRIKART\\PROJECTS\\YK_CCTV_L_D_M_main\\YK_CCTV_L_D_M\\dataset\\ldm_v4_workspace",
+ "images_listed": 215,
+ "usable_images": 0,
+ "usable_real": 0,
+ "review_status": {
+  "unreviewed": 215
+ },
+ "source_type_all": {
+  "real_cctv": 116,
+  "synthetic": 99
+ },
+ "usable_by_source_and_category": {
+  "real_cctv": {},
+  "other_real": {}
+ },
+ "usable_by_category": {},
+ "sessions": {},
+ "cameras": {},
+ "hard_negative_and_litter_tags": {},
+ "conditions": {},
+ "boxes_per_class": {
+  "plastic_bag": 0,
+  "plastic_packaging": 0,
+  "food_wrapper": 0,
+  "paper": 0,
+  "cardboard": 0,
+  "plastic_bottle": 0,
+  "cup": 0,
+  "newspaper": 0,
+  "plastic_piece": 0,
+  "other_litter": 0
+ },
+ "small_boxes": 0,
+ "overlay_suspect": 70,
+ "needs_annotation": 215,
+ "ambiguous": 0,
+ "needs_category": 0,
+ "manifest_value_problems": [],
+ "gaps": [
+  {
+   "item": "genuine litter images (real)",
+   "have": 0,
+   "target": 300,
+   "missing": 300
+  },
+  {
+   "item": "hard-negative images (real)",
+   "have": 0,
+   "target": 200,
+   "missing": 200
+  },
+  {
+   "item": "clean-scene images (real)",
+   "have": 0,
+   "target": 100,
+   "missing": 100
+  },
+  {
+   "item": "boxes of class 'plastic_bag'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'plastic_packaging'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'food_wrapper'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'paper'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'cardboard'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'plastic_bottle'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'cup'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'newspaper'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'plastic_piece'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "boxes of class 'other_litter'",
+   "have": 0,
+   "target": 50,
+   "missing": 50
+  },
+  {
+   "item": "small / distant litter boxes (< 32x32 px)",
+   "have": 0,
+   "target": 150,
+   "missing": 150
+  },
+  {
+   "item": "hard negative: product_display",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: shop_inventory",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: car",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: motorcycle",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: tyre",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: entrance",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: shadow",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: reflection",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: pavement_marking",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "hard negative: person_carrying",
+   "have": 0,
+   "target": 20,
+   "missing": 20
+  },
+  {
+   "item": "condition: day",
+   "have": 0,
+   "target": 30,
+   "missing": 30
+  },
+  {
+   "item": "condition: dusk",
+   "have": 0,
+   "target": 30,
+   "missing": 30
+  },
+  {
+   "item": "condition: night / IR",
+   "have": 0,
+   "target": 30,
+   "missing": 30
+  },
+  {
+   "item": "condition: rain / wet ground",
+   "have": 0,
+   "target": 30,
+   "missing": 30
+  },
+  {
+   "item": "condition: glare / harsh shadow",
+   "have": 0,
+   "target": 30,
+   "missing": 30
+  },
+  {
+   "item": "independent recording sessions",
+   "have": 0,
+   "target": 8,
+   "missing": 8
+  }
+ ],
+ "targets": {
+  "litter_images": 300,
+  "hard_negative_images": 200,
+  "clean_images": 100,
+  "boxes_per_class": 50,
+  "small_boxes": 150,
+  "images_per_hard_negative_type": 20,
+  "images_per_condition": 30,
+  "sessions": 8
+ }
+}

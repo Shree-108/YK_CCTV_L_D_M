@@ -136,7 +136,7 @@ export function RoiEditor({ src, width, height, zones, onChange }: { src: string
         <div className="ml-auto flex gap-1.5">
           <button className="h-7 rounded-md border border-line px-2 text-fg-2 hover:bg-hover disabled:opacity-40" disabled={!draft.length} onClick={() => setDraft((d) => d.slice(0, -1))}>Undo point</button>
           <button className="h-7 rounded-md border border-line px-2 text-fg-2 hover:bg-hover disabled:opacity-40" disabled={!draft.length} onClick={() => setDraft([])}>Clear</button>
-          <button className="h-7 rounded-md bg-info px-2 font-medium text-white disabled:opacity-40" disabled={draft.length < 3}
+          <button className="h-7 rounded-md bg-info px-2 font-medium text-on-accent disabled:opacity-40" disabled={draft.length < 3}
             onClick={() => { onChange([...zones, { name: `${type}-${zones.length + 1}`, type, mode, polygon: draft }]); setDraft([]) }}>Add zone</button>
         </div>
       </div>

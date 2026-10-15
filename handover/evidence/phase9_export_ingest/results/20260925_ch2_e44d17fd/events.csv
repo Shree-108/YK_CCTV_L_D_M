@@ -1,0 +1,4 @@
+event,class,confidence,video_time_sec,wall_time,frame_idx,track_id,alert_id
+confirmed,food_wrapper,0.8572,1.001,2026-09-25T15:42:01,20,1,2
+confirmed,food_wrapper,0.8495,1.001,2026-09-25T15:42:01,20,2,3
+confirmed,food_wrapper,0.7796,1.001,2026-09-25T15:42:01,20,3,4
