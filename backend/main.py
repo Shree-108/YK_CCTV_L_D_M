@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.local_only import LocalOnlyMiddleware
+from backend.api.routes_auth import router as auth_router
 from backend.api.routes import router
 from backend.api.routes_invoice import router as invoice_router
 from backend.api.routes_lab import router as lab_router
@@ -44,6 +45,14 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
                        allow_headers=["Authorization", "Content-Type", "X-Admin-Token"])
     # Added last = outermost: no login exists yet, so only this computer may call the API (any --host).
     app.add_middleware(LocalOnlyMiddleware, extra_hosts=cfg.local_extra_hosts)
+    # Login/sessions (Step 2): the auth database is only opened/created when LM_AUTH_MODE=on. No route is
+    # protected by it yet (Step 4); require_admin and ADMIN_API_TOKEN work exactly as before.
+    app.state.auth_cfg = cfg
+    app.state.auth = None
+    if cfg.auth_mode == "on":
+        from backend.auth import build_service
+        app.state.auth = build_service(cfg)
+    app.include_router(auth_router)
     app.include_router(invoice_router)
     app.include_router(lab_router)
     app.include_router(router)

@@ -55,6 +55,27 @@ class AppConfig:
     # Client names treated as local by the local-only safeguard in addition to loopback IPs. Tests only
     # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
     local_extra_hosts: tuple[str, ...] = ()
+    # Login / sessions (API security plan Step 2). OFF by default; no route is protected by it yet (Step 4).
+    auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "off").strip().lower())
+    auth_db_path: Path = field(default_factory=lambda: _env_path("LM_AUTH_DB_PATH", PROJECT_ROOT / "storage" / "auth.db"))
+    auth_idle_minutes: int = field(default_factory=lambda: _env_int("LM_AUTH_IDLE_MINUTES", 30))
+    auth_max_session_hours: int = field(default_factory=lambda: _env_int("LM_AUTH_MAX_SESSION_HOURS", 12))
+    auth_max_failures: int = field(default_factory=lambda: _env_int("LM_AUTH_MAX_FAILURES", 5))
+    auth_lockout_minutes: int = field(default_factory=lambda: _env_int("LM_AUTH_LOCKOUT_MINUTES", 15))
+    auth_min_password_length: int = field(default_factory=lambda: _env_int("LM_AUTH_MIN_PASSWORD_LENGTH", 12))
+    # Secure cookie flag: auto = only when the request arrived over HTTPS; true/false force it
+    auth_cookie_secure: str = field(default_factory=lambda: os.getenv("LM_AUTH_COOKIE_SECURE", "auto").strip().lower())
+
+    def __post_init__(self) -> None:
+        if self.auth_mode not in ("off", "on"):
+            raise ValueError(f"LM_AUTH_MODE must be 'off' or 'on' (got {self.auth_mode!r})")
+        if self.auth_cookie_secure not in ("auto", "true", "false"):
+            raise ValueError(f"LM_AUTH_COOKIE_SECURE must be auto, true or false (got {self.auth_cookie_secure!r})")
+        for name in ("auth_idle_minutes", "auth_max_session_hours", "auth_max_failures", "auth_lockout_minutes"):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if self.auth_min_password_length < 8:
+            raise ValueError("LM_AUTH_MIN_PASSWORD_LENGTH must be at least 8")
 
     @property
     def alerts_dir(self) -> Path:
