@@ -4,11 +4,12 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowRight, Bell, ChevronsLeft, ChevronsRight, CornerDownLeft, Menu, Search, Settings as SettingsIcon, X,
+  ArrowRight, Bell, ChevronsLeft, ChevronsRight, CornerDownLeft, LogOut, Menu, Search, Settings as SettingsIcon, X,
 } from 'lucide-react'
 import { API_BASE } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SearchResult } from '../../api/types'
+import { useAuth } from '../../features/auth/AuthGate'
 import { useQuery } from '../../hooks/useQuery'
 import { ago, cx, className as cls, pct } from '../../lib/format'
 import { BRAND, MODULE_NAME } from '../../lib/module'
@@ -276,6 +277,8 @@ function Topbar() {
   const health = useQuery('health', Api.health, { poll: 15000 })
   const alerts = useQuery('alerts:newcount', () => Api.alerts({ status: 'new', limit: 1 }), { poll: 15000 })
   const [notifOpen, setNotifOpen] = useState(false)
+  const auth = useAuth()
+  const [signingOut, setSigningOut] = useState(false)
   const cams = Object.values(liveCameras)
   const online = cams.filter((c) => c.state === 'online').length
   const warn = cams.filter((c) => c.state !== 'online').length
@@ -317,6 +320,15 @@ function Topbar() {
           <span className={cx('flex size-5 items-center justify-center rounded-full text-[10px] font-semibold', isAdmin ? 'bg-exp-bg text-exp' : 'bg-panel-2 text-fg-3')}>{isAdmin ? 'AD' : 'OP'}</span>
           <span className="hidden sm:inline">{isAdmin ? 'Admin' : 'Operator'}</span>
         </Link>
+        {auth.status === 'signed_in' && auth.user && (
+          <div className="flex h-8 items-center gap-1 rounded-md border border-line pl-2 text-[12px] text-fg-2"
+            title={`Signed in as ${auth.user.username} (${auth.user.role})`}>
+            <span className="max-w-[120px] truncate">{auth.user.username}</span>
+            <span className="hidden rounded-sm bg-panel-2 px-1 text-[10px] uppercase tracking-wide text-fg-3 sm:inline">{auth.user.role}</span>
+            <IconButton icon={LogOut} label="Sign out" disabled={signingOut}
+              onClick={async () => { setSigningOut(true); await auth.signOut() }} />
+          </div>
+        )}
       </div>
       <NotificationCenter open={notifOpen} onClose={() => setNotifOpen(false)} />
     </header>

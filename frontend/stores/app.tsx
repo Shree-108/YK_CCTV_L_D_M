@@ -131,7 +131,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let closed = false
     const connect = () => {
       setStream('connecting')
-      es = new EventSource(`${API_BASE}/api/stream`)
+      es = new EventSource(`${API_BASE}/api/stream`, { withCredentials: true })   // sends the session cookie
       es.onopen = () => {
         setStream('open')
         delay = 2000

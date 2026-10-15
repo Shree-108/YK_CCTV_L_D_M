@@ -23,7 +23,8 @@ from backend.core.config import AppConfig
 
 def _read_password(from_stdin: bool) -> str:
     if from_stdin:
-        return sys.stdin.readline().rstrip("\r\n")
+        # Windows PowerShell 5.1 prefixes piped text with a UTF-8 byte-order mark; it is never part of a password
+        return sys.stdin.readline().rstrip("\r\n").lstrip("﻿")
     first = getpass.getpass("New password: ")
     if getpass.getpass("Repeat password: ") != first:
         raise PasswordPolicyError("the two passwords do not match")

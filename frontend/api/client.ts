@@ -62,7 +62,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (token && (opts.admin || (opts.method && opts.method !== 'GET'))) headers.Authorization = `Bearer ${token}`
   let res: Response
   try {
-    res = await fetch(`${API_BASE}${path}`, { method: opts.method ?? (body ? 'POST' : 'GET'), headers, body, signal: opts.signal })
+    // credentials: the browser attaches the HttpOnly session cookie (it is never readable from JavaScript)
+    res = await fetch(`${API_BASE}${path}`, { method: opts.method ?? (body ? 'POST' : 'GET'), headers, body, signal: opts.signal, credentials: 'include' })
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw e
     throw new ApiError(0, `Backend not reachable at ${API_BASE}. Is the API server running?`)
@@ -85,7 +86,7 @@ export const url = (path: string) => `${API_BASE}${path}`
 /** Download a file from an admin-protected endpoint (plain links cannot send the bearer token). */
 export async function downloadAuthed(path: string, filename: string): Promise<void> {
   const token = getAdminToken()
-  const res = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+  const res = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include' })
   if (!res.ok) {
     let msg = `Download failed (${res.status})`
     try { msg = (await res.json()).detail ?? msg } catch { /* not json */ }

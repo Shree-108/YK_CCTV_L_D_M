@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { AppProvider } from '@/frontend/stores/app'
+import { AuthGate } from '@/frontend/features/auth/AuthGate'
 import { AppShell } from '@/frontend/components/shell/AppShell'
 import { BRAND, MODULE_NAME } from '@/frontend/lib/module'
 
@@ -25,9 +26,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <AppProvider>
-          <AppShell>{children}</AppShell>
-        </AppProvider>
+        {/* Outermost: with LM_AUTH_MODE=on nothing else starts (streams, polling) until signed in; off = unchanged */}
+        <AuthGate>
+          <AppProvider>
+            <AppShell>{children}</AppShell>
+          </AppProvider>
+        </AuthGate>
       </body>
     </html>
   )

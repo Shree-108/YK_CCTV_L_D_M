@@ -40,8 +40,10 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
     app = FastAPI(title="CCTV Litter Monitor API", version="3.0.0", lifespan=lifespan,
                   docs_url="/docs" if docs else None, redoc_url="/redoc" if docs else None,
                   openapi_url="/openapi.json" if docs else None)
-    app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"],
-                       allow_headers=["Authorization", "Content-Type", "X-Admin-Token"])
+    # allow_credentials: the browser may send the HttpOnly session cookie (Step 3) - only to the explicit origins
+    # listed in CORS_ORIGINS (never "*"). Retry-After is readable so the login screen can show a lock-out time.
+    app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"], allow_credentials=True,
+                       allow_headers=["Authorization", "Content-Type", "X-Admin-Token"], expose_headers=["Retry-After"])
     # Added last = outermost: no login exists yet, so only this computer may call the API (any --host).
     app.add_middleware(LocalOnlyMiddleware, extra_hosts=cfg.local_extra_hosts)
     # Login/sessions (Step 2): the auth database is only opened/created when LM_AUTH_MODE=on. No route is

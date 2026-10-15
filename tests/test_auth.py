@@ -343,3 +343,38 @@ def test_cli_manages_users_without_echoing_passwords(tmp_path, monkeypatch, caps
     assert PASS not in out.out + out.err
     with pytest.raises(SystemExit):
         main(["add-user", "dave", "--role", "viewer", PASS])                  # no password arguments
+
+
+# ---------------------------------------------------------------- Step 3: cookies across the UI/API origins
+def test_cors_allows_credentials_only_for_listed_origins(tmp_path):
+    cfg = _cfg(tmp_path, "on")
+    cfg.cors_origins = ["http://localhost:3010"]
+    with _client(cfg) as c:
+        ok = c.get("/api/auth/me", headers={"Origin": "http://localhost:3010"})
+        assert ok.headers["access-control-allow-origin"] == "http://localhost:3010"     # exact origin, never "*"
+        assert ok.headers["access-control-allow-credentials"] == "true"
+        pre = c.options("/api/auth/login", headers={"Origin": "http://localhost:3010",
+                                                     "Access-Control-Request-Method": "POST",
+                                                     "Access-Control-Request-Headers": "content-type"})
+        assert pre.status_code == 200 and pre.headers["access-control-allow-credentials"] == "true"
+        evil = c.get("/api/auth/me", headers={"Origin": "http://evil.example"})
+        assert "access-control-allow-origin" not in evil.headers
+        assert "access-control-allow-credentials" not in evil.headers or \
+            evil.headers.get("access-control-allow-origin") is None
+        c.app.state.auth.add_user("alice", "viewer", PASS)
+        for _ in range(5):
+            c.post("/api/auth/login", json={"username": "alice", "password": OTHER}, headers={"Origin": "http://localhost:3010"})
+        locked = c.post("/api/auth/login", json={"username": "alice", "password": OTHER}, headers={"Origin": "http://localhost:3010"})
+        assert locked.status_code == 429
+        assert "retry-after" in locked.headers.get("access-control-expose-headers", "").lower()
+
+
+def test_cli_strips_powershell_byte_order_mark(tmp_path, monkeypatch):
+    """Windows PowerShell 5.1 pipes text with a UTF-8 BOM; the stored password must be the typed one."""
+    from backend.auth.__main__ import main
+    from backend.auth import build_service
+    monkeypatch.setenv("LM_AUTH_DB_PATH", str(tmp_path / "bom_auth.db"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("\ufeff" + PASS + "\r\n"))
+    assert main(["add-user", "erin", "--role", "viewer", "--password-stdin"]) == 0
+    svc = build_service(AppConfig())
+    assert svc.login("erin", PASS, "127.0.0.1")[1].username == "erin"
