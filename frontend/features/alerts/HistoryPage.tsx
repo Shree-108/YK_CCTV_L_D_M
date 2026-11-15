@@ -2,8 +2,7 @@
 
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Download, History } from 'lucide-react'
-import { url } from '../../api/client'
+import { History } from 'lucide-react'
 import { Api } from '../../api/endpoints'
 import type { DetectionRow } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
@@ -11,6 +10,7 @@ import { className as cls, dateTime, dayEndIso, dayStartIso, num, pct } from '..
 import { Badge, Button, Field, Input, PageHeader, Panel, Select, StatusBadge } from '../../components/ui/primitives'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
+import { ExportCsvButton } from './ExportCsvButton'
 
 const PAGE = 100
 
@@ -31,11 +31,11 @@ export default function HistoryPage() {
   const exp = new URLSearchParams(Object.entries({ camera_id: f.camera_id, start: q.start ?? '', end: q.end ?? '' }).filter(([, v]) => v)).toString()
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <PageHeader title="Detection history" description="Every detection the pipeline logged — including rejected ones with their reason — from images, videos and live cameras. Live cameras are logged at most once per interval (Settings → Video)."
-        actions={<a href={url(`/api/export/detections.csv${exp ? `?${exp}` : ''}`)}><Button icon={Download}>Export CSV</Button></a>} />
+        actions={<ExportCsvButton table="detections" query={exp} />} />
       <Panel noPad>
-        <div className="grid grid-cols-2 gap-2 border-b border-line p-3 md:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 border-b border-line bg-panel-2/40 px-4 py-3 md:grid-cols-4 xl:grid-cols-7">
           <Field label="From"><Input type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></Field>
           <Field label="To"><Input type="date" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} /></Field>
           <Field label="Camera"><Select value={f.camera_id} onChange={(e) => setF({ ...f, camera_id: e.target.value })}>

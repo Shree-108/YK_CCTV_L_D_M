@@ -8,7 +8,7 @@ import { Api } from '../../api/endpoints'
 import type { GtBox, TestLabPred, TestLabResponse, TestLabResult } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
 import { className as cls, cx, num, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, IconButton, PageHeader, Panel, Segmented, Select, Slider, Toggle } from '../../components/ui/primitives'
 import { Columns } from '../../components/ui/charts'
 import { MetricCard } from '../../components/ui/kpi'
@@ -20,7 +20,8 @@ type Source = 'dataset' | 'upload'
 type Verdict = 'true_positive' | 'false_positive' | 'false_negative' | 'uncertain'
 
 export default function TestLabPage() {
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const models = useQuery('models', Api.models)
   const datasets = useQuery('datasets', Api.datasets)
   const [source, setSource] = useState<Source>('dataset')
@@ -127,7 +128,7 @@ export default function TestLabPage() {
               <Field label="Inference mode"><Select value={tiling} onChange={(e) => setTiling(e.target.value as typeof tiling)}>
                 <option value="off">Full frame</option><option value="on">Tiled</option><option value="auto">Auto</option></Select></Field>
             </div>
-            <Button variant="primary" icon={Play} disabled={!canRun} loading={pending} onClick={run}>Run all</Button>
+            <Button variant="primary" icon={Play} disabled={!canRun || !canOperate} title={opLock} loading={pending} onClick={run}>Run all</Button>
           </div>
         </div>
       </Panel>
@@ -174,6 +175,8 @@ function ModelColumn({ r, res, src, showGt, review, marks, onMark }: {
   r: TestLabResult; res: TestLabResponse; src: string | null; showGt: boolean; review: boolean; marks: Record<string, Verdict>
   onMark: (r: TestLabResult, key: string, v: Verdict, box: { bbox: number[]; class?: string; confidence?: number }) => void
 }) {
+  const { canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const [sel, setSel] = useState<string | null>(null)
   const gt = res.ground_truth
   const boxes = useMemo<OverlayBox[]>(() => {
@@ -230,12 +233,12 @@ function ModelColumn({ r, res, src, showGt, review, marks, onMark }: {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {selPred ? <>
-                <Button size="sm" icon={CheckCircle2} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'true_positive', selPred)}>True positive</Button>
-                <Button size="sm" icon={XCircle} variant="danger" onClick={() => onMark(r, `${r.model_version}:${sel}`, 'false_positive', selPred)}>False positive</Button>
+                <Button size="sm" icon={CheckCircle2} disabled={!canOperate} title={opLock} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'true_positive', selPred)}>True positive</Button>
+                <Button size="sm" icon={XCircle} variant="danger" disabled={!canOperate} title={opLock} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'false_positive', selPred)}>False positive</Button>
               </> : (
-                <Button size="sm" icon={ShieldX} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'false_negative', { bbox: selGt!.bbox, class: selGt!.class })}>Confirm false negative</Button>
+                <Button size="sm" icon={ShieldX} disabled={!canOperate} title={opLock} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'false_negative', { bbox: selGt!.bbox, class: selGt!.class })}>Confirm false negative</Button>
               )}
-              <Button size="sm" variant="ghost" icon={CircleHelp} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'uncertain', selPred ?? { bbox: selGt!.bbox, class: selGt!.class })}>Uncertain</Button>
+              <Button size="sm" variant="ghost" icon={CircleHelp} disabled={!canOperate} title={opLock} onClick={() => onMark(r, `${r.model_version}:${sel}`, 'uncertain', selPred ?? { bbox: selGt!.bbox, class: selGt!.class })}>Uncertain</Button>
             </div>
           </div>
         )}

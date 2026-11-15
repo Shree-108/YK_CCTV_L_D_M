@@ -8,7 +8,7 @@ import { Api } from '../../api/endpoints'
 import type { HardExample } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { className as cls, dateTime, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, PageHeader, Panel, Segmented, StatusBadge, Tabs } from '../../components/ui/primitives'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
 
@@ -89,7 +89,8 @@ function Crop({ h }: { h: HardExample }) {
 }
 
 function HardCard({ h }: { h: HardExample }) {
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const [busy, setBusy] = useState(false)
   const set = async (s: string) => {
     setBusy(true)
@@ -118,9 +119,9 @@ function HardCard({ h }: { h: HardExample }) {
         <div className="flex items-center justify-between text-[11px] text-fg-3"><span>{h.source.split(':')[0]}</span><span>{dateTime(h.created_at)}</span></div>
       </div>
       <div className="mt-auto flex gap-1 border-t border-line p-1.5">
-        <Button size="sm" variant="ghost" icon={Check} disabled={busy} onClick={() => set('approved')} title="Keep for the next training round">Approve</Button>
-        <Button size="sm" variant="ghost" icon={X} disabled={busy} onClick={() => set('rejected')} title="Not a real failure (e.g. label error)">Reject</Button>
-        <Button size="sm" variant="ghost" icon={EyeOff} disabled={busy} onClick={() => set('ignored')}>Ignore</Button>
+        <Button size="sm" variant="ghost" icon={Check} disabled={busy || !canOperate} onClick={() => set('approved')} title={opLock ?? 'Keep for the next training round'}>Approve</Button>
+        <Button size="sm" variant="ghost" icon={X} disabled={busy || !canOperate} onClick={() => set('rejected')} title={opLock ?? 'Not a real failure (e.g. label error)'}>Reject</Button>
+        <Button size="sm" variant="ghost" icon={EyeOff} disabled={busy || !canOperate} title={opLock} onClick={() => set('ignored')}>Ignore</Button>
         <Badge className="ml-auto self-center" title="Copying into a dataset version is done via the Dataset Lab + Ground Truth editor">add via GT</Badge>
       </div>
     </article>

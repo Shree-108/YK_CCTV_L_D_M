@@ -30,14 +30,15 @@ export interface LiveSummary {
 export interface Health {
   status: 'ok' | 'degraded'
   time: string
-  uptime_sec: number
-  model: { version: string; path: string; device: string; classes: string[]; train_imgsz: number } | null
+  // uptime_sec, model.path, admin_enabled, system and hardware: only for admins (or with login off)
+  uptime_sec?: number
+  model: { version: string; path?: string; device: string; classes: string[]; train_imgsz: number } | null
   model_error: string | null
   cameras: { configured: number; running: number; online: number }
-  admin_enabled: boolean
+  admin_enabled?: boolean
   notifications: { provider: string; configured: boolean }[]
-  system: { cpu_percent: number; memory_percent: number; gpu: null | Record<string, unknown> }
-  hardware: { cuda: boolean; cpu_count: number; gpu?: string; vram_gb?: number; recommended: Record<string, unknown> }
+  system?: { cpu_percent: number; memory_percent: number; gpu: null | Record<string, unknown> }
+  hardware?: { cuda: boolean; cpu_count: number; gpu?: string; vram_gb?: number; recommended: Record<string, unknown> }
 }
 
 export interface RoiZone {
@@ -77,7 +78,8 @@ export interface Camera {
   updated_at: string
   status: CameraStatus
   rtsp?: Partial<RtspConfig>
-  rtsp_url?: string          // masked, never contains the password
+  rtsp_url?: string          // masked, never contains the password (admins / login off only)
+  rtsp_configured?: boolean  // a CCTV camera has connection details (everyone)
   has_password?: boolean
 }
 

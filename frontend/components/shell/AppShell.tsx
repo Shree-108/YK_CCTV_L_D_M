@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowRight, Bell, ChevronsLeft, ChevronsRight, CornerDownLeft, LogOut, Menu, Search, Settings as SettingsIcon, X,
+  AlertTriangle, ArrowRight, Bell, ChevronDown, ChevronsLeft, ChevronsRight, CornerDownLeft, Cpu, LogOut, Menu, Search, Settings as SettingsIcon, X,
 } from 'lucide-react'
 import { API_BASE } from '../../api/client'
 import { Api } from '../../api/endpoints'
@@ -13,8 +13,8 @@ import { useAuth } from '../../features/auth/AuthGate'
 import { useQuery } from '../../hooks/useQuery'
 import { ago, cx, className as cls, pct } from '../../lib/format'
 import { BRAND, MODULE_NAME } from '../../lib/module'
-import { useApp } from '../../stores/app'
-import { Badge, Dot, IconButton, Kbd } from '../ui/primitives'
+import { useApp, type UiRole } from '../../stores/app'
+import { Dot, IconButton, Kbd } from '../ui/primitives'
 import { Drawer, Toaster } from '../ui/overlay'
 import { EmptyState } from '../ui/states'
 import { ALL_NAV, NAV, navFor, type BadgeKey } from './nav'
@@ -36,16 +36,16 @@ function useBadges(): Partial<Record<BadgeKey, number>> {
 /** Yatrikart wordmark + the active AI module (lib/module.ts). Logo is white; inverted in light theme. */
 function Brand({ collapsed }: { collapsed?: boolean }) {
   return (
-    <div className={cx('flex h-16 shrink-0 items-center', collapsed ? 'justify-center px-0' : 'px-5')}>
+    <div className={cx('flex h-14 shrink-0 items-center border-b border-line', collapsed ? 'justify-center px-0' : 'px-5')}>
       {collapsed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/brand/yatrikart-mark.png" alt={`${BRAND} · ${MODULE_NAME}`} title={`${BRAND} · ${MODULE_NAME}`}
           className="brand-logo h-6 w-auto select-none" draggable={false} />
       ) : (
-        <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/yatrikart-wordmark.png" alt={BRAND} className="brand-logo h-[19px] w-auto self-start select-none" draggable={false} />
-          <div className="truncate text-[9.5px] font-semibold uppercase tracking-[0.24em] text-fg-3">{MODULE_NAME}</div>
+          <img src="/brand/yatrikart-wordmark.png" alt={BRAND} className="brand-logo h-[18px] w-auto self-start select-none" draggable={false} />
+          <div className="truncate text-[9.5px] font-semibold uppercase tracking-[0.26em] text-fg-3">{MODULE_NAME}</div>
         </div>
       )}
     </div>
@@ -53,27 +53,33 @@ function Brand({ collapsed }: { collapsed?: boolean }) {
 }
 
 // ---------------------------------------------------------------- backend connection status
+type ConnTone = 'ok' | 'warn' | 'crit'
 /** "Connected" only after /api/health actually answered; the live event stream is reported separately. */
-function useBackendStatus(): { tone: 'ok' | 'warn' | 'crit'; label: string; hint?: string; detail: string } {
+function useBackendStatus(): { tone: ConnTone; label: string; short: string; hint?: string; detail: string } {
   const { stream } = useApp()
   const health = useQuery('health', Api.health, { poll: 15000 })
   if (health.error) {
-    return { tone: 'crit', label: 'Backend offline', hint: API_BASE,
+    return { tone: 'crit', label: 'Backend offline', short: 'Offline', hint: API_BASE,
       detail: `${health.error.message} Retrying every 15 s. If the API is running, check that this page's address is listed in CORS_ORIGINS.` }
   }
-  if (!health.data) return { tone: 'warn', label: 'Connecting to backend…', hint: API_BASE, detail: `Waiting for ${API_BASE}/api/health` }
+  if (!health.data) return { tone: 'warn', label: 'Connecting to backend…', short: 'Connecting…', hint: API_BASE, detail: `Waiting for ${API_BASE}/api/health` }
   if (!health.data.model) {
-    return { tone: 'warn', label: 'Backend online · no model', hint: 'detection unavailable',
+    return { tone: 'warn', label: 'Backend online · no model', short: 'No model', hint: 'detection unavailable',
       detail: health.data.model_error ?? 'No model loaded' }
   }
   if (stream !== 'open') {
-    return { tone: 'ok', label: 'Connected to backend', hint: 'live updates reconnecting…', detail: `${API_BASE} · event stream ${stream}` }
+    return { tone: 'ok', label: 'Connected to backend', short: 'Connected', hint: 'live updates reconnecting…', detail: `${API_BASE} · event stream ${stream}` }
   }
-  return { tone: 'ok', label: 'Connected to backend', detail: `${API_BASE} · model ${health.data.model.version}` }
+  return { tone: 'ok', label: 'Connected to backend', short: 'Connected', detail: `${API_BASE} · model ${health.data.model.version}` }
 }
 
+const CONN_PILL: Record<ConnTone, string> = {
+  ok: 'border-ok/30 bg-ok-bg text-ok', warn: 'border-warn/30 bg-warn-bg text-warn', crit: 'border-crit/30 bg-crit-bg text-crit',
+}
+const CONN_DOT: Record<ConnTone, string> = { ok: 'live-dot bg-ok', warn: 'bg-warn', crit: 'bg-crit' }
+
 // ---------------------------------------------------------------- sidebar
-function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+function Sidebar({ collapsed, onNavigate, onToggle }: { collapsed: boolean; onNavigate?: () => void; onToggle?: () => void }) {
   const pathname = usePathname()
   const badges = useBadges()
   const active = navFor(pathname)
@@ -81,52 +87,52 @@ function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
   return (
     <nav aria-label="Primary" className="flex h-full flex-col">
       <Brand collapsed={collapsed} />
-      {!collapsed && (
-        <div role="status" title={conn.detail}
-          className={cx('mx-4 mb-2 rounded-lg px-3 py-2 text-[12px]',
-            conn.tone === 'ok' ? 'bg-ok-bg text-ok' : conn.tone === 'crit' ? 'bg-crit-bg text-crit' : 'bg-warn-bg text-warn')}>
-          <div className="flex items-center gap-2">
-            <span className={cx('size-1.5 shrink-0 rounded-full', conn.tone === 'ok' ? 'live-dot bg-ok' : conn.tone === 'crit' ? 'bg-crit' : 'bg-warn')} aria-hidden />
-            {conn.label}
-          </div>
-          {conn.hint && <div className="mt-0.5 truncate pl-3.5 text-[10.5px] opacity-80">{conn.hint}</div>}
-        </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto py-2">
-        {NAV.filter((g) => !g.hidden).map((g) => {
-          const open = true
-          return (
-          <div key={g.label} className="mb-2">
-            {!collapsed && <div className="px-5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-fg-3">{g.label}</div>}
-            {collapsed && <div className="mx-3 my-2 border-t border-line" aria-hidden />}
-            {(open || collapsed) && <ul>
+      <div className="min-h-0 flex-1 overflow-y-auto py-3">
+        {NAV.filter((g) => !g.hidden).map((g, gi) => (
+          <div key={g.label} className="mb-3">
+            {collapsed
+              ? gi > 0 && <div className="mx-3 mb-3 border-t border-line" aria-hidden />
+              : <div className="px-5 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-fg-3">{g.label}</div>}
+            <ul className="flex flex-col gap-0.5">
               {g.items.map((it) => {
                 const on = active?.href === it.href
                 const b = it.badge ? badges[it.badge] : undefined
                 return (
-                  <li key={it.href} className="px-2">
+                  <li key={it.href} className="px-2.5">
                     <Link href={it.href} onClick={onNavigate} title={collapsed ? it.label : undefined}
                       aria-current={on ? 'page' : undefined}
-                      className={cx('group relative flex items-center gap-3 rounded-lg transition-colors',
-                        'h-10 text-[14px]',
+                      className={cx('group relative flex h-9 items-center gap-3 rounded-md text-[13.5px] transition-colors',
                         collapsed ? 'justify-center' : 'px-3',
-                        on ? 'bg-info-bg font-medium text-info' : 'text-fg-2 hover:bg-hover hover:text-fg')}>
-                      <it.icon className={cx('size-4 shrink-0', on ? 'text-info' : 'text-fg-3 group-hover:text-fg-2')} aria-hidden />
+                        on ? 'bg-info-bg font-medium text-fg' : 'text-fg-2 hover:bg-hover hover:text-fg')}>
+                      {on && <span className="absolute -left-2.5 bottom-1.5 top-1.5 w-[3px] rounded-r-full bg-info" aria-hidden />}
+                      <it.icon className={cx('size-4 shrink-0', on ? 'text-fg' : 'text-fg-3 group-hover:text-fg-2')} aria-hidden />
                       {!collapsed && <span className="flex-1 truncate">{it.label}</span>}
                       {b !== undefined && (collapsed
-                        ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-info" aria-label={`${b}`} />
-                        : <span className={cx('tabular rounded-sm px-1.5 text-[11px] font-medium',
-                            it.badge === 'newAlerts' ? 'bg-crit-bg text-crit' : it.badge === 'online' ? 'bg-ok-bg text-ok' : 'bg-panel-2 text-fg-3')}>
-                            {it.badge === 'online' && <span className="live-dot mr-1 inline-block size-1.5 rounded-full bg-ok align-middle" aria-hidden />}{b}
+                        ? <span className={cx('absolute right-1.5 top-1.5 size-1.5 rounded-full', it.badge === 'newAlerts' ? 'bg-crit' : it.badge === 'online' ? 'bg-ok' : 'bg-fg-3')} aria-label={`${b}`} />
+                        : <span className={cx('tabular min-w-5 rounded-full px-1.5 text-center text-[11px] font-semibold leading-[18px]',
+                            it.badge === 'newAlerts' ? 'bg-crit text-white' : it.badge === 'online' ? 'bg-ok-bg text-ok' : 'bg-panel-2 text-fg-3')}>
+                            {b > 99 ? '99+' : b}
                           </span>)}
                     </Link>
                   </li>
                 )
               })}
-            </ul>}
+            </ul>
           </div>
-          )
-        })}
+        ))}
+      </div>
+      <div className={cx('flex shrink-0 items-center gap-2 border-t border-line py-2.5', collapsed ? 'flex-col px-2' : 'px-3')}>
+        <Link href="/system" onClick={onNavigate} title={`${conn.label}${conn.hint ? ` · ${conn.hint}` : ''}\n${conn.detail}`}
+          className={cx('flex min-w-0 items-center gap-2 rounded-md text-[12px] text-fg-2 hover:bg-hover hover:text-fg', collapsed ? 'size-8 justify-center' : 'h-8 flex-1 px-2')}>
+          <span className={cx('size-2 shrink-0 rounded-full', CONN_DOT[conn.tone])} aria-hidden />
+          {collapsed ? <span className="sr-only">{conn.label}</span> : <span className="truncate">{conn.label}</span>}
+        </Link>
+        {onToggle && (
+          <button onClick={onToggle} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-hover hover:text-fg">
+            {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+          </button>
+        )}
       </div>
     </nav>
   )
@@ -270,65 +276,120 @@ function NotificationCenter({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 // ---------------------------------------------------------------- top bar
+const ROLE_LABEL: Record<UiRole, string> = { viewer: 'Viewer', operator: 'Operator', admin: 'Admin' }
+const ROLE_INITIALS: Record<UiRole, string> = { viewer: 'VW', operator: 'OP', admin: 'AD' }
+const ROLE_HINT: Record<UiRole, string> = {
+  viewer: 'Viewer: read-only access.',
+  operator: 'Operator: view, run detections and review alerts.',
+  admin: 'Admin: full access, including configuration and exports.',
+}
+
+/** Signed-in user (login on) or the current UI role (login off), with role details and sign-out. */
+function ProfileMenu() {
+  const { role, loginOn, tokenAdmin } = useApp()
+  const auth = useAuth()
+  const [open, setOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const user = auth.status === 'signed_in' ? auth.user : null
+  const name = user?.username ?? ROLE_LABEL[role]
+  const initials = user ? user.username.slice(0, 2).toUpperCase() : ROLE_INITIALS[role]
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label={`Account: ${name}, role ${ROLE_LABEL[role]}`}
+        className="flex h-9 items-center gap-2 rounded-md pl-1 pr-1.5 text-left hover:bg-hover">
+        <span className={cx('flex size-7 items-center justify-center rounded-full text-[11px] font-semibold', role === 'admin' ? 'bg-exp-bg text-exp' : 'bg-info-bg text-fg')}>{initials}</span>
+        <span className="hidden min-w-0 flex-col leading-tight xl:flex">
+          <span className="max-w-[120px] truncate text-[12.5px] font-medium text-fg">{name}</span>
+          <span className="text-[10.5px] text-fg-3">{user ? user.role : ROLE_LABEL[role]}</span>
+        </span>
+        <ChevronDown className="hidden size-3.5 text-fg-3 xl:block" aria-hidden />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-40 mt-1.5 w-64 rounded-lg border border-line bg-elev p-1.5 shadow-[var(--shadow)]">
+          <div className="border-b border-line px-2.5 pb-2.5 pt-1.5">
+            <div className="truncate text-[13px] font-medium text-fg">{user ? `Signed in as ${user.username}` : `Role: ${ROLE_LABEL[role]}`}</div>
+            <div className="mt-0.5 text-[11.5px] text-fg-3">
+              {ROLE_HINT[role]}{tokenAdmin ? ' (admin token)' : loginOn ? '' : ' Sign in as admin in Settings → Security.'}
+            </div>
+          </div>
+          <Link role="menuitem" href="/settings?tab=security" onClick={() => setOpen(false)}
+            className="mt-1 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-fg-2 hover:bg-hover hover:text-fg">
+            <SettingsIcon className="size-3.5" aria-hidden /> Role &amp; security
+          </Link>
+          {user && (
+            <button role="menuitem" disabled={signingOut} onClick={async () => { setSigningOut(true); await auth.signOut() }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-fg-2 hover:bg-hover hover:text-fg disabled:opacity-50">
+              <LogOut className="size-3.5" aria-hidden /> Sign out
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Topbar() {
   const pathname = usePathname()
   const item = navFor(pathname)
-  const { setPaletteOpen, setMobileNavOpen, unread, stream, liveCameras, isAdmin } = useApp()
+  const { setPaletteOpen, setMobileNavOpen, unread } = useApp()
   const health = useQuery('health', Api.health, { poll: 15000 })
   const alerts = useQuery('alerts:newcount', () => Api.alerts({ status: 'new', limit: 1 }), { poll: 15000 })
   const [notifOpen, setNotifOpen] = useState(false)
-  const auth = useAuth()
-  const [signingOut, setSigningOut] = useState(false)
-  const cams = Object.values(liveCameras)
-  const online = cams.filter((c) => c.state === 'online').length
-  const warn = cams.filter((c) => c.state !== 'online').length
-  const sysTone = health.error ? 'crit' : health.data?.status === 'ok' ? 'ok' : health.data ? 'warn' : 'neutral'
-  const sysText = health.error ? 'Backend offline' : health.data?.status === 'ok' ? 'Operational' : health.data ? 'Degraded' : 'Checking…'
+  const conn = useBackendStatus()
+  const model = health.data?.model
+  const newAlerts = alerts.data?.total ?? 0
 
   return (
-    <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-line bg-bg/90 px-3 backdrop-blur md:px-4">
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel/95 px-3 backdrop-blur md:px-5">
       <IconButton icon={Menu} label="Open navigation" className="lg:hidden" onClick={() => setMobileNavOpen(true)} />
-      <div className="min-w-0">
-        <div className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-fg-3">{(ALL_NAV.find((n) => n.href === item?.href)?.group ?? 'AI Operations')}</div>
-        <div className="truncate text-[13px] font-semibold text-fg">{item?.label ?? 'AI Litter Operations'}</div>
+      <div className="min-w-0 shrink">
+        <div className="truncate text-[15px] font-semibold leading-tight text-fg">{item?.label ?? MODULE_NAME}</div>
+        <div className="hidden max-w-[280px] truncate text-[11px] text-fg-3 sm:block">{item?.description ?? `${BRAND} · ${MODULE_NAME}`}</div>
       </div>
       <button onClick={() => setPaletteOpen(true)} aria-label="Open search (Ctrl+K)"
-        className="mx-auto hidden h-8 w-full max-w-md items-center gap-2 rounded-md border border-line bg-panel px-2.5 text-[12px] text-fg-3 hover:border-line-strong md:flex">
-        <Search className="size-3.5" aria-hidden /> Search cameras, alerts, models…
+        className="mx-auto hidden h-9 w-full max-w-md items-center gap-2 rounded-md border border-line bg-panel-2 px-3 text-[12.5px] text-fg-3 transition-colors hover:border-line-strong md:flex">
+        <Search className="size-4" aria-hidden /> Search cameras, alerts, models…
         <span className="ml-auto flex gap-0.5"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
       </button>
-      <div className="ml-auto flex items-center gap-1.5 md:ml-0">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 md:ml-0">
         <IconButton icon={Search} label="Search" className="md:hidden" onClick={() => setPaletteOpen(true)} />
-        <Link href="/system" className="hidden items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-fg-2 hover:bg-hover lg:flex" title={health.data?.model_error ?? undefined}>
-          <Dot tone={sysTone} pulse={sysTone === 'ok'} /> {sysText}
+        <Link href="/system" title={`${conn.label}${conn.hint ? ` · ${conn.hint}` : ''}\n${conn.detail}`} role="status"
+          className={cx('hidden h-8 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium lg:flex', CONN_PILL[conn.tone])}>
+          <span className={cx('size-1.5 rounded-full', CONN_DOT[conn.tone])} aria-hidden />{conn.short}
         </Link>
-        <Link href="/alerts" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-fg-2 hover:bg-hover" aria-label={`${alerts.data?.total ?? 0} new alerts`}>
-          <span className="hidden sm:inline">Alerts</span>
-          <span className={cx('tabular rounded-sm px-1.5 font-mono text-[12px]', (alerts.data?.total ?? 0) > 0 ? 'bg-crit-bg text-crit' : 'bg-panel-2 text-fg-3')}>
-            {alerts.data ? String(alerts.data.total).padStart(2, '0') : '—'}
-          </span>
+        {model && (
+          <Link href="/model-lab" title={`Active model ${model.version} on ${model.device.toUpperCase()} · ${model.classes.length} classes`}
+            className="hidden h-8 items-center gap-1.5 rounded-full border border-line bg-panel-2 px-2.5 text-[12px] text-fg-2 hover:border-line-strong hover:text-fg 2xl:flex">
+            <Cpu className="size-3.5 text-exp" aria-hidden />
+            <span className="max-w-[140px] truncate font-mono text-[11.5px]">{model.version}</span>
+            <span className="text-[10.5px] uppercase text-fg-3">{model.device}</span>
+          </Link>
+        )}
+        <Link href="/alerts" aria-label={`${newAlerts} new alerts`} title="New alerts"
+          className={cx('flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium',
+            newAlerts > 0 ? 'border-crit/30 bg-crit-bg text-crit' : 'border-line bg-panel-2 text-fg-2 hover:text-fg')}>
+          <AlertTriangle className="size-3.5" aria-hidden />
+          <span className="tabular">{alerts.data ? newAlerts : '—'}</span>
+          <span className="hidden sm:inline">new</span>
         </Link>
         <div className="relative">
           <IconButton icon={Bell} label={`Notifications (${unread} unread)`} onClick={() => setNotifOpen(true)} />
-          {unread > 0 && <span className="pointer-events-none absolute right-1 top-1 flex size-3.5 items-center justify-center rounded-full bg-crit text-[9px] font-bold text-white">{unread > 9 ? '9+' : unread}</span>}
+          {unread > 0 && <span className="pointer-events-none absolute right-0.5 top-0.5 flex min-w-4 items-center justify-center rounded-full bg-crit px-1 text-[9.5px] font-bold leading-4 text-white">{unread > 9 ? '9+' : unread}</span>}
         </div>
-        <Link href="/settings" aria-label="Settings" title="Settings" className="inline-flex size-8 items-center justify-center rounded-md text-fg-2 hover:bg-hover hover:text-fg">
+        <Link href="/settings" aria-label="Settings" title="Settings" className="hidden size-8 items-center justify-center rounded-md text-fg-2 hover:bg-hover hover:text-fg sm:inline-flex">
           <SettingsIcon className="size-4" aria-hidden />
         </Link>
-        <Link href="/settings?tab=security" title={isAdmin ? 'Admin session active' : 'Operator (read + review). Sign in as admin in Settings → Security'}
-          className="flex h-8 items-center gap-1.5 rounded-md border border-line px-2 text-[12px] text-fg-2 hover:border-line-strong">
-          <span className={cx('flex size-5 items-center justify-center rounded-full text-[10px] font-semibold', isAdmin ? 'bg-exp-bg text-exp' : 'bg-panel-2 text-fg-3')}>{isAdmin ? 'AD' : 'OP'}</span>
-          <span className="hidden sm:inline">{isAdmin ? 'Admin' : 'Operator'}</span>
-        </Link>
-        {auth.status === 'signed_in' && auth.user && (
-          <div className="flex h-8 items-center gap-1 rounded-md border border-line pl-2 text-[12px] text-fg-2"
-            title={`Signed in as ${auth.user.username} (${auth.user.role})`}>
-            <span className="max-w-[120px] truncate">{auth.user.username}</span>
-            <span className="hidden rounded-sm bg-panel-2 px-1 text-[10px] uppercase tracking-wide text-fg-3 sm:inline">{auth.user.role}</span>
-            <IconButton icon={LogOut} label="Sign out" disabled={signingOut}
-              onClick={async () => { setSigningOut(true); await auth.signOut() }} />
-          </div>
-        )}
+        <span className="mx-1 hidden h-6 w-px bg-line sm:block" aria-hidden />
+        <ProfileMenu />
       </div>
       <NotificationCenter open={notifOpen} onClose={() => setNotifOpen(false)} />
     </header>
@@ -354,18 +415,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-dvh overflow-hidden bg-bg">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[70] focus:rounded focus:bg-info focus:px-2 focus:py-1 focus:text-on-accent">Skip to content</a>
-      <aside className={cx('relative hidden shrink-0 border-r border-line bg-panel transition-[width] duration-150 lg:block', sidebarCollapsed ? 'w-[56px]' : 'w-[228px]')}>
-        <Sidebar collapsed={sidebarCollapsed} />
-        <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="absolute bottom-3 right-2 inline-flex size-7 items-center justify-center rounded-md text-fg-3 hover:bg-hover hover:text-fg">
-          {sidebarCollapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
-        </button>
+      <aside className={cx('relative hidden shrink-0 border-r border-line bg-panel transition-[width] duration-150 lg:block', sidebarCollapsed ? 'w-[60px]' : 'w-[240px]')}>
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
       </aside>
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/55" onClick={() => setMobileNavOpen(false)} aria-hidden />
-          <aside className="relative h-full w-[260px] border-r border-line bg-panel animate-in slide-in-from-left-8 duration-150">
-            <IconButton icon={X} label="Close navigation" className="absolute right-2 top-2 z-10" onClick={() => setMobileNavOpen(false)} />
+          <aside className="relative h-full w-[264px] border-r border-line bg-panel animate-in slide-in-from-left-8 duration-150">
+            <IconButton icon={X} label="Close navigation" className="absolute right-2 top-3 z-10" onClick={() => setMobileNavOpen(false)} />
             <Sidebar collapsed={false} onNavigate={() => setMobileNavOpen(false)} />
           </aside>
         </div>
@@ -373,7 +430,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
         <main id="main" className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1800px] p-3 md:p-5">{children}</div>
+          <div className="mx-auto w-full max-w-[1800px] p-3 md:p-6">{children}</div>
         </main>
       </div>
       <CommandPalette />

@@ -10,6 +10,7 @@ import { dateTime, dayEndIso, dayStartIso, pct, todayLocal } from '../../lib/for
 import { Button, Field, Input, PageHeader, Panel, Select, StatusBadge } from '../../components/ui/primitives'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
+import { ExportCsvButton } from '../alerts/ExportCsvButton'
 
 export default function ReportsPage() {
   const [f, setF] = useState({ start: todayLocal(-6), end: todayLocal(), camera_id: '' })
@@ -19,7 +20,7 @@ export default function ReportsPage() {
   const qs = new URLSearchParams(Object.entries({ start: dayStartIso(f.start), end: dayEndIso(f.end), camera_id: f.camera_id }).filter(([, v]) => v)).toString()
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <PageHeader title="Reports" description="Exports of recorded data and the evaluation/video-processing reports already produced by the platform." />
       <Panel title="Data exports" icon={Download}>
         <div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_1fr_auto_auto]">
@@ -27,8 +28,8 @@ export default function ReportsPage() {
           <Field label="To"><Input type="date" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} /></Field>
           <Field label="Camera"><Select value={f.camera_id} onChange={(e) => setF({ ...f, camera_id: e.target.value })}>
             <option value="">All</option>{cams.data?.cameras.map((c) => <option key={c.id}>{c.id}</option>)}<option value="upload">upload</option></Select></Field>
-          <a href={url(`/api/export/alerts.csv?${qs}`)}><Button icon={FileText}>Alerts CSV</Button></a>
-          <a href={url(`/api/export/detections.csv?${qs}`)}><Button icon={FileText}>Detections CSV</Button></a>
+          <ExportCsvButton table="alerts" query={qs} label="Alerts CSV" icon={FileText} />
+          <ExportCsvButton table="detections" query={qs} label="Detections CSV" icon={FileText} />
         </div>
       </Panel>
       <Panel title="Evaluation reports" icon={FileBarChart} noPad>

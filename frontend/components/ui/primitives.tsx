@@ -64,7 +64,7 @@ const DOTS: Record<Tone, string> = { ok: 'bg-ok', warn: 'bg-warn', crit: 'bg-cri
 
 export function Badge({ tone = 'neutral', children, dot, className, title }: { tone?: Tone; children: ReactNode; dot?: boolean; className?: string; title?: string }) {
   return (
-    <span title={title} className={cx('inline-flex items-center gap-1 rounded-sm px-1.5 py-px text-[11px] font-medium leading-4', TONES[tone], className)}>
+    <span title={title} className={cx('inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-px text-[11px] font-medium leading-4', TONES[tone], className)}>
       {dot && <span className={cx('size-1.5 rounded-full', DOTS[tone])} aria-hidden />}
       {children}
     </span>
@@ -97,29 +97,30 @@ export function Panel({ title, subtitle, actions, children, className, bodyClass
   title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClass?: string; noPad?: boolean; icon?: LucideIcon
 }) {
   return (
-    <section className={cx('flex min-w-0 flex-col rounded-lg border border-line bg-panel', className)}>
+    <section className={cx('flex min-w-0 flex-col rounded-xl border border-line bg-panel', className)}>
       {(title || actions) && (
-        <header className="flex min-h-10 items-center justify-between gap-3 border-b border-line px-3.5 py-2">
-          <div className="min-w-0">
-            <h2 className="flex items-center gap-1.5 truncate text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-2">
-              {Icon && <Icon className="size-3.5" aria-hidden />}{title}
-            </h2>
-            {subtitle && <p className="truncate text-[11px] text-fg-3">{subtitle}</p>}
+        <header className="flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {Icon && <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-panel-2 text-fg-2"><Icon className="size-3.5" aria-hidden /></span>}
+            <div className="min-w-0">
+              <h2 className="truncate text-[13.5px] font-semibold text-fg">{title}</h2>
+              {subtitle && <p className="truncate text-[11.5px] text-fg-3">{subtitle}</p>}
+            </div>
           </div>
-          {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
+          {actions && <div className="flex shrink-0 flex-wrap items-center gap-1.5">{actions}</div>}
         </header>
       )}
-      <div className={cx('min-h-0 flex-1', !noPad && 'p-3.5', bodyClass)}>{children}</div>
+      <div className={cx('min-h-0 flex-1', !noPad && 'p-4', bodyClass)}>{children}</div>
     </section>
   )
 }
 
 export function PageHeader({ title, description, actions, badge }: { title: string; description?: ReactNode; actions?: ReactNode; badge?: ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <div className="mb-1 flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-fg">{title}{badge}</h1>
-        {description && <p className="mt-0.5 max-w-3xl text-[12.5px] text-fg-3">{description}</p>}
+        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-fg">{title}{badge}</h1>
+        {description && <p className="mt-1 max-w-3xl text-[13px] text-fg-3">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>

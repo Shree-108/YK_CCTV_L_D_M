@@ -8,7 +8,7 @@ import { Api } from '../../api/endpoints'
 import type { Evaluation, EvaluationListItem } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { className as cls, dateTime, num, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, PageHeader, Panel, Select, StatusBadge, Toggle } from '../../components/ui/primitives'
 import { ConfirmDialog } from '../../components/ui/overlay'
 import { Legend, LineChart, XYChart } from '../../components/ui/charts'
@@ -19,7 +19,9 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states
 export default function EvaluationPage() {
   const params = useSearchParams()
   const router = useRouter()
-  const { toast } = useApp()
+  const { toast, role, loginOn } = useApp()
+  // starting an evaluation is compute-heavy: admin-only when login is on (the server enforces it)
+  const evalLock = loginOn ? lockedFor('admin', role, loginOn) : undefined
   const models = useQuery('models', Api.models)
   const datasets = useQuery('datasets', Api.datasets)
   const list = useQuery('evaluations', Api.evaluations, { poll: 3000 })
@@ -61,7 +63,7 @@ export default function EvaluationPage() {
             {datasets.data?.datasets.map((d) => <option key={d.name}>{d.name}</option>)}</Select></Field>
           <Field label="Split"><Select value={cfg.split} onChange={(e) => setCfg({ ...cfg, split: e.target.value })}>{['test', 'val', 'train'].map((s) => <option key={s}>{s}</option>)}</Select></Field>
           <div className="pb-1"><Toggle label="Compare tiled vs full" checked={cfg.compare} onChange={(v) => setCfg({ ...cfg, compare: v })} /></div>
-          <Button variant="primary" icon={Play} loading={starting} disabled={!cfg.dataset} onClick={start}>Evaluate</Button>
+          <Button variant="primary" icon={Play} loading={starting} disabled={!cfg.dataset || !!evalLock} title={evalLock} onClick={start}>Evaluate</Button>
         </div>
         {cfg.split === 'train' && <p className="mt-2 flex items-center gap-1.5 text-[12px] text-warn"><AlertTriangle className="size-3.5" />Evaluating on the training split overstates performance.</p>}
       </Panel>

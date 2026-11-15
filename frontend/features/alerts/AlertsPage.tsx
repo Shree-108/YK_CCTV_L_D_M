@@ -2,17 +2,19 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Check, CheckCheck, Download, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react'
+import { BellRing, Check, CheckCheck, CircleSlash, Eye, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react'
 import { url } from '../../api/client'
 import { Api, type AlertQuery } from '../../api/endpoints'
 import type { Alert, AlertStatus } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { ago, className as cls, dateTime, dayEndIso, dayStartIso, num, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, Input, PageHeader, Panel, Select, StatusBadge, Tabs } from '../../components/ui/primitives'
 import { Drawer } from '../../components/ui/overlay'
 import { DataTable } from '../../components/ui/table'
+import { KpiCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState } from '../../components/ui/states'
+import { ExportCsvButton } from './ExportCsvButton'
 import { AspectBox, ImageOverlay } from '../../components/vision/Overlay'
 
 const STATUS_TABS: { value: AlertStatus | 'all'; label: string }[] = [
@@ -39,7 +41,8 @@ export default function AlertsPage() {
   const key = `alerts:list:${JSON.stringify(q)}`
   const alerts = useQuery(key, () => Api.alerts(q), { poll: 10000 })
   const counts = Object.fromEntries(STATUS_TABS.map((t) => [t.value, useQuery(`alerts:count:${t.value}`, () => Api.alerts({ status: t.value === 'all' ? undefined : t.value, limit: 1 }), { poll: 15000 }).data?.total])) // eslint-disable-line react-hooks/rules-of-hooks
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   useEffect(() => setOffset(0), [tab, JSON.stringify(f)]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const bulk = async (status: AlertStatus) => {
@@ -53,12 +56,18 @@ export default function AlertsPage() {
   const exportQs = new URLSearchParams(Object.entries({ camera_id: f.camera_id, start: q.start ?? '', end: q.end ?? '' }).filter(([, v]) => v)).toString()
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <PageHeader title="Alerts" description="Incidents are created only for confirmed litter (passed filters, temporal confirmation, deduplication). One physical object produces one alert; repeats increase “occurrences”."
-        actions={<a href={url(`/api/export/alerts.csv${exportQs ? `?${exportQs}` : ''}`)}><Button icon={Download}>Export CSV</Button></a>} />
+        actions={<ExportCsvButton table="alerts" query={exportQs} />} />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <KpiCard label="New" icon={BellRing} tone="crit" value={counts.new !== undefined ? num(counts.new) : null} loading={counts.new === undefined} sub="awaiting review" onClick={() => setTab('new')} />
+        <KpiCard label="Acknowledged" icon={Eye} tone="warn" value={counts.acknowledged !== undefined ? num(counts.acknowledged) : null} loading={counts.acknowledged === undefined} sub="being handled" onClick={() => setTab('acknowledged')} />
+        <KpiCard label="Resolved" icon={ShieldCheck} tone="ok" value={counts.resolved !== undefined ? num(counts.resolved) : null} loading={counts.resolved === undefined} sub="cleaned up" onClick={() => setTab('resolved')} />
+        <KpiCard label="Rejected" icon={CircleSlash} tone="neutral" value={counts.false_positive !== undefined ? num(counts.false_positive) : null} loading={counts.false_positive === undefined} sub="false positives" onClick={() => setTab('false_positive')} />
+      </div>
       <Panel noPad>
         <Tabs value={tab} onChange={setTab} tabs={STATUS_TABS.map((t) => ({ ...t, count: counts[t.value] }))} />
-        <div className="grid grid-cols-2 gap-2 border-b border-line p-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 border-b border-line bg-panel-2/40 px-4 py-3 md:grid-cols-3 xl:grid-cols-6">
           <Field label="Camera"><Select value={f.camera_id} onChange={(e) => setF({ ...f, camera_id: e.target.value })}>
             <option value="">All</option>{cams.data?.cameras.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}<option value="upload">upload</option></Select></Field>
           <Field label="Class"><Select value={f.class} onChange={(e) => setF({ ...f, class: e.target.value })}>
@@ -76,21 +85,21 @@ export default function AlertsPage() {
             serverPage={{ offset, limit: PAGE, total: alerts.data?.total ?? 0, onChange: setOffset }}
             toolbar={selected.size > 0 ? <>
               <span className="text-[12px] text-fg-2">{selected.size} selected</span>
-              <Button size="sm" icon={Check} onClick={() => bulk('acknowledged')}>Acknowledge</Button>
-              <Button size="sm" icon={CheckCheck} onClick={() => bulk('resolved')}>Resolve</Button>
-              <Button size="sm" icon={XCircle} variant="danger" onClick={() => bulk('false_positive')}>Reject</Button>
+              <Button size="sm" icon={Check} disabled={!canOperate} title={opLock} onClick={() => bulk('acknowledged')}>Acknowledge</Button>
+              <Button size="sm" icon={CheckCheck} disabled={!canOperate} title={opLock} onClick={() => bulk('resolved')}>Resolve</Button>
+              <Button size="sm" icon={XCircle} variant="danger" disabled={!canOperate} title={opLock} onClick={() => bulk('false_positive')}>Reject</Button>
             </> : <span className="text-[12px] text-fg-3">{alerts.data ? `${num(alerts.data.total)} alerts` : 'Loading…'}</span>}
             empty={alerts.data ? <EmptyState icon={ShieldCheck} compact title={tab === 'new' ? 'No new alerts' : 'No alerts match'} body="No confirmed litter events have been recorded for this filter." /> : <div className="p-3"><div className="skeleton h-24 rounded-md" /></div>}
             columns={[
               { key: 'sev', header: 'Priority', cell: (a) => <Badge tone={a.severity === 'HIGH' ? 'crit' : a.severity === 'MEDIUM' ? 'warn' : 'info'} dot>{a.severity}</Badge>, sortValue: (a) => ({ HIGH: 3, MEDIUM: 2, LOW: 1 })[a.severity] },
               { key: 'snap', header: 'Snapshot', cell: (a) => a.crop_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={url(a.crop_url)} alt={`${a.class} crop`} loading="lazy" className="h-9 w-12 rounded-sm border border-line bg-video object-cover" />
+                <img src={url(a.crop_url)} alt={`${a.class} crop`} loading="lazy" className="h-11 w-16 rounded-md border border-line bg-video object-cover" />
               ) : <span className="text-fg-3">—</span> },
-              { key: 'class', header: 'Object', cell: (a) => <span className="font-medium uppercase text-fg">{cls(a.class)}</span>, sortValue: (a) => a.class },
+              { key: 'class', header: 'Litter category', cell: (a) => <span className="inline-flex rounded-full border border-line bg-panel-2 px-2.5 py-0.5 text-[12.5px] font-medium capitalize text-fg">{cls(a.class)}</span>, sortValue: (a) => a.class },
               { key: 'conf', header: 'Confidence', align: 'right', cell: (a) => <span className="font-mono">{pct(a.confidence, 0)}</span>, sortValue: (a) => a.confidence },
               { key: 'cam', header: 'Location / Camera', cell: (a) => <span className="font-mono">{a.camera_id}</span>, sortValue: (a) => a.camera_id },
-              { key: 'ts', header: 'Timestamp', cell: (a) => <span title={dateTime(a.ts)}>{dateTime(a.ts)} <span className="text-fg-3">· {ago(a.ts)}</span></span>, sortValue: (a) => a.ts },
+              { key: 'ts', header: 'Timestamp', cell: (a) => <span className="flex flex-col leading-tight"><span className="text-fg">{dateTime(a.ts)}</span><span className="text-[11px] text-fg-3">{ago(a.ts)}</span></span>, sortValue: (a) => a.ts },
               { key: 'track', header: 'Track ID', cell: (a) => <span className="font-mono">{a.track_id ?? '—'}</span> },
               { key: 'occ', header: 'Seen', align: 'right', cell: (a) => `${a.occurrences}×`, hideable: true },
               { key: 'src', header: 'Source', cell: (a) => a.source_type ?? '—', hideable: true, defaultHidden: true },
@@ -105,7 +114,8 @@ export default function AlertsPage() {
 }
 
 export function AlertDrawer({ id, onClose }: { id: number | null; onClose: () => void }) {
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const a = useQuery(id ? `alerts:one:${id}` : null, () => Api.alert(id!))
   const tl = useQuery(id ? `alerts:timeline:${id}` : null, () => Api.alertTimeline(id!))
   const [notes, setNotes] = useState('')
@@ -138,9 +148,9 @@ export function AlertDrawer({ id, onClose }: { id: number | null; onClose: () =>
       title={al ? `Alert #${al.id} · ${cls(al.class).toUpperCase()}` : `Alert #${id}`}
       subtitle={al && <span className="flex items-center gap-2"><Badge tone={al.severity === 'HIGH' ? 'crit' : al.severity === 'MEDIUM' ? 'warn' : 'info'} dot>{al.severity}</Badge><StatusBadge status={al.status} /><span>{dateTime(al.ts)}</span></span>}
       footer={al && <>
-        <Button icon={XCircle} variant="danger" loading={busy === 'rejected'} disabled={al.status === 'false_positive'} onClick={() => update({ status: 'false_positive' }, 'rejected')}>Reject (false positive)</Button>
-        <Button icon={Check} loading={busy === 'acknowledged'} disabled={al.status !== 'new'} onClick={() => update({ status: 'acknowledged' }, 'acknowledged')}>Acknowledge</Button>
-        <Button icon={CheckCheck} variant="primary" loading={busy === 'resolved'} disabled={al.status === 'resolved'} onClick={() => update({ status: 'resolved' }, 'resolved')}>Resolve</Button>
+        <Button icon={XCircle} variant="danger" loading={busy === 'rejected'} disabled={!canOperate || al.status === 'false_positive'} title={opLock} onClick={() => update({ status: 'false_positive' }, 'rejected')}>Reject (false positive)</Button>
+        <Button icon={Check} loading={busy === 'acknowledged'} disabled={!canOperate || al.status !== 'new'} title={opLock} onClick={() => update({ status: 'acknowledged' }, 'acknowledged')}>Acknowledge</Button>
+        <Button icon={CheckCheck} variant="primary" loading={busy === 'resolved'} disabled={!canOperate || al.status === 'resolved'} title={opLock} onClick={() => update({ status: 'resolved' }, 'resolved')}>Resolve</Button>
       </>}>
       {a.error ? <ErrorState error={a.error} onRetry={a.refetch} compact /> : !al ? <div className="skeleton aspect-video rounded-md" /> : (
         <div className="flex flex-col gap-4">
@@ -187,7 +197,7 @@ export function AlertDrawer({ id, onClose }: { id: number | null; onClose: () =>
               placeholder="e.g. cleaned by staff at 14:40; wind-blown from bin area"
               className="w-full rounded-md border border-line bg-panel-2 p-2 text-[13px] text-fg placeholder:text-fg-3 focus:border-info focus:outline-none" />
             <div className="mt-1.5 flex justify-end">
-              <Button size="sm" disabled={notes === (al.notes ?? '')} loading={busy === 'notes saved'} onClick={() => update({ notes }, 'notes saved')}>Save notes</Button>
+              <Button size="sm" disabled={!canOperate || notes === (al.notes ?? '')} title={opLock} loading={busy === 'notes saved'} onClick={() => update({ notes }, 'notes saved')}>Save notes</Button>
             </div>
           </div>
         </div>

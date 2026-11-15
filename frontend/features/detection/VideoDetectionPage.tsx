@@ -8,16 +8,17 @@ import { Api } from '../../api/endpoints'
 import type { Job, LitterSummary, VideoResult } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { className as cls, dateTime, duration, num, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, PageHeader, Panel, Select, StatusBadge } from '../../components/ui/primitives'
 import { BarList } from '../../components/ui/charts'
 import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
-import { DetectionSettingsForm, DropZone, RoiSetup, grabVideoFrame, litterName, toForm, useRoi, type DetectConfig } from './common'
+import { DetectionSettingsForm, DropZone, FileInfo, RoiSetup, Steps, fileExt, fileSize, grabVideoFrame, litterName, toForm, useRoi, type DetectConfig } from './common'
 
-export default function VideoDetectionPage() {
-  const { toast } = useApp()
+export default function VideoDetectionPage({ embedded = false }: { embedded?: boolean } = {}) {
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const settings = useQuery('settings', Api.settings)
   const [file, setFile] = useState<File | null>(null)
   const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null)
@@ -76,9 +77,13 @@ export default function VideoDetectionPage() {
   const running = !!jobId && (!j || j.status === 'queued' || j.status === 'running')
   const reset = () => { setFile(null); setJobId(null); setFrame(null) }
   return (
-    <div className="flex flex-col gap-3">
-      <PageHeader title="Video detection" description="Upload Video → Define ROI (the outdoor ground area) → Analyze Video. When analysis is complete the processed video, with the ROI, litter boxes and confidence scores, opens and plays automatically." />
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="flex flex-col gap-4">
+      {!embedded && <PageHeader title="Video Analysis" description="When analysis is complete the processed video, with the ROI, litter boxes and confidence scores, opens and plays automatically." />}
+      <div className="rounded-xl border border-line bg-panel px-4 py-3">
+        <Steps steps={['Upload video', 'Define ROI (optional)', 'Process', 'Review results']}
+          current={done ? 3 : running || submitting ? 2 : file || jobId ? 1 : 0} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Panel title={j ? j.input_name : file ? file.name : 'Upload Video'} icon={FileVideo}
           actions={<>
             <AnalysisStatus running={running} done={done} failed={j?.status === 'failed'} />
@@ -86,7 +91,7 @@ export default function VideoDetectionPage() {
           </>}>
           {!file && !jobId ? (
             <DropZone accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v" onFile={onFile}
-              label="Upload Video — drop a CCTV video or click to browse" hint="MP4, MOV, AVI, MKV, M4V or WebM" />
+              label="Drag and drop a CCTV video here" hint="MP4, MOV, AVI, MKV, M4V or WebM" />
           ) : running ? (
             <Progress job={j} />
           ) : j?.status === 'failed' ? (
@@ -97,17 +102,20 @@ export default function VideoDetectionPage() {
             <div className="py-16 text-center text-[13px] text-fg-3">Loading analysis…</div>
           ) : (
             <div className="flex flex-col gap-3">
+              <FileInfo items={[
+                ['File name', file!.name], ['Size', fileSize(file!.size)], ['Format', fileExt(file!)],
+                ['Resolution', frame ? `${frame.w} × ${frame.h}px` : '—'],
+              ]} />
               {frame ? <RoiSetup cameraId={cfg.camera_id} src={frame.src} width={frame.w} height={frame.h} /> : (
                 <div className="flex aspect-video items-center justify-center rounded-md border border-line bg-video text-[12px] text-fg-3">
                   {frameError ?? 'Loading first frame…'}
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-3">
-                <p className="text-[12px] text-fg-3">
-                  {file!.name} · {(file!.size / 2 ** 20).toFixed(1)} MB ·{' '}
-                  {roi.active && cfg.use_roi ? 'litter will be detected only inside the ROI' : 'no ROI: the whole frame will be analysed'}
-                </p>
-                <Button variant="primary" icon={Play} className="ml-auto" loading={submitting} onClick={submit}>Analyze Video</Button>
+                {roi.active && cfg.use_roi
+                  ? <Badge tone="ok" dot>Litter will be detected only inside the ROI</Badge>
+                  : <Badge tone="warn" dot>No ROI: the whole frame will be analysed</Badge>}
+                <Button variant="primary" icon={Play} className="ml-auto" disabled={!canOperate} title={opLock} loading={submitting} onClick={submit}>Analyze Video</Button>
               </div>
               {submitError && <p className="text-[12px] text-crit">{submitError.message}</p>}
             </div>
@@ -124,15 +132,15 @@ export default function VideoDetectionPage() {
                 <option value="">{s ? s.tracking.min_confirmations : 'def'}</option>{[1, 2, 3, 4, 5, 7].map((v) => <option key={v} value={v}>{v}</option>)}</Select></Field>
             </div>
             <p className="text-[11px] text-fg-3">Frames are sampled at “Sample fps”. An object counts as litter after “min hits” detections within the last “window” sampled frames; its box then follows it through the video.</p>
-            <Button variant="primary" icon={Play} disabled={!file || running} loading={submitting} onClick={submit} className="w-full">Analyze Video</Button>
+            <Button variant="primary" icon={Play} disabled={!file || running || !canOperate} title={opLock} loading={submitting} onClick={submit} className="w-full">Analyze Video</Button>
           </DetectionSettingsForm>
         </Panel>
       </div>
       {done && j?.result?.stats && <LitterResults job={j} />}
       {done && j?.result?.stats && (
-        <details className="rounded-lg border border-line bg-panel">
-          <summary className="cursor-pointer select-none px-3 py-2 text-[12px] font-medium text-fg-2 hover:text-fg">Technical details (pipeline statistics, events, downloads)</summary>
-          <div className="flex flex-col gap-3 p-3 pt-0"><Results job={j} /></div>
+        <details className="rounded-xl border border-line bg-panel">
+          <summary className="cursor-pointer select-none px-4 py-3 text-[13px] font-medium text-fg-2 hover:text-fg">Technical details (pipeline statistics, events, downloads)</summary>
+          <div className="flex flex-col gap-4 p-4 pt-0"><Results job={j} /></div>
         </details>
       )}
       <Panel title="Recent video jobs" noPad>
@@ -151,7 +159,7 @@ export default function VideoDetectionPage() {
 }
 
 function AnalysisStatus({ running, done, failed }: { running: boolean; done: boolean; failed: boolean }) {
-  if (running) return <Badge tone="info" dot className="animate-pulse">Processing Video…</Badge>
+  if (running) return <Badge tone="warn" dot>Processing video…</Badge>
   if (done) return <Badge tone="ok" dot>Analysis Complete</Badge>
   if (failed) return <Badge tone="crit" dot>Failed</Badge>
   return null
@@ -193,7 +201,7 @@ function LitterResults({ job }: { job: Job<VideoResult> }) {
     <Panel title="Detection results" icon={ScanSearch}
       subtitle={lit.roi_active ? 'ROI active — only litter inside the outdoor ROI is counted' : 'No ROI — the whole frame was analysed'}
       actions={<a href={url(`/api/jobs/${job.id}/files/video`)} download><Button size="sm" icon={Download}>Download processed video</Button></a>}>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard label="Total litter detected" value={lit.total} tone={lit.total ? 'crit' : 'ok'} hint="unique objects" />
         <MetricCard label="Litter types" value={lit.classes.length} />
         <MetricCard label="Highest confidence" value={lit.highest_confidence != null ? pct(lit.highest_confidence, 0) : '—'} />
@@ -317,7 +325,7 @@ function Results({ job }: { job: Job<VideoResult> }) {
           </div>
         )}
       </Panel>
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Panel title="Event list" noPad>
           <DataTable rows={events} rowKey={(e) => `${e.event}-${e.track_id}-${e.frame_idx}`} dense onRowClick={(e) => seek(e.video_time_sec)}
             empty={<EmptyState compact title="No events" />}

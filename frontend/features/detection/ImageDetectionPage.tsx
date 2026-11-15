@@ -6,20 +6,21 @@ import { Api } from '../../api/endpoints'
 import type { Detection, ImageDetectResult } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { className as cls, cx, num, pct, time } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, PageHeader, Panel, Segmented, StatusBadge, Toggle } from '../../components/ui/primitives'
 import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
 import { AspectBox, ImageOverlay, STATUS_COLOR, type OverlayBox } from '../../components/vision/Overlay'
-import { DetectionSettingsForm, DropZone, RoiSetup, litterName, toForm, type DetectConfig } from './common'
+import { DetectionSettingsForm, DropZone, FileInfo, RoiSetup, Steps, fileExt, fileSize, litterName, toForm, type DetectConfig } from './common'
 
 type View = 'annotated' | 'original' | 'compare'
 
 const LITTER_COLOR = '#ff5a1f'
 
 export default function ImageDetectionPage() {
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const settings = useQuery('settings', Api.settings)
   const classes = useQuery('classes', Api.classes)
   const classInfo = useMemo(() => Object.fromEntries((classes.data?.classes ?? []).map((c) => [c.name, c])), [classes.data])
@@ -82,17 +83,24 @@ export default function ImageDetectionPage() {
   const [w, h] = result?.image_size ?? dims
 
   return (
-    <div className="flex flex-col gap-3">
-      <PageHeader title="Image detection" description="Upload Image → Define ROI (the outdoor ground area) → Analyze Image. Litter is detected only inside the ROI; a still image has no temporal evidence, so an object counts as litter when it reaches the confirmed threshold." />
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Image Analysis" description="Litter is detected only inside the ROI. A still image has no temporal evidence, so an object counts as litter when it reaches the confirmed threshold." />
+      <div className="rounded-xl border border-line bg-panel px-4 py-3">
+        <Steps steps={['Upload image', 'Define ROI (optional)', 'Analyze', 'Review results']} current={!file ? 0 : result ? 3 : pending ? 2 : 1} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Panel title={file ? file.name : 'Image'} icon={ImageIcon} noPad
           actions={file && <>
             <Segmented size="sm" label="Image view" value={view} onChange={setView} options={[
               { value: 'annotated', label: 'Annotated', icon: ScanSearch }, { value: 'original', label: 'Original', icon: Eye }, { value: 'compare', label: 'Compare', icon: Columns2 }]} />
             <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => { setFile(null); setSrc(null); setResult(null) }}>Clear</Button>
           </>}>
-          <div className="p-2">
-            {!file ? <DropZone accept="image/jpeg,image/png,image/webp,image/bmp" onFile={onFile} label="Drop an image or click to browse" hint="JPEG, PNG, WebP or BMP · the server enforces the size limit" /> : (
+          <div className="flex flex-col gap-3 p-3">
+            {!file ? <DropZone accept="image/jpeg,image/png,image/webp,image/bmp" onFile={onFile} label="Drag and drop a CCTV image here" hint="JPEG, PNG, WebP or BMP · the server enforces the size limit" /> : (<>
+              <FileInfo items={[
+                ['File name', file.name], ['Size', fileSize(file.size)], ['Format', fileExt(file)],
+                ['Resolution', w && h ? `${w} × ${h}px` : '—'],
+              ]} />
               <div className={cx('grid gap-2', view === 'compare' && 'md:grid-cols-2')}>
                 {(view === 'compare' || view === 'original') && (
                   <AspectBox width={w} height={h} className="overflow-hidden rounded-md border border-line">
@@ -106,13 +114,13 @@ export default function ImageDetectionPage() {
                 )}
                 {view === 'annotated' && <RoiSetup cameraId={cfg.camera_id} src={src} width={w} height={h} boxes={result ? boxes : []} disabled={pending} />}
               </div>
-            )}
+            </>)}
           </div>
         </Panel>
         <Panel title="Detection settings" icon={Layers}>
           <DetectionSettingsForm cfg={cfg} setCfg={setCfg}>
             <Toggle label="Create alerts" checked={createAlerts} onChange={setCreateAlerts} description="Off = test only (detections are still logged)." />
-            <Button variant="primary" icon={Play} disabled={!file} loading={pending} onClick={run} className="mt-1 w-full">Analyze Image</Button>
+            <Button variant="primary" icon={Play} disabled={!file || !canOperate} title={opLock} loading={pending} onClick={run} className="mt-1 w-full">Analyze Image</Button>
           </DetectionSettingsForm>
         </Panel>
       </div>
@@ -121,7 +129,7 @@ export default function ImageDetectionPage() {
       {result && (
         <Panel title="Detection results" subtitle={`model ${result.model_version} · ${result.tiled ? `${result.tiles} tiles` : 'full frame'} · ${result.image_size.join('×')}px`}
           actions={<Toggle label="Show low-confidence & ignored" checked={showRejected} onChange={setShowRejected} />} noPad>
-          <div className="grid grid-cols-2 gap-2 p-3 md:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2.5 p-4 md:grid-cols-3 xl:grid-cols-6">
             <MetricCard label="Litter detected" value={result.counts.confirmed} tone={result.counts.confirmed ? 'crit' : 'ok'} />
             <MetricCard label="Litter types" value={Object.keys(result.by_class).length} hint={Object.entries(result.by_class).map(([k, v]) => `${v}× ${litterName(k)}`).join(', ') || '—'} />
             <MetricCard label="Highest confidence" value={result.highest_confidence != null ? pct(result.highest_confidence, 0) : '—'} />
@@ -134,10 +142,13 @@ export default function ImageDetectionPage() {
             empty={<EmptyState compact title="No litter detected" body="Nothing inside the ROI reached the confirmed threshold. Turn on “Show low-confidence & ignored” to see weaker or outside-ROI detections." />}
             columns={[
               { key: 'n', header: '#', cell: (d) => <span className="text-fg-3">{d._i + 1}</span>, width: '40px' },
-              { key: 'class', header: 'Detected object', cell: (d) => <span className="rounded-md border border-line bg-panel-2 px-2 py-0.5 text-[12.5px] text-fg">{litterName(d.class)}</span>, sortValue: (d) => d.class },
+              { key: 'class', header: 'Litter category', cell: (d) => (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-2 px-2.5 py-0.5 text-[12.5px] font-medium text-fg">
+                  <span className="size-2 rounded-full" style={{ background: d.status === 'confirmed' ? LITTER_COLOR : STATUS_COLOR[d.status] }} aria-hidden />{litterName(d.class)}
+                </span>), sortValue: (d) => d.class },
               { key: 'conf', header: 'Confidence', cell: (d) => (
                 <span className="flex items-center gap-2.5">
-                  <span className="h-1.5 w-20 overflow-hidden rounded-full bg-panel-2"><span className="block h-full rounded-full bg-info" style={{ width: `${d.confidence * 100}%` }} /></span>
+                  <span className="h-1.5 w-24 overflow-hidden rounded-full bg-panel-2"><span className={cx('block h-full rounded-full', d.confidence >= 0.75 ? 'bg-ok' : d.confidence >= 0.5 ? 'bg-warn' : 'bg-fg-3')} style={{ width: `${d.confidence * 100}%` }} /></span>
                   <span className="tabular text-fg">{pct(d.confidence, 1)}</span>
                 </span>), sortValue: (d) => d.confidence },
               { key: 'prio', header: 'Priority', cell: (d) => { const p = classInfo[d.class]?.priority ?? 'medium'; return <Badge tone={p === 'critical' ? 'crit' : p === 'high' ? 'warn' : p === 'medium' ? 'info' : 'ok'} dot>{p[0].toUpperCase() + p.slice(1)}</Badge> }, sortValue: (d) => ({ critical: 4, high: 3, medium: 2, low: 1 } as Record<string, number>)[classInfo[d.class]?.priority ?? 'medium'] },

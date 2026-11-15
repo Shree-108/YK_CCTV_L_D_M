@@ -8,7 +8,7 @@ import { Api } from '../../api/endpoints'
 import type { Camera, RoiZone } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { ago, cx, num } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, Input, PageHeader, Panel, Segmented, Select, Slider, StatusBadge, Tabs, Toggle } from '../../components/ui/primitives'
 import { ConfirmDialog, Drawer } from '../../components/ui/overlay'
 import { DataTable } from '../../components/ui/table'
@@ -19,7 +19,7 @@ import { CameraDrawer, CameraTile, DEFAULT_OVERLAY } from './live'
 export default function CamerasPage() {
   const params = useSearchParams()
   const router = useRouter()
-  const { isAdmin, toast } = useApp()
+  const { isAdmin, role, loginOn, toast } = useApp()
   const cams = useQuery('cameras:list', Api.cameras, { poll: 10000 })
   const [view, setView] = useState<'cards' | 'list'>('cards')
   const [detail, setDetail] = useState<string | null>(null)
@@ -37,7 +37,7 @@ export default function CamerasPage() {
       invalidate('cameras')
     } catch (e) { toast({ tone: 'crit', title: 'Update failed', body: (e as Error).message }) }
   }
-  const lock = !isAdmin ? 'Admin sign-in required (Settings → Security)' : undefined
+  const lock = lockedFor('admin', role, loginOn)
 
   return (
     <div className="flex flex-col gap-3">
@@ -168,7 +168,8 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
     if (!cam) return
     setFrameErr(null)
     try {
-      const res = await fetch(url(`/api/cameras/${encodeURIComponent(cam.id)}/frame.jpg?t=${Date.now()}`))
+      const res = await fetch(url(`/api/cameras/${encodeURIComponent(cam.id)}/frame.jpg?t=${Date.now()}`), { credentials: 'include' })
+      if (res.status === 401 || res.status === 403) throw new Error('Only administrators can grab a frame from a camera that is not running.')
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `HTTP ${res.status}`)
       const blob = await res.blob()
       const src = URL.createObjectURL(blob)

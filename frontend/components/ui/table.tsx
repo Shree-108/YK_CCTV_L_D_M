@@ -64,7 +64,7 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
   return (
     <div className="flex min-w-0 flex-col">
       {(toolbar || hideable.length > 0) && (
-        <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+        <div className="flex min-h-11 items-center justify-between gap-2 border-b border-line px-4 py-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>
           {hideable.length > 0 && (
             <div className="relative">
@@ -91,9 +91,9 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[12.5px]">
           <thead>
-            <tr className="border-b border-line bg-panel-2/60 text-left">
+            <tr className="border-b border-line bg-panel-2 text-left">
               {selectable && (
-                <th className="w-8 px-3">
+                <th className="w-10 px-4">
                   <input type="checkbox" aria-label="Select all on page"
                     checked={pageRows.length > 0 && pageRows.every((r) => selected?.has(rowKey(r)))}
                     onChange={(e) => {
@@ -106,7 +106,7 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
               {visible.map((c) => (
                 <th key={c.key} scope="col" style={{ width: c.width }}
                   aria-sort={sort?.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
-                  className={cx('whitespace-nowrap px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-fg-3',
+                  className={cx('whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-fg-3',
                     c.align === 'right' && 'text-right', c.align === 'center' && 'text-center')}>
                   {c.sortValue ? (
                     <button className="inline-flex items-center gap-1 uppercase hover:text-fg"
@@ -133,7 +133,7 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
                   className={cx('border-b border-line/70 transition-colors', onRowClick && 'cursor-pointer hover:bg-hover focus:bg-hover focus:outline-none',
                     selectedKey === k && 'bg-info-bg')}>
                   {selectable && (
-                    <td className="px-3" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" aria-label="Select row" checked={!!selected?.has(k)}
                         onChange={() => {
                           const n = new Set(selected)
@@ -144,7 +144,7 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
                     </td>
                   )}
                   {visible.map((c) => (
-                    <td key={c.key} className={cx('px-3 text-fg-2', dense ? 'py-1' : 'py-1.5', c.align === 'right' && 'text-right tabular',
+                    <td key={c.key} className={cx('px-4 align-middle text-fg-2', dense ? 'py-2' : 'py-2.5', c.align === 'right' && 'text-right tabular',
                       c.align === 'center' && 'text-center', c.className)}>{c.cell(r)}</td>
                   ))}
                 </tr>
@@ -154,9 +154,10 @@ export function DataTable<T>({ rows, columns, rowKey, onRowClick, selectedKey, p
         </table>
       </div>
       {total > limit && (
-        <div className="flex items-center justify-between border-t border-line px-3 py-1.5 text-[12px] text-fg-3">
-          <span className="tabular">{offset + 1}–{Math.min(offset + limit, total)} of {total.toLocaleString()}</span>
-          <div className="flex gap-1">
+        <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-2 text-[12px] text-fg-3">
+          <span className="tabular">Showing <span className="text-fg-2">{offset + 1}–{Math.min(offset + limit, total)}</span> of <span className="text-fg-2">{total.toLocaleString()}</span></span>
+          <div className="flex items-center gap-1">
+            <span className="tabular mr-1 hidden sm:inline">Page {Math.floor(offset / limit) + 1} of {Math.max(1, Math.ceil(total / limit))}</span>
             <IconButton icon={ChevronLeft} label="Previous page" disabled={offset === 0}
               onClick={() => (serverPage ? serverPage.onChange(Math.max(0, offset - limit)) : setPage((p) => p - 1))} />
             <IconButton icon={ChevronRight} label="Next page" disabled={offset + limit >= total}

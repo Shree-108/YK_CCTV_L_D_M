@@ -1,14 +1,14 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { BarChart3 } from 'lucide-react'
+import { BarChart3, CheckCircle2, Filter, Layers, ScanSearch, Trash2, XCircle } from 'lucide-react'
 import { Api } from '../../api/endpoints'
 import type { Analytics } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
 import { className as cls, dayEndIso, dayStartIso, num, pct, todayLocal } from '../../lib/format'
 import { Field, Input, PageHeader, Panel, Select } from '../../components/ui/primitives'
 import { BarList, Columns, Donut, Legend, LineChart, SERIES, StackBar } from '../../components/ui/charts'
-import { MetricCard } from '../../components/ui/kpi'
+import { KpiCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
 
 function daysBetween(a: string, b: string): string[] {
@@ -32,10 +32,10 @@ export default function AnalyticsPage() {
   const a = useQuery(`analytics:page:${JSON.stringify(q)}`, () => Api.analytics(q), { poll: 60000 })
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <PageHeader title="Analytics" description="Trends and distributions computed from the alert, detection and confirmed-object tables. Hour-of-day uses UTC timestamps as stored." />
-      <Panel>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <Panel title="Filters" icon={Filter}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Field label="From"><Input type="date" value={f.start} max={f.end} onChange={(e) => setF({ ...f, start: e.target.value })} /></Field>
           <Field label="To"><Input type="date" value={f.end} min={f.start} onChange={(e) => setF({ ...f, end: e.target.value })} /></Field>
           <Field label="Camera"><Select value={f.camera_id} onChange={(e) => setF({ ...f, camera_id: e.target.value })}>
@@ -75,27 +75,27 @@ function Charts({ a, days }: { a: Analytics; days: string[] }) {
   const labels = days.map((d) => d.slice(5))
   return (
     <>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        <MetricCard label="Alerts" value={num(a.alerts_total)} />
-        <MetricCard label="Confirmed objects" value={num(a.confirmed_objects)} tone="ok" />
-        <MetricCard label="Raw detections" value={num(detTotal)} />
-        <MetricCard label="Confirmed detections" value={num(confirmed)} hint={detTotal ? `${pct(confirmed / detTotal)} of raw` : undefined} />
-        <MetricCard label="Rejected detections" value={num(rejected)} hint={detTotal ? `${pct(rejected / detTotal)} of raw` : undefined} tone={rejected ? 'warn' : undefined} />
-        <MetricCard label="Most common class" value={a.by_class[0] ? cls(a.by_class[0].class) : '—'} hint={a.by_class[0] ? `${a.by_class[0].n} alerts` : undefined} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
+        <KpiCard label="Alerts" icon={Trash2} tone="info" value={num(a.alerts_total)} sub="litter incidents" />
+        <KpiCard label="Confirmed objects" icon={CheckCircle2} tone="ok" value={num(a.confirmed_objects)} sub="unique litter objects" />
+        <KpiCard label="Raw detections" icon={Layers} value={num(detTotal)} sub="all model outputs" />
+        <KpiCard label="Confirmed detections" icon={CheckCircle2} tone="ok" value={num(confirmed)} sub={detTotal ? `${pct(confirmed / detTotal)} of raw` : '—'} />
+        <KpiCard label="Rejected detections" icon={XCircle} tone={rejected ? 'warn' : 'neutral'} value={num(rejected)} sub={detTotal ? `${pct(rejected / detTotal)} of raw` : '—'} />
+        <KpiCard label="Most common category" icon={ScanSearch} value={a.by_class[0] ? cls(a.by_class[0].class) : '—'} sub={a.by_class[0] ? `${num(a.by_class[0].n)} alerts` : 'no data'} />
       </div>
       <Panel title="Litter over time" subtitle="Alerts and confirmed objects per day">
         <LineChart ariaLabel="Alerts and confirmed objects per day" labels={labels} area height={210}
           series={[{ name: 'Alerts', values: days.map((d) => byDay.get(d) ?? 0), color: 'var(--crit)' }, { name: 'Confirmed objects', values: days.map((d) => confByDay.get(d) ?? 0), color: 'var(--info)' }]} />
         <Legend items={[{ name: 'Alerts', color: 'var(--crit)' }, { name: 'Confirmed objects', color: 'var(--info)' }]} />
       </Panel>
-      <div className="grid gap-3 lg:grid-cols-3">
-        <Panel title="Litter by camera">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Panel title="Camera-wise incidents" subtitle="Alerts per camera">
           {a.by_camera.length ? <BarList data={a.by_camera.map((r) => ({ label: r.camera_id, value: r.n }))} /> : <EmptyState compact title="No alerts" />}
         </Panel>
-        <Panel title="Litter by class">
+        <Panel title="Category-wise incidents" subtitle="Alerts per litter category">
           {a.by_class.length ? <BarList data={a.by_class.map((r, i) => ({ label: cls(r.class), value: r.n, color: SERIES[i % SERIES.length] }))} /> : <EmptyState compact title="No alerts" />}
         </Panel>
-        <Panel title="Severity & status">
+        <Panel title="Severity & status" subtitle="Alerts by priority and review state">
           {a.alerts_total ? (
             <div className="flex items-center gap-4">
               <Donut ariaLabel="Alerts by severity" size={120}
@@ -110,11 +110,11 @@ function Charts({ a, days }: { a: Analytics; days: string[] }) {
           ) : <EmptyState compact title="No alerts" />}
         </Panel>
       </div>
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         <Panel title="Hourly distribution" subtitle="Alerts by hour of day (UTC)">
           <Columns ariaLabel="Alerts by hour" data={Array.from({ length: 24 }, (_, h) => ({ label: String(h).padStart(2, '0'), value: a.by_hour.find((x) => x.hour === String(h).padStart(2, '0'))?.n ?? 0 }))} />
         </Panel>
-        <Panel title="Daily distribution" subtitle="Alerts by day of week">
+        <Panel title="Weekly pattern" subtitle="Alerts by day of week">
           <Columns ariaLabel="Alerts by day of week" data={dow} color="var(--exp)" />
         </Panel>
         <Panel title="Detection confidence" subtitle="Confidence of alerts (bins of 0.1)">
@@ -122,7 +122,7 @@ function Charts({ a, days }: { a: Analytics; days: string[] }) {
             data={Array.from({ length: 10 }, (_, i) => ({ label: (i / 10).toFixed(1), value: a.confidence_histogram.find((b) => Math.round(b.bin * 10) === i)?.n ?? 0 }))} />
         </Panel>
       </div>
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Panel title="Confirmed vs rejected detections" subtitle="Raw detection rows per day by final status">
           <LineChart ariaLabel="Detections per day by status" labels={labels} height={180}
             series={['confirmed', 'candidate', 'weak', 'rejected'].map((s) => ({ name: s, color: STATUS_COLORS[s], values: days.map((d) => detDaily.get(d)?.[s] ?? 0) }))} />

@@ -8,7 +8,7 @@ import { Api } from '../../api/endpoints'
 import type { Bbox, TestLabPred } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { className as cls, cx, pct } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, Input, PageHeader, Panel, Select, Toggle } from '../../components/ui/primitives'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
 import { AspectBox, ImageOverlay, STATUS_COLOR, type OverlayBox } from '../../components/vision/Overlay'
@@ -18,7 +18,8 @@ type EditBox = { key: string; cls: number; bbox: Bbox }
 export default function GroundTruthPage() {
   const params = useSearchParams()
   const router = useRouter()
-  const { isAdmin, toast } = useApp()
+  const { isAdmin, toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const datasets = useQuery('datasets', Api.datasets)
   const models = useQuery('models', Api.models)
   const ds = params.get('dataset') ?? datasets.data?.datasets[0]?.name ?? ''
@@ -117,7 +118,7 @@ export default function GroundTruthPage() {
             </ul>
           </Panel>
           <Panel title={id || 'Image'} noPad actions={a && <>
-            <Button size="sm" icon={Sparkles} onClick={runModel} disabled={!models.data?.active}>Show predictions</Button>
+            <Button size="sm" icon={Sparkles} onClick={runModel} disabled={!models.data?.active || !canOperate} title={opLock}>Show predictions</Button>
             <Button size="sm" variant={drawing ? 'primary' : 'secondary'} icon={Plus} disabled={!a.editable} onClick={() => { setDrawing((d) => !d); setCorner(null) }}>{drawing ? 'Click 2 corners…' : 'Add box'}</Button>
           </>}>
             {ann.error ? <ErrorState error={ann.error} compact onRetry={ann.refetch} /> : !a ? <div className="p-3"><LoadingState rows={6} /></div> : (

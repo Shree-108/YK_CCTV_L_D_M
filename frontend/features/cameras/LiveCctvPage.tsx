@@ -50,7 +50,7 @@ function formFrom(c: Camera): Form {
 }
 
 export default function LiveCctvPage() {
-  const { isAdmin, toast } = useApp()
+  const { isAdmin, loginOn, toast } = useApp()
   const cams = useQuery('cameras:list', Api.cameras, { poll: 2000 })
   const defaults = useQuery('cctv:defaults', Api.cctvDefaults)
   const cctvCams = useMemo(() => (cams.data?.cameras ?? []).filter((c) => c.source.startsWith('cctv:')), [cams.data])
@@ -105,7 +105,7 @@ export default function LiveCctvPage() {
   const st = liveState(cam)
   const s = cam?.status
   const live = !!cam?.enabled && (s?.state === 'online' || s?.state === 'reconnecting')
-  const configured = !!cam?.rtsp?.host
+  const configured = !!cam?.rtsp?.host || !!cam?.rtsp_configured
 
   return (
     <div className="flex flex-col gap-3">
@@ -113,14 +113,14 @@ export default function LiveCctvPage() {
         description="Authenticated RTSP from an authorized NVR/camera on the local network or VPN. Live frames go through the same YOLO model, ROI filter, tracking and alert rules as Image and Video Analysis." />
       {!isAdmin && (
         <div className="flex items-center gap-2 rounded-md border border-warn/40 bg-warn-bg px-3 py-2 text-[12px] text-warn">
-          <ShieldCheck className="size-4" aria-hidden /> Configuring and starting a CCTV stream needs the admin token.
-          <Link href="/settings?tab=security" className="underline">Sign in as admin</Link>
+          <ShieldCheck className="size-4" aria-hidden /> Configuring and starting a CCTV stream needs {loginOn ? 'an administrator account.' : 'the admin token.'}
+          {!loginOn && <Link href="/settings?tab=security" className="underline">Sign in as admin</Link>}
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex min-w-0 flex-col gap-3">
           <Panel title={cam ? cam.name : 'Live CCTV'} icon={Cctv}
-            subtitle={testCam ? 'Test source — recorded video, not the NVR' : cam?.rtsp_url ?? 'CCTV configuration required'}
+            subtitle={testCam ? 'Test source — recorded video, not the NVR' : cam?.rtsp_url ?? (configured ? 'Configured (connection details are visible to administrators)' : 'CCTV configuration required')}
             actions={<Badge tone={st.tone} dot className={cx(st.pulse && 'animate-pulse')}>{st.label}</Badge>}>
             {live ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -247,15 +247,19 @@ function TestResult({ r }: { r: CctvTestResult }) {
 /** Per-camera outdoor ROI, drawn on a real frame from the stream (same editor as uploads). */
 function LiveRoi({ cam }: { cam: Camera }) {
   const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
     const u = url(`/api/cameras/${encodeURIComponent(cam.id)}/frame.jpg?raw=1&t=${Date.now()}`)
     const img = new Image()
+    setFailed(false)
     img.onload = () => setFrame({ src: u, w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => setFailed(true)
     img.src = u
   }, [cam.id])
   return (
     <Panel title="Detection ROI" subtitle="Only litter inside the outdoor ground area generates detections and events">
-      {frame ? <RoiSetup cameraId={cam.id} src={frame.src} width={frame.w} height={frame.h} /> : <p className="text-[12px] text-fg-3">Loading a frame…</p>}
+      {frame ? <RoiSetup cameraId={cam.id} src={frame.src} width={frame.w} height={frame.h} />
+        : <p className="text-[12px] text-fg-3">{failed ? 'No frame available: start the stream, or ask an administrator.' : 'Loading a frame…'}</p>}
     </Panel>
   )
 }

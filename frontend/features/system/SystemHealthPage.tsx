@@ -15,6 +15,19 @@ const ICONS: Record<string, typeof Server> = {
 }
 
 export default function SystemHealthPage() {
+  const { isAdmin, loginOn } = useApp()
+  if (loginOn && !isAdmin) {
+    return (
+      <div className="flex flex-col gap-3">
+        <PageHeader title="System health" description="Live checks of every service." />
+        <Panel><EmptyState title="Administrators only" body="Detailed system diagnostics are available to administrators." /></Panel>
+      </div>
+    )
+  }
+  return <SystemHealthDetails />
+}
+
+function SystemHealthDetails() {
   const sys = useQuery('system:health', Api.systemHealth, { poll: 10000 })
   const health = useQuery('health', Api.health, { poll: 10000 })
   const events = useQuery('events:system', () => Api.events(100), { poll: 15000 })
@@ -59,7 +72,7 @@ export default function SystemHealthPage() {
         <Panel title="Runtime">
           {!h ? <LoadingState /> : (
             <dl className="grid grid-cols-2 gap-y-2 text-[12.5px]">
-              <dt className="text-fg-3">Uptime</dt><dd className="text-fg">{duration(h.uptime_sec)}</dd>
+              <dt className="text-fg-3">Uptime</dt><dd className="text-fg">{h.uptime_sec !== undefined ? duration(h.uptime_sec) : '—'}</dd>
               <dt className="text-fg-3">Server time</dt><dd className="text-fg">{dateTime(h.time)}</dd>
               <dt className="text-fg-3">Model</dt><dd className="font-mono text-fg">{h.model?.version ?? '—'}</dd>
               <dt className="text-fg-3">Device</dt><dd className="font-mono text-fg">{h.model?.device ?? '—'}</dd>
@@ -70,7 +83,7 @@ export default function SystemHealthPage() {
           )}
         </Panel>
         <Panel title="Hardware & recommendation">
-          {!h ? <LoadingState /> : (
+          {!h || !h.hardware || !h.system ? <LoadingState /> : (
             <div className="flex flex-col gap-2 text-[12.5px]">
               <div className="flex justify-between"><span className="text-fg-3">CUDA GPU</span><span className="text-fg">{h.hardware.cuda ? `${h.hardware.gpu} (${h.hardware.vram_gb} GB)` : 'not available'}</span></div>
               <div className="flex justify-between"><span className="text-fg-3">CPU threads</span><span className="text-fg">{h.hardware.cpu_count}</span></div>

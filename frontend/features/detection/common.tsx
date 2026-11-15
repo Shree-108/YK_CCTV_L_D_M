@@ -6,7 +6,7 @@ import { Api } from '../../api/endpoints'
 import type { RoiZone } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { cx } from '../../lib/format'
-import { useApp } from '../../stores/app'
+import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, Select, Slider, Toggle } from '../../components/ui/primitives'
 import { AspectBox, ImageOverlay, type OverlayBox } from '../../components/vision/Overlay'
 
@@ -22,15 +22,56 @@ export function DropZone({ accept, onFile, label, hint, compact }: { accept: str
       onDragOver={(e) => { e.preventDefault(); setOver(true) }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files?.[0]) }}
-      className={cx('flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center transition-colors',
-        compact ? 'p-5' : 'min-h-[300px] p-10', over ? 'border-info bg-info-bg' : 'border-line-strong bg-panel hover:border-info/60')}>
-      <UploadCloud className="size-6 text-fg-3" aria-hidden />
-      <p className="text-[13px] font-medium text-fg">{label}</p>
+      className={cx('flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed text-center transition-colors',
+        compact ? 'p-5' : 'min-h-[320px] p-10', over ? 'border-info bg-info-bg' : 'border-line-strong bg-panel-2/50 hover:border-fg-3 hover:bg-panel-2')}>
+      <span className={cx('flex items-center justify-center rounded-full border border-line bg-panel', compact ? 'size-10' : 'size-14')}>
+        <UploadCloud className={cx(compact ? 'size-5' : 'size-6', over ? 'text-fg' : 'text-fg-2')} aria-hidden />
+      </span>
+      <p className="mt-1 text-[14px] font-medium text-fg">{label}</p>
       <p className="text-[12px] text-fg-3">{hint}</p>
+      {!compact && <span className="mt-2 inline-flex h-8 items-center rounded-md border border-line bg-panel px-3 text-[12.5px] font-medium text-fg">Browse files</span>}
       <input ref={input} type="file" accept={accept} className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = '' }} />
     </div>
   )
 }
+
+/** Upload → ROI → Analyse → Results progress strip (presentation only). */
+export function Steps({ steps, current }: { steps: string[]; current: number }) {
+  return (
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5" aria-label="Analysis steps">
+      {steps.map((s, i) => {
+        const state = i < current ? 'done' : i === current ? 'now' : 'todo'
+        return (
+          <li key={s} className="flex items-center gap-2" aria-current={state === 'now' ? 'step' : undefined}>
+            <span className={cx('flex size-6 items-center justify-center rounded-full border text-[11px] font-semibold',
+              state === 'done' ? 'border-ok/40 bg-ok-bg text-ok' : state === 'now' ? 'border-info bg-info text-on-accent' : 'border-line-strong text-fg-3')}>
+              {state === 'done' ? <Check className="size-3.5" aria-hidden /> : i + 1}
+            </span>
+            <span className={cx('text-[12.5px]', state === 'todo' ? 'text-fg-3' : 'font-medium text-fg')}>{s}</span>
+            {i < steps.length - 1 && <span className="mx-1 hidden h-px w-8 bg-line-strong sm:block" aria-hidden />}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+/** Small cards describing the selected local file (name, size, type, resolution…). */
+export function FileInfo({ items }: { items: [string, ReactNode][] }) {
+  return (
+    <dl className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      {items.map(([k, v]) => (
+        <div key={k} className="min-w-0 rounded-lg border border-line bg-panel-2 px-3 py-2">
+          <dt className="text-[11px] font-medium text-fg-3">{k}</dt>
+          <dd className="truncate text-[13px] font-medium text-fg" title={typeof v === 'string' ? v : undefined}>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+export const fileSize = (b: number) => (b >= 2 ** 20 ? `${(b / 2 ** 20).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
+export const fileExt = (f: File) => (f.name.split('.').pop() ?? f.type.split('/').pop() ?? '—').toUpperCase()
 
 export interface DetectConfig {
   model_version: string
@@ -133,7 +174,8 @@ export function grabVideoFrame(file: File, atSec = 0.5): Promise<{ src: string; 
 export function RoiSetup({ cameraId, src, width, height, boxes, disabled }: {
   cameraId: string; src: string | null; width: number; height: number; boxes?: OverlayBox[]; disabled?: boolean
 }) {
-  const { toast } = useApp()
+  const { toast, canOperate, role, loginOn } = useApp()
+  const opLock = lockedFor('operator', role, loginOn)
   const { zones, active } = useRoi(cameraId)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<[number, number][]>([])
@@ -179,11 +221,11 @@ export function RoiSetup({ cameraId, src, width, height, boxes, disabled }: {
           {editing ? <>
             <Button size="sm" variant="ghost" icon={Undo2} disabled={!draft.length} onClick={() => setDraft((d) => d.slice(0, -1))}>Undo point</Button>
             <Button size="sm" variant="ghost" icon={X} onClick={() => { setEditing(false); setDraft([]) }}>Cancel</Button>
-            <Button size="sm" variant="primary" icon={Check} disabled={draft.length < 3} loading={saving}
+            <Button size="sm" variant="primary" icon={Check} disabled={draft.length < 3 || !canOperate} title={opLock} loading={saving}
               onClick={() => save([{ name: 'outside-store', type: 'sidewalk', mode: 'include', polygon: draft }])}>Save ROI</Button>
           </> : <>
-            <Button size="sm" variant="ghost" icon={RotateCcw} disabled={disabled || !zones.length} loading={saving} onClick={() => save([])}>Reset ROI</Button>
-            <Button size="sm" icon={PenLine} disabled={disabled || !src} onClick={() => { setEditing(true); setDraft([]) }}>Define ROI</Button>
+            <Button size="sm" variant="ghost" icon={RotateCcw} disabled={disabled || !zones.length || !canOperate} title={opLock} loading={saving} onClick={() => save([])}>Reset ROI</Button>
+            <Button size="sm" icon={PenLine} disabled={disabled || !src || !canOperate} title={opLock} onClick={() => { setEditing(true); setDraft([]) }}>Define ROI</Button>
           </>}
         </div>
       </div>

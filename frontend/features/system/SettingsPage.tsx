@@ -26,7 +26,7 @@ export default function SettingsPage() {
   const params = useSearchParams()
   const router = useRouter()
   const tab = (params.get('tab') as Tab) ?? 'general'
-  const { isAdmin, toast } = useApp()
+  const { isAdmin, loginOn, toast } = useApp()
   const q = useQuery('settings', Api.settings)
   const [draft, setDraft] = useState<Settings | null>(null)
   const [saving, setSaving] = useState(false)
@@ -71,7 +71,7 @@ export default function SettingsPage() {
         </nav>
         <div className="min-w-0">
           {err && <p className="mb-2 rounded-md border border-crit/40 bg-crit-bg p-2 text-[12px] text-crit">{err}</p>}
-          {!isAdmin && detectionTabs.includes(tab) && <p className="mb-2 rounded-md border border-line bg-panel-2 p-2 text-[12px] text-fg-3">Read-only: <Link href="/settings?tab=security" className="text-info hover:underline">sign in as admin</Link> to change settings.</p>}
+          {!isAdmin && detectionTabs.includes(tab) && <p className="mb-2 rounded-md border border-line bg-panel-2 p-2 text-[12px] text-fg-3">Read-only: {loginOn ? 'only administrators can change settings.' : <><Link href="/settings?tab=security" className="text-info hover:underline">sign in as admin</Link> to change settings.</>}</p>}
           {tab === 'general' && <General />}
           {tab === 'appearance' && <Appearance />}
           {tab === 'security' && <Security />}
@@ -255,14 +255,21 @@ TELEGRAM_BOT_TOKEN=  TELEGRAM_CHAT_ID=`}</pre>
 }
 
 function Security() {
-  const { isAdmin, adminLogin, adminLogout, toast } = useApp()
+  const { isAdmin, tokenAdmin, loginOn, role, adminLogin, adminLogout, toast } = useApp()
   const h = useQuery('health', Api.health)
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <Section title="Admin access" hint="Configuration changes (cameras, settings, models, labels) require the admin token configured on the server as ADMIN_API_TOKEN. The token is kept only in this browser tab's session storage.">
-      {h.data && !h.data.admin_enabled && <p className="mb-3 rounded-md border border-warn/40 bg-warn-bg p-2 text-[12px] text-warn">The server has no ADMIN_API_TOKEN configured, so admin functions are disabled.</p>}
-      {isAdmin ? (
+      {!loginOn && h.data && h.data.admin_enabled === false && <p className="mb-3 rounded-md border border-warn/40 bg-warn-bg p-2 text-[12px] text-warn">The server has no ADMIN_API_TOKEN configured, so admin functions are disabled.</p>}
+      {loginOn && (
+        <p className="mb-3 rounded-md border border-line bg-panel-2 p-2 text-[12px] text-fg-2">
+          Signed in with an account: your role is <b>{role}</b>.{' '}
+          {role === 'admin' ? 'Admin functions are available to your account.' : 'Configuration changes need an administrator account.'}{' '}
+          The legacy admin token is not used while login is on.
+        </p>
+      )}
+      {loginOn ? null : tokenAdmin ? (
         <div className="flex items-center justify-between rounded-md border border-line bg-panel-2 p-3">
           <span className="flex items-center gap-2 text-[13px] text-fg"><Badge tone="exp" dot>admin</Badge> Signed in for this session</span>
           <Button icon={LogOut} onClick={() => { adminLogout(); toast({ tone: 'info', title: 'Admin session ended' }) }}>Sign out</Button>
@@ -283,7 +290,7 @@ function Security() {
       <ul className="mt-4 list-disc pl-5 text-[12px] text-fg-3">
         <li>Uploads are validated by type and size on the server and stored under random names.</li>
         <li>RTSP credentials can be referenced as <span className="font-mono">env:VAR</span> and are masked in every API response.</li>
-        <li>Operators without the token can view, review alerts and run detections.</li>
+        <li>{loginOn ? 'Viewers can only view; operators can also run detections and review alerts; administrators can change the configuration and export data.' : 'Operators without the token can view, review alerts and run detections.'}</li>
       </ul>
     </Section>
   )
