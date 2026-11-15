@@ -34,17 +34,25 @@ notification or camera credentials, separate demo admin token), and checks on st
 `models/` and `.env` are unchanged. Guide: `deploy/DEMO_ENVIRONMENT.md`. Use it for demonstrations and test uploads:
 uploads to the normal instance become real alerts in `storage/litter_monitor.db`.
 
-**Tests:** `python -m pytest` -> 284 passed, 0 failed, **7 skipped** (2026-11-13). The integration tests use the
+**Tests:** `python -m pytest` -> 317 passed, 0 failed, **7 skipped** (latest verification, 2026-11-15; earlier
+result on 2026-11-13: 284 passed, 0 failed, 7 skipped, before the CSV-export, ROI-cancel and dashboard regression
+tests were added). The integration tests use the
 current `v3_store_cctv` model and a synthetic fixture (`tests/fixtures/v3/`); upload-size (413) limits are covered by
 `tests/test_upload_limits.py`. The 7 documented skips: 6 v1-only tests in `tests/test_v1_legacy.py` (the old
 `v1_litter_s1_synthetic` weights and `cctv_litter_dataset_v1` images were never committed and are not on this machine)
 and 1 clean-frame test that waits for human-verified litter-free CCTV frames in `tests/fixtures/clean/` (kept out of Git).
-Frontend: `npm run test:frontend` (13 tests) and `node node_modules/typescript/bin/tsc --noEmit` (0 errors).
+Frontend: `npm run test:frontend` (17 tests; 13 on 2026-11-13) and `node node_modules/typescript/bin/tsc --noEmit` (0 errors).
 
 **Local only.** Bind to `127.0.0.1` (as above or via the deploy scripts); do not use `--host 0.0.0.0`. The API rejects
 every request that does not come from this computer (`backend/api/local_only.py`). Optional login/sessions exist
 (`LM_AUTH_MODE=on`, off by default); with login off, viewer and operator actions are open to local users and admin
 actions need `ADMIN_API_TOKEN`.
+
+**Report downloads are admin-only when login is on (by design).** With `LM_AUTH_MODE=on`, an operator can upload
+images and videos, start analyses and view all results in the browser, but downloading reports (the alerts/detections
+CSV export, the four-screenshot report CSVs, the monthly and all-time report CSVs, and any JSON report download) needs
+an admin account (`ADMIN_IF_LOGIN` in `backend/api/authz.py`). With login off, these downloads stay open to local
+users, as before.
 
 Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are **off by default**. For local development set
 `LM_ENABLE_API_DOCS=true` in `.env` and open http://localhost:8000/docs (still local-only).
@@ -109,6 +117,15 @@ ID order and is not used by the pipeline.
 | confirmed | **video/live:** ≥ `min_confirmations` hits in the last `temporal_window` frames, mean hit conf ≥ confirmed threshold, not moving. **still image:** passed all filters and conf ≥ confirmed threshold |
 
 Defaults (0.30 / 0.45 / 0.60, window 5, min 3) are placeholders until the threshold sweep (M3) is run on real validation data.
+
+## Severity (unchanged in this release)
+Default rules (`backend/core/settings.py`, editable in Settings): **HIGH** if the class priority is `critical` and
+conf ≥ 0.75, **or** if at least 5 confirmed objects are visible (`min_active_objects=5`); **MEDIUM** for `critical`
+or `high` priority classes; otherwise **LOW**. Review finding (2026-11-15): the crowd rule counts confirmed objects
+per camera view (video/live) or per image/screenshot (image uploads and four-screenshot analyses), so when a screenshot
+contains five or more confirmed objects, **every** object in it is HIGH, including low-priority items. Severity here
+describes each object, while the five-object rule really measures how much litter is in the scene. This is kept as is
+for this release; separating object severity from a scene-level litter-volume indicator is a future enhancement.
 
 ## ROI zones
 Per camera, a list of normalized polygons: `{"name","type": sidewalk|road_edge|ground|parking|entrance|custom,

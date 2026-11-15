@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.api.authz import (ADMIN, ADMIN_IF_LOGIN, OPERATOR, VIEWER, message_filter, redact_json, stream_guard,
                                text_redactor)
 from backend.api.deps import IMAGE_EXTS, get_state, save_upload
+from backend.core.csv_safety import safe_rows
 from backend.database.db import utcnow
 from backend.services.datasets import DatasetError
 from backend.services.evaluation import match_image
@@ -174,7 +175,7 @@ def _csv_response(rows: list[dict[str, Any]], name: str) -> StreamingResponse:
     if rows:
         w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
         w.writeheader()
-        w.writerows(rows)
+        w.writerows(safe_rows(rows))     # free text (e.g. alert notes) cannot start a spreadsheet formula
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

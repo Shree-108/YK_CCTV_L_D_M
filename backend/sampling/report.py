@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from backend.core.csv_safety import safe_cell, safe_rows
 from backend.sampling.plan import clock_time, hhmmss, parse_recording_start
 
 FIELDS = ["video_name", "store_id", "camera_id", "recording_date", "video_timestamp", "recording_timestamp",
@@ -85,7 +86,18 @@ def to_csv(rows: list[dict[str, Any]]) -> str:
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=FIELDS, extrasaction="ignore")
     w.writeheader()                      # the header is written even with no rows
-    w.writerows(rows)
+    w.writerows(safe_rows(rows))         # file names / error text cannot start a spreadsheet formula
+    return buf.getvalue()
+
+
+def sanitize_csv_text(text: str) -> str:
+    """A stored report CSV (possibly written before formula protection existed) with every data cell made safe.
+    The header row is kept as is; a file that is already safe comes back byte-identical."""
+    rows = list(csv.reader(io.StringIO(text, newline="")))
+    buf = io.StringIO(newline="")
+    w = csv.writer(buf, lineterminator="\r\n")         # the csv module's default, as written by to_csv
+    for i, row in enumerate(rows):
+        w.writerow(row if i == 0 else [safe_cell(c) for c in row])
     return buf.getvalue()
 
 

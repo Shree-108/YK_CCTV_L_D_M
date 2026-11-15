@@ -225,11 +225,15 @@ def frame_image(job_id: str, idx: int, kind: str, state: AppState = Depends(get_
 
 
 @router.get("/jobs/{job_id}/report.csv", dependencies=ADMIN_IF_LOGIN)
-def job_csv(job_id: str, state: AppState = Depends(get_state)) -> FileResponse:
+def job_csv(job_id: str, state: AppState = Depends(get_state)) -> StreamingResponse:
     job = _runner(state).repo.job(job_id)
     if not job or not job.get("csv_path") or not Path(job["csv_path"]).is_file():
         raise HTTPException(404, "No CSV report for this analysis yet")
-    return FileResponse(job["csv_path"], media_type="text/csv", filename=Path(job["csv_path"]).name)
+    # served through the formula filter: reports written before the protection existed are made safe on the way
+    # out (the stored file is never rewritten)
+    text = report.sanitize_csv_text(Path(job["csv_path"]).read_text(encoding="utf-8", newline=""))
+    return StreamingResponse(iter([text]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{Path(job["csv_path"]).name}"'})
 
 
 # =========================================================================== results dashboard

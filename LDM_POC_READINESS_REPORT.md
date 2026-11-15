@@ -13,12 +13,32 @@
 > results *at audit time* and are kept unchanged as historical evidence. Since then the skipped tests were modernised
 > for the current `v3_store_cctv` model, upload-size (413) tests were added, explicit class metadata was added for
 > `cup`, `newspaper` and `plastic_piece` together with 34 severity and dedup tests, and two scheduler tests were made
-> robust to frame-decoding differences. Current result: `python -m pytest` -> **284 passed, 0 failed, 7 skipped**
+> robust to frame-decoding differences. Result on that date (historical; see the 2026-11-15 update below): `python -m pytest` -> **284 passed, 0 failed, 7 skipped**
 > (6 v1-only tests whose artifacts are unavailable, 1 test waiting for verified clean CCTV frames). An isolated demo
 > environment now exists (`deploy/DEMO_ENVIRONMENT.md`). Real CCTV footage, ROI approval and independent model
 > evaluation remain open, as listed in section 7. Privacy: the real-CCTV evidence images and the raw E2E evidence
 > files (`evidence/e2e.py`, `e2e.txt`, `e2e_results.json`, which contain machine paths and real-frame names) are kept
 > locally and are not committed to Git.
+
+> **Status update, 2026-11-15 (latest verification).** After fixes from the commit review (CSV formula-injection
+> protection for the alerts/detections export and the four-screenshot report CSVs, a cancel request that was lost
+> during ROI identification, and the Overview "Videos processed" count now including four-screenshot analyses),
+> regression tests were added for each fix. Latest result: `python -m pytest` -> **317 passed, 0 failed, 7 skipped**
+> (the same 7 documented skips as above); frontend tests 17 of 17 passed; TypeScript check 0 errors. The earlier
+> figures remain historical: 203 passed / 38 skipped at audit time, and 284 passed / 0 failed / 7 skipped on
+> 2026-11-13. No model, dataset, severity threshold or detection logic changed.
+
+> **Review findings recorded 2026-11-15 (documented only; no code change in this release).**
+>
+> 1. **Crowd severity rule.** The existing HIGH rule `min_active_objects=5` (`backend/core/settings.py`) and all
+>    severity thresholds are unchanged. The rule counts confirmed objects per image or screenshot (per camera view for
+>    video/live), so in a screenshot with five or more confirmed objects **every** object is rated HIGH, including
+>    low-priority items. Object severity and scene-level litter volume are therefore mixed in one field. Separating
+>    them (object severity per class/confidence, plus a separate scene-level litter-volume indicator) is recorded as a
+>    future enhancement.
+> 2. **Report downloads need admin when login is on.** The admin-only restriction on CSV/JSON report downloads
+>    (`ADMIN_IF_LOGIN`, `backend/api/authz.py`) is kept. With `LM_AUTH_MODE=on`, operators can upload and view results
+>    but need an admin account to download reports. With login off (the default), downloads stay open to local users.
 
 **Evidence labels used throughout:**
 

@@ -109,5 +109,11 @@ existing `/api/export/detections.csv`. Unknown store/camera/recording date stay 
 ## Tests
 
 `tests/test_sampled.py` (sampling, decoding, ROI proposal with a stub segmenter, full API workflow with the real v3
-model), `tests/test_authz.py` (permission matrix), `frontend/tests/csv.test.mjs`. Measured results on real footage:
-[EVALUATION.md](EVALUATION.md).
+model), `tests/test_sampled_cancel.py` (a single cancel during ROI identification stops the job),
+`tests/test_csv_export_safety.py` (spreadsheet-formula protection of every CSV export), `tests/test_authz.py`
+(permission matrix), `frontend/tests/csv.test.mjs`.
+
+**Evaluation on real footage: not documented yet.** `EVALUATION.md` (the measured ROI-proposal results that
+`backend/sampling/segmenter.py` refers to) was never written, and those measurements are not in the repository. Until
+an independent evaluation on real store footage is recorded, treat the class mapping and the auto-accept threshold as
+unvalidated defaults: automatic acceptance is off by default and the operator confirms every ROI.

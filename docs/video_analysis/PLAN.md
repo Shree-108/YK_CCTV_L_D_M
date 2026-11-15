@@ -2,6 +2,20 @@
 
 Status: **plan, not yet implemented** (2026-11-10). Scope: LDM only. No AWS, no uniform/clothing/staff logic.
 
+> **Superseded (note added 2026-11-14).** This is the pre-implementation plan, kept for its audit and reasoning. The
+> feature is implemented and [README.md](README.md) describes the current design. Where they differ, the code and
+> README are correct:
+>
+> | this plan | as implemented |
+> |---|---|
+> | `backend/api/routes_sampling.py`, `/api/reports/*` | `backend/api/routes_sampled.py`, all routes under `/api/sampled/*` (including `/api/sampled/reports/*`) |
+> | `csv_report.py` with an append-only master CSV in `storage/exports/` | `backend/sampling/report.py`: one CSV per job (`litter_report_<job_id>.csv`) plus month and all-analyses CSVs generated on request; no master CSV file |
+> | `media` table | `sampled_media` table |
+> | `settings_json` column on `sampled_jobs` | no such column (settings are not stored per job) |
+> | original video kept under `storage/uploads/` | kept under `storage/media/` |
+> | ROI polygon of at most 12 points | at most 16 points (`MAX_POINTS` in `backend/sampling/roi_proposal.py`) |
+> | `EVALUATION.md` (measured results) | not written yet; see README.md, Tests |
+
 ## 1. Audit summary
 
 ### UDM (reference: `YK_CCTV_U_D_M_main/YK_CCTV_U_D_M`)

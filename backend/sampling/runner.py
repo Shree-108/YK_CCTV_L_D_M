@@ -170,14 +170,17 @@ class SampledRunner:
         return self.repo.job(job_id)  # type: ignore[return-value]
 
     def cancel(self, job_id: str) -> dict[str, Any]:
-        job = self.repo.job(job_id)
-        if job is None:
-            raise KeyError(job_id)
-        if job["state"] not in ACTIVE:
-            raise JobError(f"This analysis has already finished (state: {job['state']}).")
-        self._cancel.add(job_id)
-        if job["state"] in ("queued", "awaiting_roi"):
-            self.repo.update_job(job_id, state="cancelled", finished_at=utcnow(), error="Cancelled by the operator.")
+        # Decided under the lock: the worker moves a job from running to awaiting_roi under the same lock after a
+        # last cancel check (_await_roi), so a cancel can never fall between the two and be lost.
+        with self._lock:
+            job = self.repo.job(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job["state"] not in ACTIVE:
+                raise JobError(f"This analysis has already finished (state: {job['state']}).")
+            self._cancel.add(job_id)
+            if job["state"] in ("queued", "awaiting_roi"):
+                self.repo.update_job(job_id, state="cancelled", finished_at=utcnow(), error="Cancelled by the operator.")
         return self.repo.job(job_id)  # type: ignore[return-value]
 
     def detail(self, job_id: str) -> Optional[dict[str, Any]]:
@@ -221,6 +224,17 @@ class SampledRunner:
     def _stop(self, job_id: str) -> Callable[[], bool]:
         return lambda: job_id in self._cancel
 
+    def _check_cancel(self, job_id: str) -> None:
+        """Stop at a stage boundary if the operator cancelled while the previous stage was running."""
+        if job_id in self._cancel:
+            raise Stopped()
+
+    def _await_roi(self, job_id: str) -> None:
+        """running -> awaiting_roi, unless a cancel arrived first (checked under the lock cancel() also takes)."""
+        with self._lock:
+            self._check_cancel(job_id)
+            self._stage(job_id, "roi_confirmation", state="awaiting_roi")
+
     def _start(self, job_id: str) -> None:
         job = self.repo.job(job_id)
         if job is None or job["state"] != "queued":
@@ -251,6 +265,7 @@ class SampledRunner:
             raise RuntimeError("None of the four screenshots could be read from this video "
                                "(see the per-screenshot errors).")
 
+        self._check_cancel(job_id)
         self._stage(job_id, "identifying_roi")
         try:
             proposal = propose(images, self._segmenter())
@@ -258,6 +273,7 @@ class SampledRunner:
             log.exception("ROI proposal failed for %s", job_id)
             from backend.sampling.roi_proposal import unavailable
             proposal = unavailable(f"Automatic ROI identification failed: {exc}")
+        self._check_cancel(job_id)          # ROI identification is the slow step: honour a cancel sent during it
         self._save_proposal_images(job, proposal, images)
         prefill, prefill_source = self._prefill(job, proposal)
         status = proposal.status if proposal.available else "pending"
@@ -268,11 +284,11 @@ class SampledRunner:
         # per-frame proposals (moved camera) stay in the proposal record: only a confirmation writes frame ROIs
         if (job["auto_accept"] and job["roi_mode"] == "auto" and proposal.status == "proposed"
                 and (proposal.confidence or 0) >= AUTO_ACCEPT):
-            self._stage(job_id, "roi_confirmation", state="awaiting_roi")
+            self._await_roi(job_id)
             self.confirm_roi(job_id, proposal.zones)
             self.repo.update_job(job_id, roi_source="auto", roi_confidence=proposal.confidence)
             return
-        self._stage(job_id, "roi_confirmation", state="awaiting_roi")
+        self._await_roi(job_id)
         self.state.db.log_event("info", "sampled", f"analysis {job_id} is waiting for ROI confirmation", job.get("camera_id"))
 
     def _prefill(self, job: dict[str, Any], proposal: Proposal) -> tuple[list[dict], Optional[str]]:

@@ -34,7 +34,7 @@ const GUIDES: { href: string; title: string; icon: LucideIcon; steps: string[] }
 ]
 
 const PAGES: { href: string; label: string; icon: LucideIcon; body: string }[] = [
-  { href: '/', label: 'Overview', icon: LayoutGrid, body: 'Totals, priority incidents, trends and the latest evidence.' },
+  { href: '/', label: 'Overview', icon: LayoutGrid, body: 'Totals, priority incidents, trends and the latest evidence. "Videos processed" counts completed video analyses of both kinds (full-video and four-screenshot); a video analysed twice counts twice.' },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, body: 'Trends by day, hour, category and camera with filters.' },
   { href: '/cameras', label: 'Camera Integration', icon: Camera, body: 'Camera list, RTSP configuration and per-camera ROI.' },
   { href: '/settings', label: 'Settings', icon: Settings, body: 'Thresholds, alert rules, appearance and security.' },

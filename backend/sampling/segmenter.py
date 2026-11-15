@@ -5,7 +5,8 @@ Model: UperNet with a ConvNeXt-tiny backbone trained on ADE20K (150 scene classe
 (no network access at run time). It is used only to locate ground surfaces and shop-interior structures; litter
 itself is detected by the existing LDM YOLO model.
 
-ADE20K classes mapped to (chosen after measuring on real Yatrikart CCTV, see docs/video_analysis/EVALUATION.md):
+ADE20K classes mapped to (chosen after measuring on real Yatrikart CCTV; that measurement is not documented yet -
+docs/video_analysis/EVALUATION.md does not exist, see docs/video_analysis/README.md, Tests):
   walkable ground   road, sidewalk, path, earth, grass, sand, field, land, dirt track, floor
   clearly outdoor   the same minus "floor"
   shop interior     shelf, cabinet, case, refrigerator, counter, countertop, box, arcade machine, bookcase, buffet,

@@ -59,7 +59,7 @@ login off (as before Step 4).
 | **admin\*** (configuration; unchanged) | `POST/PUT/DELETE /api/cameras…`, `POST /api/cameras/{id}/restart`, `POST /api/cctv/test`, `PUT /api/cctv/{id}`, `POST /api/cctv/{id}/connect`, `POST /api/cctv/{id}/stop`, `PUT /api/schedule/{id}`, `POST /api/schedule/{id}/{action}`, `POST /api/models/activate`, `POST /api/models/register`, `PUT /api/settings`, `PUT /api/datasets/{name}/annotation`, `POST /api/datasets/{name}/versions`, `GET /api/datasets/{name}/export`, `GET /api/auth/check`; `PUT /api/roi/{id}` for a **registered camera** |
 | **admin (login)** (new) | `GET /api/export/{alerts,detections}.csv` (approved: exports admin only), `GET /api/system/health` (detailed diagnostics), `GET /api/cctv/defaults` (NVR host/username from `.env`), `POST /api/evaluations` (compute-heavy; decided in the third pass) |
 
-Totals (final): 5 public, 36 viewer, 8 operator, 17 admin\*, 4 admin (login), 70 in all. Step 4 kept the original 69 operations and added one: the public `POST /api/auth/activity` (fourth pass). No invoice route exists.
+Totals at the end of Step 4, before the sampled-analysis routes: 5 public, 36 viewer, 8 operator, 17 admin\*, 4 admin (login), 70 in all. Step 4 kept the original 69 operations and added one: the public `POST /api/auth/activity` (fourth pass). No invoice route exists. **Update (2026-11-14):** the four-screenshot video analysis added 17 routes under `/api/sampled/*` (10 viewer, 4 operator, 3 admin (login); listed in `tests/test_authz.py` `MATRIX`, which the tests check against the running app), so the application now has **87** routes: 5 public, 46 viewer, 12 operator, 17 admin\*, 7 admin (login).
 
 ## Compatibility decisions
 
@@ -263,7 +263,7 @@ The table above is unchanged and verified by `test_every_route_declares_exactly_
 
 ## Final role–permission matrix
 
-Totals: 5 public, 36 viewer, 8 operator, 17 admin\*, 4 admin (login), 70 in all. The fourth pass added the public `POST /api/auth/activity`.
+Totals for the routes in the table below (Step 4): 5 public, 36 viewer, 8 operator, 17 admin\*, 4 admin (login), 70 in all. The fourth pass added the public `POST /api/auth/activity`. **Update (2026-11-14):** the four-screenshot video analysis added 17 routes under `/api/sampled/*` (10 viewer, 4 operator, 3 admin (login); listed in `tests/test_authz.py` `MATRIX`, which the tests check against the running app), so the application now has **87** routes: 5 public, 46 viewer, 12 operator, 17 admin\*, 7 admin (login). The 17 sampled-analysis routes are not repeated in the table; `tests/test_authz.py` is the authoritative list.
 
 | Permission | Routes |
 |---|---|

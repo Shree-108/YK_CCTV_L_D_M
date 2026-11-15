@@ -10,6 +10,7 @@ import { Api } from '../../api/endpoints'
 import type { Alert } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
 import { ago, className as cls, dateTime, dayStartIso, num, pct, todayLocal } from '../../lib/format'
+import { recentAnalyses, videoAnalysisCounts } from '../../lib/videoAnalyses'
 import { Badge, Button, PageHeader, Panel, StatusBadge } from '../../components/ui/primitives'
 import { BarList, LineChart } from '../../components/ui/charts'
 import { KpiCard } from '../../components/ui/kpi'
@@ -17,6 +18,7 @@ import { EmptyState, QueryView } from '../../components/ui/states'
 
 const DAYS = 14
 const JOB_LIMIT = 500   // backend maximum for /api/jobs; a full page means "at least this many"
+const RECENT = 5
 
 const sevTone = (s: Alert['severity']) => (s === 'HIGH' ? 'crit' : s === 'MEDIUM' ? 'warn' : 'info')
 const sevLabel = (s: Alert['severity']) => s[0] + s.slice(1).toLowerCase()
@@ -28,13 +30,22 @@ export default function DashboardPage() {
   const pending = useQuery('alerts:newcount', () => Api.alerts({ status: 'new', limit: 1 }), { poll: 15000 })
   const health = useQuery('health', Api.health, { poll: 30000 })
   const jobs = useQuery('jobs:overview', () => Api.jobs(JOB_LIMIT), { poll: 30000 })
+  // four-screenshot analyses (the default Video Analysis mode) are separate jobs: count and list them too
+  const sampled = useQuery('sampled:overview:recent', () => Api.sampledHistory({ limit: RECENT }), { poll: 30000 })
+  const sampledDone = useQuery('sampled:overview:done', () => Api.sampledHistory({ state: 'done', limit: 1 }), { poll: 30000 })
   const days = useMemo(() => Array.from({ length: DAYS }, (_, i) => todayLocal(i - DAYS + 1)), [])
   const byDay = useMemo(() => new Map(a.data?.by_day.map((d) => [d.day, d.n])), [a.data])
   const high = a.data?.by_severity.find((s) => s.severity === 'HIGH')?.n ?? 0
   const top = a.data?.by_class[0]
   const videoJobs = useMemo(() => (jobs.data?.jobs ?? []).filter((j) => j.kind === 'video'), [jobs.data])
-  const videosDone = videoJobs.filter((j) => j.status === 'done').length
   const capped = (jobs.data?.jobs.length ?? 0) >= JOB_LIMIT
+  // with the sampled counts unavailable (older server / error) the full-video figures are shown alone, and say so
+  const sampledOk = !!(sampled.data && sampledDone.data)
+  const counts = videoAnalysisCounts(videoJobs, sampledOk ? sampled.data!.total : 0, sampledOk ? sampledDone.data!.total : 0)
+  const videoSub = !jobs.data ? (jobs.error ? 'unavailable' : '')
+    : sampledOk ? `${num(counts.fullDone)} full-video · ${num(counts.sampledDone)} four-screenshot · ${num(counts.notFinished)} not finished`
+      : `${num(counts.notFinished)} queued, running or failed${sampled.error || sampledDone.error ? ' · four-screenshot analyses unavailable' : ''}`
+  const recent5 = useMemo(() => recentAnalyses(videoJobs, sampled.data?.analyses ?? [], RECENT), [videoJobs, sampled.data])
   const evidence = (recent.data?.alerts ?? []).filter((al) => al.snapshot_url || al.crop_url).slice(0, 6)
 
   return (
@@ -50,8 +61,9 @@ export default function DashboardPage() {
         <KpiCard label="Pending alerts" icon={BellRing} tone={pending.data?.total ? 'warn' : 'ok'} loading={pending.loading && !pending.data}
           value={pending.data ? num(pending.data.total) : null} sub="awaiting review" />
         <KpiCard label="High-priority incidents" icon={ShieldAlert} tone="crit" loading={a.loading && !a.data} value={a.data ? num(high) : null} sub={`last ${DAYS} days`} />
+        {/* completed video analyses of both kinds: full-video tracking jobs + four-screenshot analyses */}
         <KpiCard label="Videos processed" icon={FileVideo} tone="neutral" loading={jobs.loading && !jobs.data}
-          value={jobs.data ? `${num(videosDone)}${capped ? '+' : ''}` : null} sub={jobs.data ? `${videoJobs.length - videosDone} queued, running or failed` : jobs.error ? 'unavailable' : ''} />
+          value={jobs.data ? `${num(counts.done)}${capped ? '+' : ''}` : null} sub={videoSub} />
         <KpiCard label="Most frequent type" icon={ScanSearch} loading={a.loading && !a.data} value={top ? cls(top.class) : a.data ? '—' : null} sub={top ? `${num(top.n)} incidents` : 'no data yet'} />
         <KpiCard label="Active detection model" icon={Sparkles} tone="exp" loading={health.loading && !health.data} value={health.data?.model?.version ?? (health.data ? '—' : null)}
           sub={health.data?.model ? `${health.data.model.device.toUpperCase()} · ${health.data.model.classes.length} classes` : health.error ? 'backend offline' : health.data ? 'no model loaded' : ''} />
@@ -109,18 +121,18 @@ export default function DashboardPage() {
 
       <Panel title="Recent video analyses" noPad icon={FileVideo}
         actions={<Link href="/detect/video" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg">Video Analysis <ArrowRight className="size-3.5" aria-hidden /></Link>}>
-        <QueryView q={jobs} isEmpty={() => videoJobs.length === 0}
+        <QueryView q={jobs} isEmpty={() => recent5.length === 0}
           empty={<EmptyState icon={FileVideo} compact title="No videos processed yet" body="Upload a CCTV video in Video Analysis." />}>
           {() => (
             <ul className="divide-y divide-line">
-              {videoJobs.slice(0, 5).map((j) => (
-                <li key={j.id} className="flex items-center gap-3 px-4 py-2.5">
+              {recent5.map((j) => (
+                <li key={j.key} className="flex items-center gap-3 px-4 py-2.5">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-line bg-panel-2"><FileVideo className="size-4 text-fg-3" aria-hidden /></span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-fg">{j.input_name}</div>
-                    <div className="truncate text-[11px] text-fg-3">{j.camera_id ?? 'upload'} · {dateTime(j.created_at)}</div>
+                    <div className="truncate text-[13px] font-medium text-fg">{j.name}</div>
+                    <div className="truncate text-[11px] text-fg-3">{j.kind === 'sampled' ? 'Four-screenshot' : 'Full video'} · {j.camera} · {dateTime(j.created)}</div>
                   </div>
-                  {j.status === 'running' && <span className="tabular text-[12px] text-fg-2">{pct(j.progress, 0)}</span>}
+                  {j.progress !== undefined && <span className="tabular text-[12px] text-fg-2">{pct(j.progress, 0)}</span>}
                   <StatusBadge status={j.status} />
                 </li>
               ))}
