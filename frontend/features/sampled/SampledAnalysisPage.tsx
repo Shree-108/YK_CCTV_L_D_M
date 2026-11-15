@@ -1,6 +1,8 @@
 'use client'
 
-// Four-screenshot video analysis: Upload -> Preview -> Select camera -> Store ROI -> Analyse -> Results.
+// Four-screenshot video analysis.
+// Default (zero-click): drop a video -> upload + automatic analysis -> results (AutoAnalysis.tsx).
+// ?flow=manual (operator review): Upload -> Preview -> Select camera -> Store ROI -> Analyse -> Results.
 // URL state: ?media=<id> (uploaded, not started) then ?job=<id> (survives reloads; jobs run on the server).
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -21,6 +23,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states
 import { RoiEditor } from '../../components/vision/Overlay'
 import { DropZone, FileInfo, Steps, fileSize, litterName } from '../detection/common'
 import { CsvPreview, FrameCard, STATE, StageList, isActive } from './shared'
+import { AutoJobView, AutoUpload } from './AutoAnalysis'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v'
 const STEPS = ['Upload', 'Preview', 'Select camera', 'Store ROI', 'Analyse', 'Results']
@@ -31,6 +34,13 @@ export default function SampledAnalysisPage() {
   const pathname = usePathname()
   const mediaId = params.get('media')
   const jobId = params.get('job')
+  const manual = params.get('flow') === 'manual'
+  const setFlow = (toManual: boolean) => {
+    const p = new URLSearchParams()
+    if (params.get('mode')) p.set('mode', params.get('mode')!)
+    if (toManual) p.set('flow', 'manual')
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false })
+  }
   const [local, setLocal] = useState<{ file: File; src: string } | null>(null)
   const go = (q: Record<string, string>) => {
     const p = new URLSearchParams(params.toString())
@@ -49,18 +59,24 @@ export default function SampledAnalysisPage() {
   const step = !mediaId && !jobId ? 0 : !jobId ? 2 : !j ? 3
     : j.state === 'done' ? 6 : ['analysing', 'generating_images', 'generating_csv'].includes(j.stage) ? 4 : 3
 
+  const auto = jobId ? j?.mode === 'auto' : !manual && !mediaId
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-xl border border-line bg-panel px-4 py-3">
-        <Steps steps={STEPS} current={step} />
-      </div>
+      {!auto && !(jobId && !j) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-panel px-4 py-3">
+          <Steps steps={STEPS} current={step} />
+          {!jobId && <Button size="sm" variant="ghost" onClick={() => setFlow(false)}>Back to automatic analysis</Button>}
+        </div>
+      )}
       {jobId ? (
-        j ? <JobView job={j} onNew={restart} /> : job.error ? <Panel><ErrorState error={job.error} onRetry={job.refetch} action={<Button onClick={restart}>New analysis</Button>} /></Panel>
+        j ? (j.mode === 'auto' ? <AutoJobView job={j} onNew={restart} /> : <JobView job={j} onNew={restart} />) : job.error ? <Panel><ErrorState error={job.error} onRetry={job.refetch} action={<Button onClick={restart}>New analysis</Button>} /></Panel>
           : <Panel><LoadingState rows={5} /></Panel>
       ) : mediaId ? (
         <Configure mediaId={mediaId} local={local} onStarted={(id) => go({ job: id })} onBack={restart} />
-      ) : (
+      ) : manual ? (
         <UploadStep onUploaded={(m, file) => { setLocal({ file, src: URL.createObjectURL(file) }); go({ media: m.id }) }} />
+      ) : (
+        <AutoUpload onJob={(id) => go({ job: id })} onAdvanced={() => setFlow(true)} />
       )}
     </div>
   )

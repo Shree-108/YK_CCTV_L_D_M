@@ -80,6 +80,17 @@ class SampledRepo:
         return _decode(self.db._one("SELECT * FROM sampled_jobs WHERE media_id=? AND state IN "
                                     "('queued','running','awaiting_roi') ORDER BY created_at DESC LIMIT 1", (media_id,)))
 
+    def active_auto_job_for_sha(self, sha: str) -> Optional[dict[str, Any]]:
+        """A queued/running automatic job of any upload with this file content (duplicate drop protection)."""
+        return _decode(self.db._one("SELECT j.* FROM sampled_jobs j JOIN sampled_media m ON m.id=j.media_id "
+                                    "WHERE m.sha256=? AND j.mode='auto' AND j.state IN ('queued','running') "
+                                    "ORDER BY j.created_at DESC LIMIT 1", (sha,)))
+
+    def delete_media(self, media_id: str) -> None:
+        """Remove a media row that no job references (a duplicate upload that was not used)."""
+        self.db._write("DELETE FROM sampled_media WHERE id=? AND NOT EXISTS "
+                       "(SELECT 1 FROM sampled_jobs WHERE media_id=?)", (media_id, media_id))
+
     def jobs_in_states(self, states: tuple[str, ...]) -> list[dict[str, Any]]:
         q = ",".join("?" * len(states))
         return [_decode(r) for r in self.db._query(f"SELECT * FROM sampled_jobs WHERE state IN ({q})", states)]  # type: ignore[misc]

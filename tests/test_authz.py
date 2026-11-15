@@ -77,6 +77,7 @@ MATRIX = {
     ("POST", "/api/sampled/jobs/{job_id}/cancel"): "operator",
     ("GET", "/api/sampled/jobs/{job_id}/frames/{idx}/{kind}.jpg"): "viewer",
     ("GET", "/api/sampled/jobs/{job_id}/report.csv"): "admin_if_login",
+    ("GET", "/api/sampled/jobs/{job_id}/reports/{name}"): "admin_if_login",
     ("GET", "/api/sampled/reports/overview"): "viewer",
     ("GET", "/api/sampled/reports/months/{month}.csv"): "admin_if_login",
     ("GET", "/api/sampled/reports/months/{month}"): "viewer",

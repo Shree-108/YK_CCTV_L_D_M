@@ -6,8 +6,8 @@ import type {
   TestLabResponse, VideoResult,
 } from './types'
 import type {
-  RoiConfirmBody, SampledAnalysisRow, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob, SampledMedia,
-  SampledMonth, SampledOverview,
+  RoiConfirmBody, SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
+  SampledMedia, SampledMonth, SampledOverview,
 } from './sampledTypes'
 
 export type AlertQuery = {
@@ -92,6 +92,15 @@ export const Api = {
 
   // four-screenshot video analysis
   sampledUpload: (form: FormData) => api<SampledMedia>('/api/sampled/media', { form }),
+  /** Zero-click: upload + automatic analysis in one request (the server returns the job it created). */
+  sampledAutoUpload: (file: File, defaults: { camera_id?: string; store_id?: string }) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('auto_analyze', 'true')
+    if (defaults.camera_id) form.append('camera_id', defaults.camera_id)
+    if (defaults.store_id) form.append('store_id', defaults.store_id)
+    return api<SampledAutoUpload>('/api/sampled/media', { form })
+  },
   sampledMedia: (id: string) => api<SampledMedia>(`/api/sampled/media/${encodeURIComponent(id)}`),
   sampledCreate: (body: SampledCreateBody) => api<{ job_id: string; reused: boolean; state: string }>('/api/sampled/jobs', { method: 'POST', body }),
   sampledJob: (id: string) => api<SampledJob>(`/api/sampled/jobs/${encodeURIComponent(id)}`),

@@ -56,6 +56,9 @@ def rows_for_job(job: dict[str, Any], media: dict[str, Any], frames: Iterable[di
     except ValueError:
         start = None
     out: list[dict[str, Any]] = []
+    # an automatic job without an approved ROI analysed the whole frame: never call that "the outdoor ROI"
+    roi_source = ("whole_frame" if job.get("roi_status") in ("not_configured", "disabled_in_settings")
+                  else job.get("roi_source"))
     for f in sorted(frames, key=lambda x: x["idx"]):
         t = f.get("video_time_sec")
         clock = clock_time(start, t)
@@ -68,7 +71,7 @@ def rows_for_job(job: dict[str, Any], media: dict[str, Any], frames: Iterable[di
             "screenshot": Path(f["original_path"]).name if f.get("original_path") else "",
             "frame_idx": f.get("frame_idx"), "detection_count": len(confirmed), "outcome": f.get("outcome") or "",
             "roi_status": f.get("roi_status") or job.get("roi_status") or "",
-            "remark": remark(f.get("outcome"), len(confirmed), job.get("roi_source"), f.get("error")),
+            "remark": remark(f.get("outcome"), len(confirmed), roi_source, f.get("error")),
             "evidence_image": _rel(f.get("annotated_path") or f.get("original_path"), storage_dir),
             "job_id": job["id"], "model_version": res.get("model_version") or job.get("model_version") or "",
         }

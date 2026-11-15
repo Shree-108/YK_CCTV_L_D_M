@@ -160,6 +160,7 @@ def health(request: Request, state: AppState = Depends(get_state)) -> dict[str, 
             "cameras": {"configured": len(state.db.list_cameras()), "running": len(workers),
                         "online": sum(1 for w in workers.values() if w.status.state == "online")},
             "notifications": state.notifier.status(),
+            "limits": _upload_limits(state),
         }
     return {
         "status": "ok" if eng else "degraded",
@@ -174,7 +175,13 @@ def health(request: Request, state: AppState = Depends(get_state)) -> dict[str, 
         "notifications": state.notifier.status(),
         "system": _system_usage(state),
         "hardware": state.hardware,
+        "limits": _upload_limits(state),
     }
+
+
+def _upload_limits(state: AppState) -> dict[str, Any]:
+    """What the upload page checks before sending a video (the server enforces the same limits)."""
+    return {"max_video_mb": state.cfg.max_video_mb, "video_extensions": sorted(VIDEO_EXTS)}
 
 
 @router.get("/classes", dependencies=VIEWER)

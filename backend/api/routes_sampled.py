@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import cv2
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,7 +22,7 @@ from backend.detection.filters import ROIZone
 from backend.sampling import report
 from backend.sampling.media import Unreadable, new_media_id, probe, sha256_of
 from backend.sampling.reports import Reports, public_job
-from backend.sampling.runner import DuplicateJob, JobError
+from backend.sampling.runner import REPORT_FILES, DuplicateJob, JobError
 from backend.services.state import AppState
 
 router = APIRouter(prefix="/api/sampled")
@@ -44,16 +44,30 @@ def _csv(rows: list[dict[str, Any]], name: str) -> StreamingResponse:
 
 # =========================================================================== media
 @router.post("/media", status_code=201, dependencies=OPERATOR)
-async def upload_media(request: Request, file: UploadFile = File(...), state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """Receive a CCTV video, check it is readable and return its metadata and a preview frame."""
+async def upload_media(request: Request, response: Response, file: UploadFile = File(...),
+                       auto_analyze: bool = Form(False), store_id: Optional[str] = Form(None, max_length=64),
+                       camera_id: Optional[str] = Form(None, max_length=40),
+                       state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """Receive a CCTV video, check it is readable and return its metadata and a preview frame.
+
+    ``auto_analyze=true`` (zero-click workflow): the automatic four-screenshot analysis is created in the same request
+    and its ``job_id`` returned - no further call is needed. If the same file content is already being analysed
+    automatically, that job is returned instead (``duplicate_of_active: true``, HTTP 200) and the new copy is dropped."""
+    r = _runner(state)
+    if auto_analyze and state.engine is None:
+        raise HTTPException(503, "No detection model is loaded; the analysis cannot run.")
     tmp = await save_upload(file, VIDEO_EXTS, state.cfg.max_video_mb, state.cfg.media_dir)
     mid = new_media_id()
     path = tmp.with_name(f"{mid}{tmp.suffix}")
     os.replace(tmp, path)
     name = safe_display_name(file.filename)
     try:
-        meta, preview = await asyncio.to_thread(probe, path, name)
         sha = await asyncio.to_thread(sha256_of, path)
+        if auto_analyze and (same := r.repo.active_auto_job_for_sha(sha)):   # cheap check before probing
+            path.unlink(missing_ok=True)
+            response.status_code = 200
+            return _duplicate(r, same)
+        meta, preview = await asyncio.to_thread(probe, path, name)
     except Unreadable as exc:
         path.unlink(missing_ok=True)
         raise HTTPException(422, str(exc)) from None
@@ -61,7 +75,7 @@ async def upload_media(request: Request, file: UploadFile = File(...), state: Ap
         path.unlink(missing_ok=True)
         raise
     cv2.imwrite(str(state.cfg.media_dir / f"{mid}_preview.jpg"), preview, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    repo = _runner(state).repo
+    repo = r.repo
     row = {"id": mid, "created_at": utcnow(), "path": str(path), "sha256": sha, "size_bytes": path.stat().st_size, **meta}
     repo.insert_media(row)
     earlier = repo.media_by_sha(sha, exclude=mid)
@@ -70,7 +84,26 @@ async def upload_media(request: Request, file: UploadFile = File(...), state: Ap
         prev.append({"media_id": m["id"], "received_at": m["created_at"], "filename": m["filename"],
                      "jobs": [{"id": j["id"], "state": j["state"], "created_at": j["created_at"]}
                               for j in repo.jobs("WHERE j.media_id=?", (m["id"],), limit=5)]})
-    return {**_public_media(row), "previously_received": prev}
+    out = {**_public_media(row), "previously_received": prev}
+    if not auto_analyze:
+        return out
+    try:
+        job, _ = r.create(mid, store_id=store_id, camera_id=camera_id, mode="auto")
+    except DuplicateJob as exc:              # a concurrent upload of the same file won the race (checked under lock)
+        path.unlink(missing_ok=True)
+        (state.cfg.media_dir / f"{mid}_preview.jpg").unlink(missing_ok=True)
+        repo.delete_media(mid)
+        response.status_code = 200
+        return _duplicate(r, r.repo.job(exc.job_id) or {"id": exc.job_id, "state": "queued"})
+    except JobError as exc:                  # e.g. too short for four separate screenshots: nothing is analysed
+        raise HTTPException(422, str(exc)) from None
+    return {**out, "job_id": job["id"], "job_state": job["state"], "duplicate_of_active": False}
+
+
+def _duplicate(r, job: dict[str, Any]) -> dict[str, Any]:
+    m = r.repo.media(job.get("media_id", "")) if job.get("media_id") else None
+    return {**(_public_media(m) if m else {}), "job_id": job["id"], "job_state": job["state"],
+            "duplicate_of_active": True}
 
 
 def _public_media(m: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +143,7 @@ class JobIn(BaseModel):
     create_alerts: bool = True
     model_version: Optional[str] = Field(None, max_length=80)
     new_run: bool = False
+    mode: Literal["manual", "auto"] = "manual"
 
 
 @router.post("/jobs", status_code=202, dependencies=OPERATOR)
@@ -206,7 +240,8 @@ FRAME_KINDS = {"original": "original_path", "annotated": "annotated_path"}
 
 
 @router.get("/jobs/{job_id}/frames/{idx}/{kind}.jpg", dependencies=VIEWER)
-def frame_image(job_id: str, idx: int, kind: str, state: AppState = Depends(get_state)) -> FileResponse:
+def frame_image(job_id: str, idx: int, kind: str, download: bool = False,
+                state: AppState = Depends(get_state)) -> FileResponse:
     r = _runner(state)
     job, f = r.repo.job(job_id), r.repo.frame(job_id, idx)
     if not job or not f:
@@ -221,7 +256,26 @@ def frame_image(job_id: str, idx: int, kind: str, state: AppState = Depends(get_
     p = p.resolve()
     if root not in p.parents or not p.is_file():          # never serve anything outside the job folder
         raise HTTPException(404, "Image not available")
-    return FileResponse(p, media_type="image/jpeg")
+    # ?download=1: saved as a file (the stored name carries screenshot number, frame and video time)
+    return FileResponse(p, media_type="image/jpeg", filename=p.name if download else None)
+
+
+@router.get("/jobs/{job_id}/reports/{name}", dependencies=ADMIN_IF_LOGIN)
+def job_report_file(job_id: str, name: str, state: AppState = Depends(get_state)) -> Response:
+    """detection_report.csv, analysis_summary.csv or analysis_summary.json of a job (same permission as the CSV)."""
+    if name not in REPORT_FILES:
+        raise HTTPException(404, "Not found")
+    job = _runner(state).repo.job(job_id)
+    if not job:
+        raise HTTPException(404, "Analysis not found")
+    p = (Path(job["output_dir"]) / "reports" / name).resolve()
+    if Path(job["output_dir"]).resolve() not in p.parents or not p.is_file():
+        raise HTTPException(404, "This report is not available (the analysis has not completed)")
+    text = p.read_text(encoding="utf-8", newline="")
+    disp = {"Content-Disposition": f'attachment; filename="{job_id}_{name}"'}
+    if name.endswith(".json"):
+        return Response(text, media_type="application/json", headers=disp)
+    return Response(report.sanitize_csv_text(text), media_type="text/csv", headers=disp)
 
 
 @router.get("/jobs/{job_id}/report.csv", dependencies=ADMIN_IF_LOGIN)

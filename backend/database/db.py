@@ -208,7 +208,9 @@ CREATE TABLE IF NOT EXISTS sampled_jobs (
     create_alerts INTEGER NOT NULL DEFAULT 1,
     counts_json TEXT,
     output_dir TEXT NOT NULL,
-    csv_path TEXT
+    csv_path TEXT,
+    mode TEXT NOT NULL DEFAULT 'manual',          -- manual (operator confirms the ROI) | auto (zero-click)
+    sampling TEXT NOT NULL DEFAULT 'random_quarters'   -- random_quarters | fixed_pct (see backend/sampling/plan.py)
 );
 CREATE INDEX IF NOT EXISTS idx_sjobs_media ON sampled_jobs(media_id);
 CREATE INDEX IF NOT EXISTS idx_sjobs_created ON sampled_jobs(created_at);
@@ -225,6 +227,8 @@ CREATE TABLE IF NOT EXISTS sampled_frames (
     detection_count INTEGER NOT NULL DEFAULT 0,
     result_json TEXT,
     error TEXT,
+    planned_frame_idx INTEGER,         -- the planned frame when a nearby readable frame had to be used instead
+    sampling_note TEXT,                -- why and how the planned frame was replaced
     PRIMARY KEY (job_id, idx)
 );
 """
@@ -257,7 +261,10 @@ class Database:
         """Additive, idempotent column migrations for databases created by older versions."""
         wanted = {"alerts": {"notes": "TEXT", "updated_at": "TEXT"},
                   "cameras": {"latitude": "REAL", "longitude": "REAL", "rtsp_json": "TEXT"},
-                  "detections": {"session_id": "TEXT"}}
+                  "detections": {"session_id": "TEXT"},
+                  "sampled_jobs": {"mode": "TEXT NOT NULL DEFAULT 'manual'",
+                                   "sampling": "TEXT NOT NULL DEFAULT 'random_quarters'"},
+                  "sampled_frames": {"planned_frame_idx": "INTEGER", "sampling_note": "TEXT"}}
         for table, cols in wanted.items():
             have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
             for col, typ in cols.items():

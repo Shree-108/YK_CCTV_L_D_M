@@ -1,5 +1,9 @@
 // Four-screenshot video analysis (/api/sampled). Mirrors backend/sampling/reports.py public shapes.
 import type { Detection, RoiZone } from './types'
+import type { Lifecycle } from '../lib/autoAnalysis'
+
+/** A detection of a sampled screenshot: model output plus severity, estimated object and alert (when created). */
+export type SampledDetection = Detection & { severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number }
 
 export type SampledState = 'queued' | 'running' | 'awaiting_roi' | 'done' | 'failed' | 'cancelled' | 'interrupted'
 export type SampledStage = 'received' | 'validating' | 'sampling' | 'identifying_roi' | 'roi_confirmation' | 'analysing'
@@ -21,6 +25,13 @@ export interface SampledMedia {
   previously_received?: { media_id: string; received_at: string; filename: string; jobs: { id: string; state: SampledState; created_at: string }[] }[]
 }
 
+/** POST /api/sampled/media with auto_analyze=true: the analysis is created by the same request. */
+export interface SampledAutoUpload extends Partial<SampledMedia> {
+  job_id: string
+  job_state: SampledState
+  duplicate_of_active: boolean
+}
+
 export interface SampledFrame {
   idx: number
   frame_idx: number
@@ -36,13 +47,53 @@ export interface SampledFrame {
   original_url: string | null
   annotated_url: string | null
   proposal_url: string | null
-  detections: Detection[]
+  detections: SampledDetection[]
   counts: { confirmed: number; candidate: number; weak: number; rejected: number; raw: number } | null
   by_class: Record<string, number>
   alert_ids: number[]
   inference_ms: number | null
   image_size: [number, number] | null
   outside_roi_ignored: number | null
+  planned_frame_idx: number | null
+  sampling_note: string | null
+  download_original_url: string | null
+  download_annotated_url: string | null
+}
+
+export interface RoiPolicy {
+  status: 'APPROVED' | 'NOT_CONFIGURED' | 'DISABLED_IN_SETTINGS'
+  source: 'REGISTERED_CAMERA' | 'SAVED_CAMERA_ROI' | 'FULL_FRAME_FALLBACK'
+  zones: RoiZone[]
+  name: string
+  configuration_id: string
+  note: string
+  approved: boolean
+}
+
+/** analysis_summary.csv / .json of a job (backend/sampling/detection_report.py SUMMARY_FIELDS). */
+export interface SampledReportSummary {
+  job_id: string
+  video_filename: string
+  analysis_started_at: string
+  analysis_completed_at: string
+  processing_duration_seconds: number | ''
+  screenshots_planned: number
+  screenshots_analysed: number
+  screenshots_failed: number
+  sampling_adjustments: number
+  total_objects_detected: number
+  unique_objects_estimated: number
+  total_high_severity: number
+  total_medium_severity: number
+  total_low_severity: number
+  possible_litter_objects: number
+  outside_roi_detections: number
+  roi_status: string
+  roi_source: string
+  alerts_created: number
+  overall_analysis_status: string
+  review_required: 'TRUE' | 'FALSE'
+  note: string
 }
 
 export interface RoiProposal {
@@ -76,8 +127,8 @@ export interface SampledJob {
   auto_accept: boolean
   create_alerts: boolean
   roi: RoiZone[] | null
-  roi_source: 'auto' | 'camera' | 'manual' | 'whole_frame' | null
-  roi_status: 'pending' | 'proposed' | 'uncertain' | 'confirmed'
+  roi_source: 'auto' | 'camera' | 'manual' | 'whole_frame' | 'registered_camera' | 'saved_camera_roi' | 'full_frame_fallback' | null
+  roi_status: 'pending' | 'proposed' | 'uncertain' | 'confirmed' | 'approved' | 'not_configured' | 'disabled_in_settings'
   roi_confidence: number | null
   proposal: { proposal: RoiProposal; prefill: RoiZone[]; prefill_source: 'auto' | 'camera' | null } | null
   model_version: string | null
@@ -89,6 +140,12 @@ export interface SampledJob {
   media: SampledMedia | null
   frames: SampledFrame[]
   csv_url: string | null
+  mode: 'manual' | 'auto'
+  sampling: 'random_quarters' | 'fixed_pct'
+  lifecycle: Lifecycle
+  reports: { detection_csv: string; summary_csv: string; summary_json: string } | null
+  roi_policy: RoiPolicy | null
+  summary: SampledReportSummary | null
 }
 
 export interface SampledSummary {
@@ -185,6 +242,7 @@ export interface SampledCreateBody {
   create_alerts: boolean
   model_version?: string
   new_run?: boolean
+  mode?: 'manual' | 'auto'
 }
 
 export interface RoiConfirmBody {

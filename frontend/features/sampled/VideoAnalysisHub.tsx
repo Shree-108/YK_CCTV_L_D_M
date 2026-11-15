@@ -18,7 +18,7 @@ export default function VideoAnalysisHub() {
     <div className="flex flex-col gap-4">
       <PageHeader title="Video Analysis"
         description={mode === 'sampled'
-          ? 'Four random screenshots per video, outdoor ROI confirmation, litter detection, annotated images and a CSV report.'
+          ? 'Drop a video: four screenshots, litter detection, annotated images and a CSV report are produced automatically.'
           : 'Every sampled frame of the video is tracked; the processed video plays when the analysis is complete.'}
         actions={<>
           <Segmented label="Analysis type" value={mode} onChange={(v) => router.replace(v === 'full' ? `${pathname}?mode=full` : pathname, { scroll: false })}

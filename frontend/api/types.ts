@@ -39,6 +39,7 @@ export interface Health {
   notifications: { provider: string; configured: boolean }[]
   system?: { cpu_percent: number; memory_percent: number; gpu: null | Record<string, unknown> }
   hardware?: { cuda: boolean; cpu_count: number; gpu?: string; vram_gb?: number; recommended: Record<string, unknown> }
+  limits?: { max_video_mb: number; video_extensions: string[] }   // not sent to anonymous callers
 }
 
 export interface RoiZone {

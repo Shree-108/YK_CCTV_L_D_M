@@ -9,6 +9,16 @@ States: queued | running | awaiting_roi | done | failed | cancelled | interrupte
 A job is never run twice at the same time: one active job per uploaded video (HTTP 409 otherwise).
 A server restart marks queued/running jobs ``interrupted``; jobs waiting for ROI confirmation keep waiting
 (their screenshots are on disk).
+
+Modes:
+  manual  the operator workflow above (random seeded screenshots, ROI proposal + confirmation).
+  auto    zero-click: fixed screenshots at 10/35/65/90 %, the ROI chosen by backend/sampling/auto_roi.py (never a
+          pause for confirmation, never an unconfirmed automatic ROI), then straight on to detection and reports:
+              received -> validating -> sampling -> analysing -> generating_images -> generating_csv -> completed
+          Only one active automatic job per video *content* (SHA-256): a repeated upload of the same file while it is
+          being analysed returns the running job instead of starting a second one.
+Every completed job also gets reports/detection_report.csv, reports/analysis_summary.csv and
+reports/analysis_summary.json (backend/sampling/detection_report.py), written before the job is marked done.
 """
 from __future__ import annotations
 
@@ -23,11 +33,13 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import cv2
 
+from backend.alerts.manager import compute_severity
 from backend.database.db import utcnow
 from backend.detection.filters import ROISet, ROIZone
-from backend.sampling import SAMPLE_COUNT, report
+from backend.sampling import SAMPLE_COUNT, auto_roi, detection_report, report
 from backend.sampling.extract import Extracted, Stopped, extract
-from backend.sampling.plan import Sample, new_seed, parse_recording_start, plan_samples
+from backend.sampling.plan import (STRATEGY_FIXED, STRATEGY_RANDOM, Sample, new_seed, parse_recording_start,
+                                   plan_fixed, plan_samples)
 from backend.sampling.repo import SampledRepo
 from backend.sampling.roi_proposal import AUTO_ACCEPT, Proposal, Segmenter, propose
 from backend.services.pipeline import detect_image
@@ -42,6 +54,26 @@ STAGES = ["received", "validating", "sampling", "identifying_roi", "roi_confirma
 ACTIVE = ("queued", "running", "awaiting_roi")
 ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 STORE_RE = re.compile(r"^[A-Za-z0-9._ \-]{1,64}$")
+REPORT_FILES = ("detection_report.csv", "analysis_summary.csv", "analysis_summary.json")
+
+
+def _include_names(zones: list[dict]) -> str:
+    return ";".join(z.get("name", "") for z in zones if z.get("mode") == "include")
+
+
+def roi_info(job: dict[str, Any]) -> dict[str, Any]:
+    """The ROI that was applied to a job, in the report's terms. Automatic jobs store their policy decision;
+    for operator-confirmed jobs the operator's confirmation is the approval."""
+    policy = (job.get("counts") or {}).get("roi_policy")
+    if policy:
+        return policy
+    zones = job.get("roi") or []
+    confirmed = job.get("roi_status") == "confirmed"
+    src = (job.get("roi_source") or "").upper()
+    return {"status": "CONFIRMED_BY_OPERATOR" if confirmed else (job.get("roi_status") or "").upper(),
+            "source": "WHOLE_FRAME_CHOSEN_BY_OPERATOR" if src == "WHOLE_FRAME" else src,
+            "zones": zones, "name": _include_names(zones), "approved": confirmed,
+            "configuration_id": f"job:{job['id']}" if zones else "", "note": ""}
 
 
 class DuplicateJob(Exception):
@@ -76,8 +108,11 @@ class SampledRunner:
     def create(self, media_id: str, *, store_id: Optional[str] = None, camera_id: Optional[str] = None,
                recording_start: Optional[str] = None, seed: Optional[int] = None, roi_mode: str = "auto",
                auto_accept: bool = False, create_alerts: bool = True, model_version: Optional[str] = None,
-               new_run: bool = False) -> tuple[dict[str, Any], bool]:
-        """(job, reused). Raises JobError (bad input), DuplicateJob (409), KeyError (unknown media)."""
+               new_run: bool = False, mode: str = "manual") -> tuple[dict[str, Any], bool]:
+        """(job, reused). Raises JobError (bad input), DuplicateJob (409), KeyError (unknown media).
+        ``mode="auto"``: zero-click job (fixed screenshots, automatic ROI policy, no confirmation pause)."""
+        if mode not in ("manual", "auto"):
+            raise JobError("mode must be manual or auto.")
         media = self.repo.media(media_id)
         if media is None or not Path(media["path"]).is_file():
             raise KeyError(media_id)
@@ -94,20 +129,26 @@ class SampledRunner:
             raise JobError("roi_mode must be auto, camera or manual.")
         if seed is not None and not (0 < seed < 2 ** 31):
             raise JobError("seed must be between 1 and 2147483647.")
+        auto = mode == "auto"
         with self._lock:
             active = self.repo.active_job_for_media(media_id)
             if active:
                 raise DuplicateJob(active["id"])
-            if seed is not None and not new_run:
+            if auto:                              # same file content uploaded again while it is being analysed
+                same = self.repo.active_auto_job_for_sha(media["sha256"])
+                if same:
+                    raise DuplicateJob(same["id"])
+            if seed is not None and not new_run and not auto:
                 same = self.repo.jobs("WHERE j.media_id=? AND j.seed=? AND j.state='done' AND IFNULL(j.store_id,'')=? "
                                       "AND IFNULL(j.camera_id,'')=? AND IFNULL(j.recording_start,'')=?",
                                       (media_id, seed, store_id or "", camera_id or "",
                                        start.isoformat() if start else ""), limit=1)
                 if same:
                     return same[0], True
-            seed = seed or new_seed()
+            seed = 0 if auto else (seed or new_seed())          # 0 = no random draw (fixed positions)
             try:
-                samples = plan_samples(media["frames"], media["fps"], SAMPLE_COUNT, seed)
+                samples = (plan_fixed(media["frames"], media["fps"]) if auto
+                           else plan_samples(media["frames"], media["fps"], SAMPLE_COUNT, seed))
             except ValueError as exc:
                 raise JobError(str(exc)) from None
             job_id = f"sv_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -116,13 +157,15 @@ class SampledRunner:
             self.repo.insert_job({
                 "id": job_id, "media_id": media_id, "created_at": utcnow(), "stage": "received", "state": "queued",
                 "store_id": store_id, "camera_id": camera_id, "recording_start": start.isoformat() if start else None,
-                "seed": seed, "sample_count": SAMPLE_COUNT, "roi_mode": roi_mode, "auto_accept": int(auto_accept),
-                "create_alerts": int(create_alerts), "model_version": model_version, "output_dir": str(out),
-                "roi_status": "pending"})
+                "seed": seed, "sample_count": SAMPLE_COUNT, "roi_mode": "camera" if auto else roi_mode,
+                "auto_accept": 0 if auto else int(auto_accept), "create_alerts": int(create_alerts),
+                "model_version": model_version, "output_dir": str(out), "roi_status": "pending",
+                "mode": mode, "sampling": STRATEGY_FIXED if auto else STRATEGY_RANDOM})
             self.repo.insert_frames([{"job_id": job_id, "idx": s.idx, "frame_idx": s.frame,
                                       "video_time_sec": s.seconds, "status": "planned"} for s in samples])
             self.repo.update_job(job_id, counts={"plan": [s.as_dict() for s in samples]})
-        self.state.db.log_event("info", "sampled", f"four-screenshot analysis {job_id} queued", camera_id)
+        self.state.db.log_event("info", "sampled", f"{'automatic ' if auto else ''}four-screenshot analysis "
+                                f"{job_id} queued", camera_id)
         self._q.put(("start", job_id))
         return self.repo.job(job_id), False   # type: ignore[return-value]
 
@@ -251,21 +294,32 @@ class SampledRunner:
 
         self._stage(job_id, "sampling")
         frames = self.repo.frames(job_id)
-        samples = [Sample(f["idx"], f["frame_idx"], f["video_time_sec"], (0, 0)) for f in frames]
+        windows = {p["idx"]: tuple(p["segment"]) for p in (job.get("counts") or {}).get("plan") or []}
+        samples = [Sample(f["idx"], f["frame_idx"], f["video_time_sec"], windows.get(f["idx"], (0, 0))) for f in frames]
+        adjust = job.get("sampling") == STRATEGY_FIXED
 
         def saved(e: Extracted) -> None:
+            moved = e.frame != e.sample.frame
             self.repo.update_frame(job_id, e.sample.idx, status=e.status, video_time_sec=e.seconds,
                                    original_path=str(e.path) if e.path else None, error=e.error,
+                                   frame_idx=e.frame, planned_frame_idx=e.sample.frame if moved else None,
+                                   sampling_note=e.note,
                                    outcome=None if e.status == "saved" else ("UNREADABLE" if e.status == "unreadable" else "FAILED"))
 
         results = extract(Path(media["path"]), media["fps"], samples, Path(job["output_dir"]) / "frames",
-                          _safe_stem(media["filename"]), self._stop(job_id), saved)
+                          _safe_stem(media["filename"]), self._stop(job_id), saved, adjust=adjust)
         images = {e.sample.idx: e.image for e in results if e.status == "saved" and e.image is not None}
+        del results                                       # release the decoded pictures early (low-RAM machines)
         if not images:
             raise RuntimeError("None of the four screenshots could be read from this video "
                                "(see the per-screenshot errors).")
 
         self._check_cancel(job_id)
+        if job.get("mode") == "auto":
+            images.clear()
+            self._apply_auto_roi(job_id, job)
+            self._analyse(job_id, internal=True)
+            return
         self._stage(job_id, "identifying_roi")
         try:
             proposal = propose(images, self._segmenter())
@@ -290,6 +344,27 @@ class SampledRunner:
             return
         self._await_roi(job_id)
         self.state.db.log_event("info", "sampled", f"analysis {job_id} is waiting for ROI confirmation", job.get("camera_id"))
+
+    def _apply_auto_roi(self, job_id: str, job: dict[str, Any]) -> None:
+        """Choose the ROI by the automatic policy (auto_roi.decide) and record the decision on the job.
+        Alerts are only created when an approved ROI is applied: full-frame detections may include shop products
+        and go to review (review_required in the report) instead of the Alerts page."""
+        cam_id = job.get("camera_id")
+        cam = self.state.db.get_camera(cam_id) if cam_id else None
+        saved = None if cam or not cam_id else self.state.db.get_setting(f"roi:{cam_id}")
+        settings = self.state.settings_with(cam, None)
+        d = auto_roi.decide(cam_id, cam, saved, roi_enabled=settings.filters.roi_enabled)
+        counts = job.get("counts") or {}
+        with self._lock:
+            self._check_cancel(job_id)
+            for f in self.repo.frames(job_id):
+                if f["status"] == "saved":
+                    self.repo.update_frame(job_id, f["idx"], roi_status=d.status.lower())
+            self.repo.update_job(job_id, roi=d.zones, roi_source=d.source.lower(), roi_status=d.status.lower(),
+                                 create_alerts=int(bool(job.get("create_alerts")) and d.approved),
+                                 counts={**counts, "roi_policy": d.as_dict()}, stage="analysing")
+        self.state.db.log_event("info", "sampled", f"analysis {job_id}: ROI {d.status.lower()} ({d.source.lower()})",
+                                cam_id)
 
     def _prefill(self, job: dict[str, Any], proposal: Proposal) -> tuple[list[dict], Optional[str]]:
         saved = self.state.roi_for(self.state.db.get_camera(job["camera_id"]) if job.get("camera_id") else None,
@@ -317,9 +392,10 @@ class SampledRunner:
             vis = annotate_litter(img, [], roi, roi_active=bool(roi and roi.zones))
             cv2.imwrite(str(out / f"proposal_s{i}.jpg"), vis, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
-    def _analyse(self, job_id: str) -> None:
+    def _analyse(self, job_id: str, internal: bool = False) -> None:
+        """``internal``: called by _start for an automatic job (already running; no confirmation step)."""
         job = self.repo.job(job_id)
-        if job is None or job["state"] != "queued":
+        if job is None or job["state"] != ("running" if internal else "queued"):
             return
         media = self.repo.media(job["media_id"])
         self._stage(job_id, "analysing", state="running")
@@ -360,6 +436,12 @@ class SampledRunner:
                 alerts = res.pop("alerts")
                 res["alert_ids"] = [a["id"] for a in alerts]
                 n = res["counts"]["confirmed"]
+                alert_of = {a.get("track_id"): a["id"] for a in alerts}
+                for d in res["detections"]:
+                    if d.get("status") == "confirmed":        # existing severity rules (Settings -> severity)
+                        d["severity"] = compute_severity(d["class"], d["confidence"], n, settings, meta)
+                        if d.get("track_id") in alert_of:
+                            d["alert_id"] = alert_of[d["track_id"]]
                 outcome = "LITTER_DETECTED" if n else "NO_LITTER"
                 self.repo.update_frame(job_id, f["idx"], outcome=outcome, detection_count=n, result=res, error=None)
                 annotated_frames.append((f["idx"], annotated, Path(f["original_path"])))
@@ -382,15 +464,35 @@ class SampledRunner:
         frames = self.repo.frames(job_id)
         for f in frames:
             totals["outcomes"][f.get("outcome") or "NONE"] = totals["outcomes"].get(f.get("outcome") or "NONE", 0) + 1
+        # one estimated object per piece of litter seen in several screenshots (existing alert de-dup thresholds)
+        objects = detection_report.link_objects(
+            frames, iou_min=settings.alerts.dedup_iou, center_frac=settings.alerts.dedup_center_frac,
+            similar=lambda a, b: meta.similar(a, b, settings.alerts.class_match))
+        for f in frames:
+            if f.get("result"):
+                self.repo.update_frame(job_id, f["idx"], result=f["result"])     # now with object ids
         job = self.repo.job(job_id) or job
+        job["model_version"] = engine.version
         rows = report.rows_for_job(job, media or {}, frames, self.state.cfg.storage_dir)
         csv_path = out / f"litter_report_{job_id}.csv"
         report.write_atomic(csv_path, report.to_csv(rows))
-        plan = (job.get("counts") or {}).get("plan")
+        prev = job.get("counts") or {}
         failed_all = totals["screenshots_analysed"] == 0 and any(f.get("outcome") == "FAILED" for f in frames)
+        completed_at = utcnow()
+        roi = roi_info(job)
+        det_rows, summary = detection_report.build(job, media or {}, frames, objects, roi,
+                                                   completed_at=completed_at, failed=failed_all)
+        rdir = out / "reports"
+        report.write_atomic(rdir / "detection_report.csv",
+                            detection_report.to_csv(det_rows, detection_report.DETECTION_FIELDS))
+        report.write_atomic(rdir / "analysis_summary.csv",
+                            detection_report.to_csv([summary], detection_report.SUMMARY_FIELDS))
+        report.write_atomic(rdir / "analysis_summary.json", detection_report.summary_json(summary, objects, frames, roi))
         self.repo.update_job(job_id, stage="completed" if not failed_all else "generating_csv",
-                             state="failed" if failed_all else "done", finished_at=utcnow(), csv_path=str(csv_path),
-                             model_version=engine.version, counts={**totals, "plan": plan},
+                             state="failed" if failed_all else "done", finished_at=completed_at, csv_path=str(csv_path),
+                             model_version=engine.version,
+                             counts={**totals, "plan": prev.get("plan"), "roi_policy": prev.get("roi_policy"),
+                                     "summary": summary},
                              error="No screenshot could be analysed (see the per-screenshot errors)." if failed_all else None)
         self.state.db.log_event("info", "sampled", f"four-screenshot analysis {job_id} finished: "
                                 f"{totals['litter']} litter detection(s)", job.get("camera_id"))

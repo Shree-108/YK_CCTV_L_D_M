@@ -6,7 +6,64 @@ also reachable from Video Analysis and with Ctrl+K).
 
 Litter only, local storage only. No uniform/clothing/staff logic and no cloud storage.
 
-## Workflow
+## Zero-click analysis (default since 2026-11-15)
+
+Dropping a video on **Video Analysis** is the only action. The page checks the file type and size, then sends one
+request: `POST /api/sampled/media` with `auto_analyze=true` (and the optional remembered Camera ID / Store ID
+defaults). The server stores and checks the video and creates the analysis (`mode=auto`) in the same request. The
+page then only reads the job until it finishes. The manual workflow below is still available under
+**Review settings and ROI before analysis** (`/detect/video?flow=manual`). The full-video tracking analysis is
+unchanged.
+
+| | Automatic (`mode=auto`) | Operator workflow (`mode=manual`) |
+|---|---|---|
+| Screenshots | fixed: 10 / 35 / 65 / 90 % of the frames (`plan_fixed`) | random, one per quarter, seeded |
+| Unreadable planned frame | nearest readable frame within about 1 s (never overlapping a neighbour's window) is used; the planned frame, the frame used and the reason are recorded (`sampled_frames.planned_frame_idx`, `sampling_note`). No readable frame nearby: the screenshot is `UNREADABLE` | recorded as `UNREADABLE`/`FAILED`, never replaced |
+| ROI | `backend/sampling/auto_roi.py`: 1. ROI of the registered camera, 2. ROI saved for that camera ID, 3. otherwise the whole frame with `roi_status=NOT_CONFIGURED`. The ROI segmenter is not run, and nothing is approved automatically | proposal + operator confirmation |
+| Alerts | only when an approved ROI was applied; full-frame detections are marked `review_required` instead | as chosen by the operator |
+| Pauses | never | at ROI confirmation |
+
+Job lifecycle (`lifecycle` field, derived from the stored state/stage): `QUEUED → PROCESSING →
+EXTRACTING_SCREENSHOTS → RUNNING_DETECTION → GENERATING_REPORT → COMPLETED`, or `FAILED` / `CANCELLED`
+(`UPLOADING` exists only in the browser). A server restart during processing gives `FAILED` (stored as
+`interrupted`). A video that cannot be opened, or is too short for four separate screenshots, is refused at upload
+(HTTP 415 or 422) and no analysis is created.
+
+Duplicate protection: the page ignores the same drop delivered twice while it is uploading. The server returns the
+running job, not a new one, when a file with the same SHA-256 is already being analysed automatically
+(`duplicate_of_active: true`). It checks this before probing and again under the runner lock.
+
+### Reports (every completed job, written before it is marked completed)
+
+`storage/sampled/<job_id>/reports/`:
+
+- `detection_report.csv` has one `SCREENSHOT` row per screenshot (always 4) plus one `DETECTION` row per detected
+  object per screenshot: confirmed litter, possible litter (candidate) and detections removed as outside the ROI.
+  The columns are the requested sections A–E plus `screenshot_analysis_status` and `overall_analysis_status`.
+  Traceability columns follow: `planned_frame_number`, `sampling_adjustment`, `object_sightings`,
+  `object_max_confidence`, `rejection_reason`, `model_version`.
+- `analysis_summary.csv` has one row with the job-wide totals: `total_objects_detected`,
+  `unique_objects_estimated` and the `total_*_severity` counts. These are not repeated on detection rows, so a
+  spreadsheet sum cannot multiply them.
+- `analysis_summary.json` holds the summary, the ROI decision, the per-screenshot status and the estimated objects.
+
+Definitions:
+- **Severity** uses the existing rules (`compute_severity`, Settings → severity). The severity totals count each
+  estimated unique object once, at its highest severity.
+- **Estimated unique objects** links detections across screenshots with the existing alert de-duplication rule:
+  similar class group, IoU ≥ `alerts.dedup_iou` or centre distance ≤ `alerts.dedup_center_frac`. This is not
+  the tracker's stationary confirmation; four screenshots have no consecutive frames.
+  `stationary_confirmation_status` is therefore `REPEATED_AT_SAME_POSITION` or `SINGLE_OBSERVATION`.
+- `confidence_score` is the model's confidence for that detection. Cross-screenshot evidence is in separate columns.
+- All text cells are protected against spreadsheet formula injection (`backend/core/csv_safety.py`).
+
+The legacy per-job `litter_report_<job_id>.csv` is still written. The monthly and all-time CSVs and the Results
+Dashboard use it.
+
+Downloads: `GET /api/sampled/jobs/{id}/reports/{detection_report.csv|analysis_summary.csv|analysis_summary.json}`
+(admin when login is on, same as the existing CSV). For screenshots, add `?download=1` to the frame image URLs.
+
+## Operator workflow (`?flow=manual`)
 
 | UI step | Backend stage(s) | What happens |
 |---|---|---|
@@ -88,13 +145,13 @@ existing `/api/export/detections.csv`. Unknown store/camera/recording date stay 
 
 | Method | Path | Permission |
 |---|---|---|
-| POST | `/media` | operator |
+| POST | `/media` (optional form fields `auto_analyze`, `camera_id`, `store_id`) | operator |
 | GET | `/media/{id}`, `/media/{id}/preview.jpg` | viewer |
 | POST | `/jobs` | operator |
 | GET | `/jobs`, `/jobs/{id}`, `/jobs/{id}/frames/{n}/{original\|annotated\|proposal}.jpg` | viewer |
 | PUT | `/jobs/{id}/roi` (saving a *registered* camera's ROI additionally needs admin) | operator |
 | POST | `/jobs/{id}/cancel` | operator |
-| GET | `/jobs/{id}/report.csv`, `/reports/months/{YYYY-MM}.csv`, `/reports/all.csv` | admin when login is on |
+| GET | `/jobs/{id}/report.csv`, `/jobs/{id}/reports/{name}`, `/reports/months/{YYYY-MM}.csv`, `/reports/all.csv` | admin when login is on |
 | GET | `/reports/overview`, `/reports/months/{YYYY-MM}`, `/reports/history`, `/reports/detections`, `/reports/hourly` | viewer |
 
 ## Time rules

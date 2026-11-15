@@ -53,7 +53,43 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
         "detections": res.get("detections", []), "counts": res.get("counts"), "by_class": res.get("by_class", {}),
         "alert_ids": res.get("alert_ids", []), "inference_ms": res.get("inference_ms"),
         "image_size": res.get("image_size"), "outside_roi_ignored": res.get("outside_roi_ignored"),
+        "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
+        "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
+        "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,
     }
+
+
+def lifecycle(job: dict[str, Any]) -> str:
+    """One operator-facing status derived from (state, stage). The stored state/stage values are unchanged."""
+    state, stage = job.get("state"), job.get("stage")
+    if state == "done":
+        return "COMPLETED"
+    if state == "cancelled":
+        return "CANCELLED"
+    if state in ("failed", "interrupted"):
+        return "FAILED"
+    if state == "awaiting_roi":
+        return "AWAITING_ROI"                     # operator workflow only; automatic jobs never pause
+    if state == "queued":
+        return "QUEUED"
+    if stage == "sampling":
+        return "EXTRACTING_SCREENSHOTS"
+    if stage in ("analysing", "generating_images"):
+        return "RUNNING_DETECTION"
+    if stage == "generating_csv":
+        return "GENERATING_REPORT"
+    return "PROCESSING"                           # received, validating, identifying_roi
+
+
+def report_urls(job: dict[str, Any]) -> Optional[dict[str, str]]:
+    """Download links of reports/ files that exist (they are written before a job is marked done)."""
+    from pathlib import Path
+    rdir = Path(job.get("output_dir") or "") / "reports"
+    if not job.get("output_dir") or not (rdir / "detection_report.csv").is_file():
+        return None
+    base = f"/api/sampled/jobs/{job['id']}/reports"
+    return {"detection_csv": f"{base}/detection_report.csv", "summary_csv": f"{base}/analysis_summary.csv",
+            "summary_json": f"{base}/analysis_summary.json"}
 
 
 def public_job(job: dict[str, Any], media: Optional[dict[str, Any]], frames: list[dict[str, Any]],
@@ -66,6 +102,11 @@ def public_job(job: dict[str, Any], media: Optional[dict[str, Any]], frames: lis
     j["video_name"] = (media or {}).get("filename")
     j["frames"] = [{**public_frame(job, f), "error": error(f.get("error"))} for f in frames]
     j["csv_url"] = f"/api/sampled/jobs/{job['id']}/report.csv" if job.get("csv_path") else None
+    j["lifecycle"] = lifecycle(job)
+    j["reports"] = report_urls(job)
+    counts = job.get("counts") or {}
+    j["roi_policy"] = counts.get("roi_policy")
+    j["summary"] = counts.get("summary")
     return j
 
 

@@ -121,7 +121,9 @@ export function FrameCard({ frame, compact }: { frame: SampledFrame; compact?: b
 }
 
 /** Preview (first rows) of a server-generated CSV report plus its download button. */
-export function CsvPreview({ path, filename, max = 12 }: { path: string; filename: string; max?: number }) {
+const LEGACY_COLS = ['screenshot', 'video_timestamp', 'recording_timestamp', 'class', 'confidence', 'detection_count', 'outcome', 'remark']
+
+export function CsvPreview({ path, filename, max = 12, cols = LEGACY_COLS }: { path: string; filename: string; max?: number; cols?: string[] }) {
   const { toast } = useApp()
   const [busy, setBusy] = useState(false)
   const q = useQuery(`csv:${path}`, () => api<string>(path))
@@ -131,7 +133,6 @@ export function CsvPreview({ path, filename, max = 12 }: { path: string; filenam
     try { await downloadAuthed(path, filename) } catch (e) { toast({ tone: 'crit', title: 'Download failed', body: (e as Error).message }) } finally { setBusy(false) }
   }
   const data = typeof q.data === 'string' ? parseCsv(q.data) : null
-  const cols = ['screenshot', 'video_timestamp', 'recording_timestamp', 'class', 'confidence', 'detection_count', 'outcome', 'remark']
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -150,8 +151,8 @@ export function CsvPreview({ path, filename, max = 12 }: { path: string; filenam
                   <tr key={i} className="border-b border-line/70 last:border-0">
                     {cols.map((c) => (
                       <td key={c} className={cx('px-3 py-2 align-top text-fg-2', c === 'remark' ? 'min-w-[220px]' : 'whitespace-nowrap')}>
-                        {c === 'class' && r[c] ? <span className="text-fg">{litterName(r[c])}</span>
-                          : c === 'confidence' && r[c] ? pct(Number(r[c]), 1)
+                        {(c === 'class' || c === 'litter_class') && r[c] ? <span className="text-fg">{litterName(r[c])}</span>
+                          : (c === 'confidence' || c === 'confidence_score') && r[c] ? pct(Number(r[c]), 1)
                           : c === 'outcome' && r[c] ? <Badge tone={OUTCOME[r[c] as FrameOutcome]?.tone ?? 'neutral'}>{OUTCOME[r[c] as FrameOutcome]?.label ?? r[c]}</Badge>
                           : r[c] || <span className="text-fg-3">—</span>}
                       </td>

@@ -230,7 +230,9 @@ _SAFE_EVENTS: list[tuple[re.Pattern, Optional[str]]] = [(re.compile(p, re.S), r)
     (r"global detection settings updated", None),
     (rf"activated model {_ID}|applied recommended settings of {_ID}", None),
     (rf"evaluation {_ID} finished for {_ID}", None),
-    (rf"four-screenshot analysis {_ID} queued", None),
+    (rf"(automatic )?four-screenshot analysis {_ID} queued", None),
+    (rf"analysis {_ID}: ROI (approved|not_configured|disabled_in_settings) "
+     r"\((registered_camera|saved_camera_roi|full_frame_fallback)\)", None),
     (rf"analysis {_ID} is waiting for ROI confirmation", None),
     (rf"ROI confirmed for analysis {_ID} \((auto|camera|manual|whole_frame)\)", None),
     (rf"four-screenshot analysis {_ID} finished: \d{{1,6}} litter detection\(s\)", None),

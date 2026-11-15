@@ -77,6 +77,32 @@ def new_seed() -> int:
     return random.SystemRandom().randrange(1, 2 ** 31)
 
 
+# ---------------------------------------------------------------------- deterministic (zero-click) sampling
+STRATEGY_RANDOM = "random_quarters"      # one random frame per quarter, seeded (operator workflow)
+STRATEGY_FIXED = "fixed_pct"             # fixed positions of the video length (automatic workflow)
+FIXED_FRACTIONS = (0.10, 0.35, 0.65, 0.90)
+MAX_ADJUST_SECONDS = 1.0                 # an undecodable planned frame may be replaced by one at most this far away
+
+
+def plan_fixed(frames: int, fps: float, fractions: tuple[float, ...] = FIXED_FRACTIONS) -> list[Sample]:
+    """One frame at each fixed fraction of the video (default 10 / 35 / 65 / 90 %). Deterministic: the same video
+    always gives the same frames. ``segment`` is the window [lo, hi] in which the extractor may pick the nearest
+    readable frame when the planned one cannot be decoded (at most MAX_ADJUST_SECONDS away, and never overlapping
+    a neighbour's window, so two screenshots can never become the same frame)."""
+    if not fps or fps <= 0 or not frames or frames <= 0:
+        raise TooShort("The video's frame rate or length could not be determined, so four screenshots cannot be planned.")
+    first, last = 1, frames - 1                         # frame 0 skipped, as in plan_samples
+    picks = [min(last, max(first, int(round(p * frames)))) for p in fractions]
+    gaps = [b - a for a, b in zip(picks, picks[1:])]
+    if last < first or (gaps and min(gaps) < MIN_GAP_FRAMES):
+        raise TooShort(f"The video is too short for {len(fractions)} separate screenshots "
+                       f"({frames} frames at {fps:.1f} fps).")
+    half_gap = (min(gaps) - 1) // 2 if gaps else frames
+    window = max(0, min(int(round(fps * MAX_ADJUST_SECONDS)), half_gap))
+    return [Sample(i, f, round(f / fps, 6), (max(first, f - window), min(last, f + window)))
+            for i, f in enumerate(picks, start=1)]
+
+
 # ---------------------------------------------------------------------- time helpers
 def hhmmss(seconds: Optional[float], millis: bool = False) -> str:
     if seconds is None:
