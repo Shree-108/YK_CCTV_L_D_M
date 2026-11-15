@@ -1,5 +1,5 @@
 {
-  "_comment": "Class metadata for all 25 legacy classes (preserved). The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
+  "_comment": "Class metadata for 28 classes: the 25 legacy classes (preserved; 7 of them are also classes of the v3_store_cctv model) plus 3 entries added on 2026-11-13 for v3_store_cctv classes that had none: cup, newspaper, plastic_piece. The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
   "classes": {
     "chips_packet": {
       "priority": "critical",
@@ -52,6 +52,18 @@
     "other_litter": {
       "priority": "low",
       "bin": "general"
+    },
+    "cup": {
+      "priority": "medium",
+      "bin": "general"
+    },
+    "newspaper": {
+      "priority": "medium",
+      "bin": "paper"
+    },
+    "plastic_piece": {
+      "priority": "medium",
+      "bin": "plastic"
     },
     "cigarette_butt": {
       "priority": "high",
@@ -116,14 +128,16 @@
       "plastic_film",
       "cigarette_packet",
       "plastic_bag",
-      "foil"
+      "foil",
+      "plastic_piece"
     ],
     "cups_containers": [
       "plastic_cup",
       "paper_cup",
       "food_container",
       "styrofoam",
-      "lid"
+      "lid",
+      "cup"
     ],
     "bottles_cans": [
       "plastic_bottle",
@@ -136,7 +150,8 @@
       "paper",
       "cardboard",
       "carton",
-      "tissue"
+      "tissue",
+      "newspaper"
     ],
     "small_items": [
       "cigarette_butt",
