@@ -1,0 +1,148 @@
+{
+  "video": {
+    "fps": 19.971,
+    "frames": 3594,
+    "width": 640,
+    "height": 368,
+    "duration_sec": 179.96,
+    "output_codec": "avc1"
+  },
+  "frames_analysed": 360,
+  "sample_every_n_frames": 10,
+  "unique_confirmed_objects": 6,
+  "litter": {
+    "total": 6,
+    "roi_active": false,
+    "inside_roi": 6,
+    "outside_roi_ignored": 0,
+    "highest_confidence": 0.9507,
+    "average_confidence": 0.7546,
+    "classes": [
+      {
+        "class": "food_wrapper",
+        "count": 5,
+        "max_confidence": 0.9507,
+        "timestamps_sec": [
+          1.0014521055530519,
+          24.53557658604977,
+          50.57333133042912,
+          110.66045766361223,
+          140.7040208302038
+        ],
+        "avg_confidence": 0.8102
+      },
+      {
+        "class": "plastic_piece",
+        "count": 1,
+        "max_confidence": 0.6527,
+        "timestamps_sec": [
+          108.65755345250614
+        ],
+        "avg_confidence": 0.4765
+      }
+    ],
+    "objects": [
+      {
+        "track_id": 1,
+        "class": "food_wrapper",
+        "first_seen_sec": 1.0014521055530519,
+        "max_confidence": 0.8995,
+        "avg_confidence": 0.8255
+      },
+      {
+        "track_id": 4,
+        "class": "food_wrapper",
+        "first_seen_sec": 24.53557658604977,
+        "max_confidence": 0.9507,
+        "avg_confidence": 0.8997
+      },
+      {
+        "track_id": 5,
+        "class": "food_wrapper",
+        "first_seen_sec": 50.57333133042912,
+        "max_confidence": 0.8908,
+        "avg_confidence": 0.75
+      },
+      {
+        "track_id": 6,
+        "class": "plastic_piece",
+        "first_seen_sec": 108.65755345250614,
+        "max_confidence": 0.6527,
+        "avg_confidence": 0.4765
+      },
+      {
+        "track_id": 8,
+        "class": "food_wrapper",
+        "first_seen_sec": 110.66045766361223,
+        "max_confidence": 0.9182,
+        "avg_confidence": 0.8635
+      },
+      {
+        "track_id": 10,
+        "class": "food_wrapper",
+        "first_seen_sec": 140.7040208302038,
+        "max_confidence": 0.805,
+        "avg_confidence": 0.7125
+      }
+    ]
+  },
+  "confirmed_by_class": {
+    "food_wrapper": 5,
+    "plastic_piece": 1
+  },
+  "new_alerts": 6,
+  "detections_by_status": {
+    "candidate": 41,
+    "confirmed": 1266,
+    "weak": 38,
+    "rejected": 5
+  },
+  "rejection_reasons": {
+    "too_small": 5
+  },
+  "peak_per_frame": {
+    "raw_detections": 8,
+    "rejected": 1,
+    "weak": 2,
+    "candidates": 1,
+    "confirmed_in_frame": 6,
+    "confirmed_litter": 6,
+    "active_tracks": 7,
+    "tracks_in_memory": 8,
+    "new_alerts": 1
+  },
+  "model_runs": 122,
+  "frames_reused_static": 238,
+  "batch_size": 1,
+  "device": "cpu",
+  "mean_inference_ms": 229.6,
+  "processing_fps": 8.71,
+  "wall_time_sec": 41.3,
+  "model_version": "v3_store_cctv",
+  "settings": {
+    "confidence": {
+      "weak_threshold": 0.3,
+      "candidate_threshold": 0.45,
+      "confirmed_threshold": 0.6
+    },
+    "tracking": {
+      "iou_match": 0.3,
+      "low_iou_match": 0.5,
+      "max_missed_frames": 15,
+      "temporal_window": 5,
+      "min_confirmations": 3,
+      "stationarity_enabled": true,
+      "max_center_shift_frac": 0.05
+    },
+    "tiling": {
+      "enabled": true,
+      "mode": "auto",
+      "tile_size": 1024,
+      "overlap": 0.2,
+      "auto_min_ratio": 1.25,
+      "include_full_frame": true,
+      "merge_iou": 0.5,
+      "cross_tile_ios": 0.75
+    }
+  }
+}

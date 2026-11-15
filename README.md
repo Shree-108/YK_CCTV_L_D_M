@@ -3,30 +3,48 @@
 YOLO-based litter detection for CCTV: images, videos, RTSP / HTTP / webcam streams,
 with tracking, temporal confirmation, deduplicated alerts, snapshots, and a REST API.
 
-> **Honest status:** the pipeline is real and tested end-to-end with a real trained YOLO model.
-> The only model available so far (`v1_litter_s1_synthetic`) was trained on the **synthetic starter
-> dataset** (rendered scenes, 120 training images). Its validation numbers (P 0.89 / R 0.88 /
-> mAP50 0.98) are measured on synthetic images and **say nothing about real CCTV performance**.
-> Real accuracy requires real, annotated footage from your cameras (see Milestone 3: training).
+> **Honest status (verified 2026-11-13, see `LDM_POC_READINESS_REPORT.md`):** the software pipeline works end to end
+> (upload -> detection -> tracking/confirmation -> alerts -> annotated H.264 video -> JSON/CSV -> dashboard), tested
+> through the API and in a browser. **The detector's accuracy on real CCTV is not measured.**
+> The production model `v3_store_cctv` (YOLO11s, 10 classes, 640 px) reports val mAP50 0.995, but its validation clip is
+> the same scene as its training clip, so that number is not independent. All real footage on this machine comes from one
+> store-entrance camera; there is no labelled clean-scene, small/distant-litter or unseen-camera footage yet.
+> False alerts were observed on non-litter footage (boxes cut by the frame edge). Do not quote an accuracy figure.
 
 ## Status by milestone
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | Backend: YOLO engine, tiling, filters/ROI, tracking, temporal confirmation, alerts/dedup/snapshots, DB, cameras + reconnect, API, tests | **done** |
-| M2 | Frontend pages wired to the real API (dashboard, live, detection, alerts, history, analytics, cameras, models, settings) | next |
-| M3 | Dataset validation/stats, training/retraining, evaluation (per-class, small/medium/large recall), threshold sweep, hard-example mining, model deploy/rollback | planned |
-| M4 | Notifications hardening, auth for the UI, docker-compose, retention/cleanup, performance tuning | planned |
+| M2 | Frontend pages wired to the real API (dashboard, image/video analysis, alerts, history, analytics, reports/CSV, cameras, models, settings) | **done** (browser walkthrough 2026-11-13: 17/17 steps) |
+| M3 | Dataset tools, evaluation, threshold sweep, hard examples, model deploy/rollback | tools **done**; **no labelled real evaluation data yet** (0/215 workspace frames labelled) |
+| M4 | Login (optional, `LM_AUTH_MODE=on`), local-only guard, retention/cleanup, notifications hardening | login + local-only **done**; retention cleanup and video-job cancellation **not implemented** |
 
-## Quick start (backend)
+## Quick start
 ```bash
 pip install -r requirements.txt
-cp .env.example .env              # set ADMIN_API_TOKEN (a random one was generated locally)
-uvicorn backend.main:app --host 127.0.0.1 --port 8000
-python -m pytest                  # 38 tests, uses the real model
+cp .env.example .env              # set ADMIN_API_TOKEN
 ```
-**Local only.** The API has no user login yet, so it must only be used on this computer: bind to `127.0.0.1`
-(as above, or use `deploy\start-ldm.ps1`). Do not use `--host 0.0.0.0`. The API also rejects every request that
-does not come from this computer (`backend/api/local_only.py`) until login protection is added.
+Normal instance (API :8000 + UI :3010, cameras off): `deploy\start-ldm.cmd`, stop with `deploy\stop-ldm.cmd`
+(details: `deploy/README.md`, `deploy/SETUP.md`, `deploy/TROUBLESHOOTING.md`).
+Backend only: `uvicorn backend.main:app --host 127.0.0.1 --port 8000`.
+
+**Demo instance (separate data):** `deploy\start-ldm-demo.ps1` / `deploy\stop-ldm-demo.ps1` (API :8100 + UI :3110). It uses its
+own database, storage, dataset folder and a verified copy of the model outside the project, does not read `.env` (no
+notification or camera credentials, separate demo admin token), and checks on stop that production `storage/`, `dataset/`,
+`models/` and `.env` are unchanged. Guide: `deploy/DEMO_ENVIRONMENT.md`. Use it for demonstrations and test uploads:
+uploads to the normal instance become real alerts in `storage/litter_monitor.db`.
+
+**Tests:** `python -m pytest` -> 284 passed, 0 failed, **7 skipped** (2026-11-13). The integration tests use the
+current `v3_store_cctv` model and a synthetic fixture (`tests/fixtures/v3/`); upload-size (413) limits are covered by
+`tests/test_upload_limits.py`. The 7 documented skips: 6 v1-only tests in `tests/test_v1_legacy.py` (the old
+`v1_litter_s1_synthetic` weights and `cctv_litter_dataset_v1` images were never committed and are not on this machine)
+and 1 clean-frame test that waits for human-verified litter-free CCTV frames in `tests/fixtures/clean/` (kept out of Git).
+Frontend: `npm run test:frontend` (13 tests) and `node node_modules/typescript/bin/tsc --noEmit` (0 errors).
+
+**Local only.** Bind to `127.0.0.1` (as above or via the deploy scripts); do not use `--host 0.0.0.0`. The API rejects
+every request that does not come from this computer (`backend/api/local_only.py`). Optional login/sessions exist
+(`LM_AUTH_MODE=on`, off by default); with login off, viewer and operator actions are open to local users and admin
+actions need `ADMIN_API_TOKEN`.
 
 Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are **off by default**. For local development set
 `LM_ENABLE_API_DOCS=true` in `.env` and open http://localhost:8000/docs (still local-only).
@@ -59,28 +77,28 @@ backend/
   cameras/               manager.py (workers, reconnect, MJPEG frames)
   database/              db.py (SQLite/WAL, Postgres-portable schema)
   services/              pipeline.py (detect_image / detect_video / StreamPipeline), state.py, model_registry.py
-  legacy/                previous classical-ML engine (baseline only)
+  sampling/              "four screenshots" analysis: ROI proposal (UperNet segmenter), job runner, CSV reports
+  legacy/                previous classical-ML engine (not imported by the app)
 models/
-  litter_ml_model.pkl    legacy classifier (kept, never overwritten)
-  litter_yolo/<version>/ best.pt, last.pt, data.yaml, class_names.json, model_meta.json, results.csv
-training/register_model.py
+  litter_yolo/<version>/ best.pt, data.yaml, class_names.json, model_meta.json, results.csv
+                         (on this machine only v3_store_cctv has best.pt; v1 and v2 folders hold metadata only)
+  backups/               v3_store_cctv_20261012 (best.pt + SHA256SUMS)
+  roi_segmenter/         upernet-convnext-tiny weights for the ROI proposal
+training/                dataset tools, train.py, register_model.py
 storage/                 alerts/<date>/<camera>/alert_00001.jpg + _crop.jpg + .json, videos/<job>/, DB
 ```
 
 ## The legacy `litter_ml_model.pkl`
-Inspected without unpickling: a joblib-compressed **scikit-learn Pipeline (StandardScaler + classifier)**
-over hand-crafted crop features, fed by OpenCV contour/MSER region proposals. It is a crop
-**classifier**, not an object detector, and cannot be converted into a YOLO model. It is kept in
-`models/` (moved, not modified) and the old engine lives in `backend/legacy/` as a baseline only.
+An earlier scikit-learn crop **classifier** (not an object detector) that `backend/legacy/` was written for.
+The file is **not present** in this project (checked 2026-11-13); `backend/legacy/` is kept as code only and is not
+used by the application.
 
 ## Classes
-The **active model's own class list is authoritative** (13 classes, from the dataset `data.yaml`):
-chips_packet, food_wrapper, plastic_bottle, plastic_cup, metal_can, paper, cardboard, plastic_bag,
-food_container, tissue, cigarette_packet, plastic_packaging, other_litter.
-All 25 legacy classes are preserved in `backend/core/class_metadata.json` (priority, bin, similarity
-groups). The 12 extra ones (bottle_cap, cigarette_butt, …) have **no training labels yet**, so no current
-model can detect them. Note: `dataset/class_mapping.yaml` uses a *different* ID order than `data.yaml`;
-it is not used by the pipeline.
+The **active model's own class list is authoritative.** Production `v3_store_cctv` has 10 classes:
+plastic_bag, plastic_packaging, food_wrapper, paper, cardboard, plastic_bottle, cup, newspaper, plastic_piece,
+other_litter. `backend/core/class_metadata.json` holds 25 classes (priority, bin, similarity groups) for display and
+severity; classes the active model was not trained on cannot be detected. `dataset/class_mapping.yaml` uses a different
+ID order and is not used by the pipeline.
 
 ## Confidence states
 | state | rule |
@@ -117,7 +135,19 @@ on the zone border from being dropped.
 | GET | /api/settings · PUT /api/settings | PUT = admin, partial update, validated |
 | GET | /api/events, /api/jobs, /api/classes | |
 
-Admin endpoints need `Authorization: Bearer $ADMIN_API_TOKEN`. If no token is configured they are disabled (503).
+Admin endpoints need `Authorization: Bearer $ADMIN_API_TOKEN` (or an admin session when login is on). If no token is
+configured they are disabled (503). Also available: `/api/export/{alerts,detections}.csv`, `/api/stream` (SSE),
+`/api/sampled/*` (four-screenshot analysis + CSV), `/api/auth/*` (login), and the dataset / evaluation / test-lab routes
+in `backend/api/routes_lab.py`. There is no per-video-job CSV (job outputs are JSON) and no video-job cancellation.
+
+## Known limitations (2026-11-13)
+- Accuracy on real CCTV is unmeasured; the only litter clip is probably from v3's training scene.
+- False alerts observed on non-litter footage, both on boxes touching the frame edge (cause not yet investigated).
+- No ROI configured by default: uploads are analysed on the full frame ("ROI NOT SET - FULL FRAME").
+- Small/distant litter is limited at the 640 px default; tiling helps images but is off for video by default.
+- CPU only on this machine (7.8 GB RAM): a 3-minute 640x368 clip takes ~45 s, a 91 s 2304x1296 clip ~81 s.
+- One worker thread processes all video jobs in order; no cancellation; no storage retention/cleanup.
+- 7 tests skipped by design: 6 need the unavailable v1 model/images, 1 needs verified clean CCTV frames (see Quick start).
 
 ## Cameras
 `source` may be `rtsp://…`, `http(s)://…`, a video file (looped, for demos), a webcam index (`0`), or

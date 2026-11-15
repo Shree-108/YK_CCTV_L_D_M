@@ -1,0 +1,150 @@
+{
+ "console_errors": [],
+ "page_errors": [],
+ "failed_requests": [
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "blob:http://localhost:3110/4b38f25a-3bc9-4ab3-8b19-6796c022e78b",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/video",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/video",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/stats",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/video",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/stats",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/video",
+   "err": "net::ERR_ABORTED"
+  },
+  {
+   "url": "http://localhost:8100/api/stream",
+   "err": "net::ERR_ABORTED"
+  }
+ ],
+ "http_errors": [],
+ "steps": [
+  {
+   "step": "dashboard loads",
+   "pass": true,
+   "detail": "title=Dashboard \u00b7 Yatrikart"
+  },
+  {
+   "step": "UI connected to backend",
+   "pass": true,
+   "detail": "offline banner absent"
+  },
+  {
+   "step": "image upload + detection",
+   "pass": true,
+   "detail": "HTTP 200; detections 1; svg rects drawn 12"
+  },
+  {
+   "step": "confidence shown in UI",
+   "pass": true,
+   "detail": "percent values present"
+  },
+  {
+   "step": "video upload accepted",
+   "pass": true,
+   "detail": "HTTP 202 job 20261113_024005_a8f94a21"
+  },
+  {
+   "step": "video processed, results shown",
+   "pass": true,
+   "detail": "40s from click"
+  },
+  {
+   "step": "annotated video plays in browser",
+   "pass": true,
+   "detail": "{\"src\": \"http://localhost:8100/api/jobs/20261113_024005_a8f94a21/files/video\", \"readyState\": 4, \"duration\": 179.960943, \"currentTime\": 6.2952, \"error\": null}"
+  },
+  {
+   "step": "video page: 'Download processed video'",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"20261113_024005_a8f94a21_annotated.mp4\", \"bytes\": 100098047, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/detect/video?mode=full\"}"
+  },
+  {
+   "step": "video page: 'stats.json'",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"20261113_024005_a8f94a21_stats.json\", \"bytes\": 3563, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/detect/video?mode=full\"}"
+  },
+  {
+   "step": "page /alerts renders",
+   "pass": true,
+   "detail": "Alerts \u00b7 Yatrikart"
+  },
+  {
+   "step": "page /history renders",
+   "pass": true,
+   "detail": "History \u00b7 Yatrikart"
+  },
+  {
+   "step": "page /analytics renders",
+   "pass": true,
+   "detail": "Analytics \u00b7 Yatrikart"
+  },
+  {
+   "step": "reports: 'Alerts CSV'",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"alerts_20261112_211113.csv\", \"bytes\": 1438, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/reports\", \"csv_rows\": 6}"
+  },
+  {
+   "step": "reports: 'Detections CSV'",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"detections_20261112_211114.csv\", \"bytes\": 310332, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/reports\", \"csv_rows\": 1351}"
+  },
+  {
+   "step": "reports: job 'stats' link",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"20261113_024005_a8f94a21_stats.json\", \"bytes\": 3563, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/reports\"}"
+  },
+  {
+   "step": "reports: job 'video' link",
+   "pass": true,
+   "detail": "{\"kind\": \"download\", \"filename\": \"20261113_024005_a8f94a21_annotated.mp4\", \"bytes\": 100098047, \"navigated_away\": false, \"url_after\": \"http://localhost:3110/reports\"}"
+  },
+  {
+   "step": "dashboard after processing",
+   "pass": true,
+   "detail": "Overview |  | Litter detected in CCTV images, videos and live cameras over the last 14 days. |  | Analyse image | Analyse video | Total litter detections | 6 | incidents \u00b7 last 14 days | Pending alerts | 6 | awaiting review | High-priority incidents | 2 | last 14 days | Videos processed | 1 | 0 queued, running or failed | Most frequen"
+  }
+ ]
+}

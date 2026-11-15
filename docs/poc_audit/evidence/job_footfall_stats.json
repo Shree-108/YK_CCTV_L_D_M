@@ -1,0 +1,99 @@
+{
+ "video": {
+  "fps": 19.961571306575575,
+  "frames": 3593,
+  "width": 640,
+  "height": 368,
+  "duration_sec": 180.0,
+  "output_codec": "avc1"
+ },
+ "frames_analysed": 360,
+ "sample_every_n_frames": 10,
+ "unique_confirmed_objects": 1,
+ "litter": {
+  "total": 1,
+  "roi_active": false,
+  "inside_roi": 1,
+  "outside_roi_ignored": 0,
+  "highest_confidence": 0.6359,
+  "average_confidence": 0.587,
+  "classes": [
+   {
+    "class": "paper",
+    "count": 1,
+    "max_confidence": 0.6359,
+    "timestamps_sec": [
+     65.62609625668449
+    ],
+    "avg_confidence": 0.587
+   }
+  ],
+  "objects": [
+   {
+    "track_id": 15,
+    "class": "paper",
+    "first_seen_sec": 65.62609625668449,
+    "max_confidence": 0.6359,
+    "avg_confidence": 0.587
+   }
+  ]
+ },
+ "confirmed_by_class": {
+  "paper": 1
+ },
+ "new_alerts": 1,
+ "detections_by_status": {
+  "weak": 116,
+  "candidate": 79,
+  "confirmed": 3,
+  "rejected": 11
+ },
+ "rejection_reasons": {
+  "too_small": 11
+ },
+ "peak_per_frame": {
+  "raw_detections": 3,
+  "rejected": 1,
+  "weak": 2,
+  "candidates": 3,
+  "confirmed_in_frame": 1,
+  "confirmed_litter": 1,
+  "active_tracks": 3,
+  "tracks_in_memory": 7,
+  "new_alerts": 1
+ },
+ "model_runs": 360,
+ "frames_reused_static": 0,
+ "batch_size": 1,
+ "device": "cpu",
+ "mean_inference_ms": 140.0,
+ "processing_fps": 6.11,
+ "wall_time_sec": 59.0,
+ "model_version": "v3_store_cctv",
+ "settings": {
+  "confidence": {
+   "weak_threshold": 0.3,
+   "candidate_threshold": 0.45,
+   "confirmed_threshold": 0.6
+  },
+  "tracking": {
+   "iou_match": 0.3,
+   "low_iou_match": 0.5,
+   "max_missed_frames": 15,
+   "temporal_window": 5,
+   "min_confirmations": 3,
+   "stationarity_enabled": true,
+   "max_center_shift_frac": 0.05
+  },
+  "tiling": {
+   "enabled": true,
+   "mode": "auto",
+   "tile_size": 1024,
+   "overlap": 0.2,
+   "auto_min_ratio": 1.25,
+   "include_full_frame": true,
+   "merge_iou": 0.5,
+   "cross_tile_ios": 0.75
+  }
+ }
+}

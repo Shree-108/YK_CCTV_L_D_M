@@ -60,3 +60,9 @@ invoices/output/*
 .venv-invoice/
 # ROI scene-segmentation weights (downloaded; see docs/video_analysis/README.md)
 models/roi_segmenter/**/*.safetensors
+
+# POC audit evidence frames and screenshots show real CCTV with people (privacy: same rule as handover/evidence)
+docs/poc_audit/evidence/**/*.jpg
+docs/poc_audit/evidence/**/*.png
+# real clean CCTV frames for tests (tests/conftest.py CLEAN_FRAMES) stay local (privacy)
+tests/fixtures/clean/

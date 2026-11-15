@@ -1,0 +1,56 @@
+[
+ {
+  "event": "confirmed",
+  "track_id": 1,
+  "class": "food_wrapper",
+  "frame_idx": 20,
+  "video_time_sec": 1.0014521055530519,
+  "confidence": 0.7965,
+  "alert_id": 42
+ },
+ {
+  "event": "confirmed",
+  "track_id": 4,
+  "class": "food_wrapper",
+  "frame_idx": 490,
+  "video_time_sec": 24.53557658604977,
+  "confidence": 0.9218,
+  "alert_id": 43
+ },
+ {
+  "event": "confirmed",
+  "track_id": 5,
+  "class": "food_wrapper",
+  "frame_idx": 1010,
+  "video_time_sec": 50.57333133042912,
+  "confidence": 0.7317,
+  "alert_id": 44
+ },
+ {
+  "event": "confirmed",
+  "track_id": 6,
+  "class": "plastic_piece",
+  "frame_idx": 2170,
+  "video_time_sec": 108.65755345250614,
+  "confidence": 0.62,
+  "alert_id": 45
+ },
+ {
+  "event": "confirmed",
+  "track_id": 8,
+  "class": "food_wrapper",
+  "frame_idx": 2210,
+  "video_time_sec": 110.66045766361223,
+  "confidence": 0.8507,
+  "alert_id": 46
+ },
+ {
+  "event": "confirmed",
+  "track_id": 10,
+  "class": "food_wrapper",
+  "frame_idx": 2810,
+  "video_time_sec": 140.7040208302038,
+  "confidence": 0.7086,
+  "alert_id": 47
+ }
+]

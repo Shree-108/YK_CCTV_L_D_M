@@ -1,0 +1,44 @@
+﻿........................................................................ [ 29%]
+............................s...sss..........ssssssssssssssssssssssss... [ 59%]
+.....................................................ss...............ss [ 89%]
+ssssss...................                                                [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_capture_faults.py:23: no test images
+SKIPPED [1] tests\test_capture_faults.py:107: trained model/test images not present
+SKIPPED [1] tests\test_capture_faults.py:119: trained model/test images not present
+SKIPPED [1] tests\test_capture_faults.py:145: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:34: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:39: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:54: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:63: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:83: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:93: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:105: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:112: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:130: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:172: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:192: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:228: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:235: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:259: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:276: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:294: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:315: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:326: trained model/test images not present
+SKIPPED [1] tests\test_integration.py:331: trained model/test images not present
+SKIPPED [1] tests\test_lab_api.py:35: trained model/test images not present
+SKIPPED [1] tests\test_lab_api.py:53: trained model/test images not present
+SKIPPED [1] tests\test_lab_api.py:67: trained model/test images not present
+SKIPPED [1] tests\test_lab_api.py:91: trained model/test images not present
+SKIPPED [1] tests\test_lab_api.py:107: trained model/test images not present
+SKIPPED [1] tests\test_roi_upload.py:97: trained model/test images not present
+SKIPPED [1] tests\test_roi_upload.py:118: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:37: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:51: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:82: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:91: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:98: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:112: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:129: trained model/test images not present
+SKIPPED [1] tests\test_scheduler.py:137: trained model/test images not present
+203 passed, 38 skipped in 212.79s (0:03:32)
