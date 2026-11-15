@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.local_only import LocalOnlyMiddleware
+from backend.api.security_headers import DOCS_PATHS, SecurityHeadersMiddleware
 from backend.api.routes_auth import router as auth_router
 from backend.api.routes import router
 from backend.api.routes_lab import router as lab_router
@@ -44,10 +45,12 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
     # listed in CORS_ORIGINS (never "*"). Retry-After is readable so the login screen can show a lock-out time.
     app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["*"], allow_credentials=True,
                        allow_headers=["Authorization", "Content-Type", "X-Admin-Token"], expose_headers=["Retry-After"])
-    # Added last = outermost: no login exists yet, so only this computer may call the API (any --host).
+    # Content-Security-Policy + nosniff on every API response (the optional docs pages are exempt when enabled)
+    app.add_middleware(SecurityHeadersMiddleware, exempt_prefixes=DOCS_PATHS if docs else ())
+    # Added last = outermost: only this computer may call the API (any --host) until LAN access is approved.
     app.add_middleware(LocalOnlyMiddleware, extra_hosts=cfg.local_extra_hosts)
-    # Login/sessions (Step 2): the auth database is only opened/created when LM_AUTH_MODE=on. No route is
-    # protected by it yet (Step 4); require_admin and ADMIN_API_TOKEN work exactly as before.
+    # Login/sessions (Step 2): the auth database is only opened/created when LM_AUTH_MODE=on. Each route's
+    # permission is declared in backend/api/authz.py (Step 4); with login off, ADMIN_API_TOKEN works as before.
     app.state.auth_cfg = cfg
     app.state.auth = None
     if cfg.auth_mode == "on":

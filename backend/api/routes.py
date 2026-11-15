@@ -1,4 +1,5 @@
-"""REST API (JSON). Mutating admin endpoints require the ADMIN_API_TOKEN bearer token."""
+"""REST API (JSON). Every route declares its permission (backend/api/authz.py): PUBLIC, VIEWER, OPERATOR, ADMIN or
+ADMIN_IF_LOGIN. With login off (the default) only ADMIN routes need the ADMIN_API_TOKEN bearer token, as before."""
 from __future__ import annotations
 
 import asyncio
@@ -6,16 +7,17 @@ import base64
 import datetime as dt
 import time
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from backend.api.deps import (IMAGE_EXTS, VIDEO_EXTS, check_camera_id, get_state, require_admin,
-                              safe_display_name, save_upload)
+from backend.api.authz import (ADMIN, ADMIN_IF_LOGIN, OPERATOR, PUBLIC, VIEWER, full_details, login_enabled,
+                               message_filter, optional_principal, require_admin_here, stream_guard)
+from backend.api.deps import IMAGE_EXTS, VIDEO_EXTS, check_camera_id, get_state, safe_display_name, save_upload
 from backend.cameras import cctv
 from backend.cameras.manager import camera_source, mask_source, open_capture
 from backend.core.settings import DetectionSettings
@@ -25,7 +27,6 @@ from backend.services.pipeline import detect_image
 from backend.services.state import AppState
 
 router = APIRouter(prefix="/api")
-ADMIN = [Depends(require_admin)]
 
 
 # =========================================================================== schemas
@@ -67,14 +68,33 @@ class ActivateModel(BaseModel):
 
 
 # =========================================================================== helpers
-def _camera_out(state: AppState, cam: dict[str, Any]) -> dict[str, Any]:
+def _source_summary(src: str) -> str:
+    """What a non-admin may see of a camera source: its kind, never host names, user names, paths or env names."""
+    if src.startswith("cctv:"):
+        return src                                        # "cctv:<camera id>" - no infrastructure detail
+    if "://" in src:
+        return src.split("://", 1)[0].lower() + "://(hidden)"
+    if src.startswith("env:"):
+        return "env:(hidden)"
+    return "webcam" if src.isdigit() else "file:(hidden)"
+
+
+def _camera_out(state: AppState, cam: dict[str, Any], full: bool = True,
+                redact: Callable[[Optional[str]], Optional[str]] = lambda t: t) -> dict[str, Any]:
+    """``full=False`` (a non-admin with login on): no NVR host/username, RTSP URL or source location, and
+    ``redact`` (MessageFilter.error) applied to the camera's last error."""
     out = {**cam, "source": mask_source(cam["source"])}
-    if cctv.is_cctv(cam) and cam.get("rtsp", {}).get("host"):
+    configured = bool(cctv.is_cctv(cam) and cam.get("rtsp", {}).get("host"))
+    out["rtsp_configured"] = configured
+    if not full:
+        out["source"] = _source_summary(cam["source"])
+        out.pop("rtsp", None)
+    elif configured:
         cfg = cctv.RtspConfig.model_validate(cam["rtsp"])
         out["rtsp_url"] = cctv.display_url(cfg)          # masked: never contains the password
         out["has_password"] = cctv.has_password(cam["id"])
     st = state.cameras.status(cam["id"])
-    out["status"] = ({"state": st.state, "fps": st.fps, "inference_ms": st.inference_ms, "last_error": st.last_error,
+    out["status"] = ({"state": st.state, "fps": st.fps, "inference_ms": st.inference_ms, "last_error": redact(st.last_error),
                       "reconnects": st.reconnects, "frames_processed": st.frames_processed,
                       "frames_dropped": st.frames_dropped, "summary": st.summary, "resolution": st.resolution,
                      "capture_fps": st.capture_fps, "frames_captured": st.frames_captured,
@@ -121,10 +141,26 @@ def _system_usage(state: AppState) -> dict[str, Any]:
 
 
 # =========================================================================== health / system
-@router.get("/health")
-def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/health", dependencies=PUBLIC)
+def health(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """Liveness for everyone. With login on: anonymous callers get the status alone; signed-in non-admins what the
+    dashboard shows (model version, camera counts) without file paths, host usage or configuration; admins all."""
     eng = state.engine
     workers = state.cameras.workers
+    if login_enabled(request) and optional_principal(request) is None:
+        return {"status": "ok" if eng else "degraded", "time": utcnow()}
+    if not full_details(request):
+        return {
+            "status": "ok" if eng else "degraded",
+            "time": utcnow(),
+            "model": ({"version": eng.version, "device": eng.device, "classes": eng.class_names,
+                       "train_imgsz": eng.train_imgsz} if eng else None),
+            "model_error": "The detection model could not be loaded (details for administrators)"
+                           if state.engine_error else None,
+            "cameras": {"configured": len(state.db.list_cameras()), "running": len(workers),
+                        "online": sum(1 for w in workers.values() if w.status.state == "online")},
+            "notifications": state.notifier.status(),
+        }
     return {
         "status": "ok" if eng else "degraded",
         "time": utcnow(),
@@ -141,7 +177,7 @@ def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
     }
 
 
-@router.get("/classes")
+@router.get("/classes", dependencies=VIEWER)
 def classes(state: AppState = Depends(get_state)) -> dict[str, Any]:
     model_classes = state.engine.class_names if state.engine else []
     all_names = list(dict.fromkeys(model_classes + list(state.meta.classes)))
@@ -150,7 +186,7 @@ def classes(state: AppState = Depends(get_state)) -> dict[str, Any]:
                          "in_active_model": n in model_classes} for n in all_names]}
 
 
-@router.get("/summary")
+@router.get("/summary", dependencies=VIEWER)
 def summary(state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Live control-room summary aggregated over running cameras (real counters only)."""
     agg: dict[str, int] = {}
@@ -165,24 +201,26 @@ def summary(state: AppState = Depends(get_state)) -> dict[str, Any]:
                         for cid, w in state.cameras.workers.items()]}
 
 
-@router.get("/events")
-def system_events(limit: int = Query(100, ge=1, le=1000), camera_id: Optional[str] = None,
+@router.get("/events", dependencies=VIEWER)
+def system_events(request: Request, limit: int = Query(100, ge=1, le=1000), camera_id: Optional[str] = None,
                   state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"events": state.db.list_events(limit, camera_id)}
+    mf = message_filter(request)
+    return {"events": [mf.event(e) for e in state.db.list_events(limit, camera_id)]}
 
 
 # =========================================================================== cameras
-@router.get("/cameras")
-def list_cameras(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"cameras": [_camera_out(state, c) for c in state.db.list_cameras()]}
+@router.get("/cameras", dependencies=VIEWER)
+def list_cameras(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    full, mf = full_details(request), message_filter(request)
+    return {"cameras": [_camera_out(state, c, full, mf.error) for c in state.db.list_cameras()]}
 
 
-@router.get("/cameras/{cam_id}")
-def get_camera(cam_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/cameras/{cam_id}", dependencies=VIEWER)
+def get_camera(cam_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     cam = state.db.get_camera(cam_id)
     if not cam:
         raise HTTPException(404, "Camera not found")
-    return _camera_out(state, cam)
+    return _camera_out(state, cam, full_details(request), message_filter(request).error)
 
 
 @router.post("/cameras", status_code=201, dependencies=ADMIN)
@@ -219,10 +257,12 @@ def delete_camera(cam_id: str, state: AppState = Depends(get_state)) -> dict[str
     return {"deleted": cam_id}
 
 
-@router.get("/cameras/{cam_id}/frame.jpg")
-def camera_frame(cam_id: str, raw: bool = False, state: AppState = Depends(get_state)) -> Response:
+@router.get("/cameras/{cam_id}/frame.jpg", dependencies=VIEWER)
+def camera_frame(cam_id: str, request: Request, raw: bool = False, authorization: Optional[str] = Header(default=None),
+                 x_admin_token: Optional[str] = Header(default=None), state: AppState = Depends(get_state)) -> Response:
     """Latest annotated frame of a running camera; otherwise one raw frame grabbed from the source
-    (used by the ROI editor)."""
+    (used by the ROI editor). Opening a new connection to the camera/NVR is admin-only with login on: a viewer
+    must not be able to make the server connect to a camera on demand."""
     w = state.cameras.workers.get(cam_id)
     if w and raw and w.latest_live()[1]:   # un-annotated frame (ROI editor)
         return Response(w.latest_live()[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -231,6 +271,7 @@ def camera_frame(cam_id: str, raw: bool = False, state: AppState = Depends(get_s
     cam = state.db.get_camera(cam_id)
     if not cam:
         raise HTTPException(404, "Camera not found")
+    require_admin_here(request, authorization, x_admin_token, state, off_mode="open")
     try:
         cap = open_capture(camera_source(cam))
         ok, frame = cap.read() if cap.isOpened() else (False, None)
@@ -243,16 +284,17 @@ def camera_frame(cam_id: str, raw: bool = False, state: AppState = Depends(get_s
                     headers={"Cache-Control": "no-store"})
 
 
-@router.get("/cameras/{cam_id}/stream")
-async def camera_stream(cam_id: str, state: AppState = Depends(get_state)) -> StreamingResponse:
-    """MJPEG stream of annotated frames (multipart/x-mixed-replace)."""
+@router.get("/cameras/{cam_id}/stream", dependencies=VIEWER)
+async def camera_stream(cam_id: str, request: Request, state: AppState = Depends(get_state)) -> StreamingResponse:
+    """MJPEG stream of annotated frames (multipart/x-mixed-replace). Ends when the viewer's session ends."""
     w = state.cameras.workers.get(cam_id)
     if not w:
         raise HTTPException(404, "Camera is not running")
+    authorized = stream_guard(request)
 
     async def gen():
         last = None
-        while cam_id in state.cameras.workers:
+        while cam_id in state.cameras.workers and authorized():
             jpg = w.latest_jpeg
             if jpg is not None and jpg is not last:
                 last = jpg
@@ -282,7 +324,7 @@ def _cctv_body(body: dict[str, Any]) -> tuple[cctv.RtspConfig, Optional[str]]:
     return cfg, (password or None)
 
 
-@router.get("/cctv/defaults")
+@router.get("/cctv/defaults", dependencies=ADMIN_IF_LOGIN)
 def cctv_defaults() -> dict[str, Any]:
     """Non-secret defaults from CCTV_* environment variables (prefills the form)."""
     return {"defaults": cctv.env_defaults(), "path_template": cctv.DEFAULT_TEMPLATE,
@@ -367,10 +409,11 @@ def _capture_out(c: dict[str, Any]) -> dict[str, Any]:
     return c
 
 
-@router.get("/schedule/{cam_id}")
-def schedule_status(cam_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/schedule/{cam_id}", dependencies=VIEWER)
+def schedule_status(cam_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     _sched_cam(state, cam_id)
-    return state.scheduler.status(cam_id)
+    s = state.scheduler.status(cam_id)
+    return {**s, "last_error": message_filter(request).error(s.get("last_error"))}
 
 
 @router.put("/schedule/{cam_id}", dependencies=ADMIN)
@@ -400,13 +443,15 @@ async def schedule_action(cam_id: str, action: Literal["start", "pause", "resume
     return {"schedule": state.scheduler.status(cam_id)}
 
 
-@router.get("/captures")
-def list_captures(camera_id: Optional[str] = None, limit: int = Query(30, ge=1, le=200), offset: int = Query(0, ge=0),
-                  state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"captures": [_capture_out(c) for c in state.db.list_captures(camera_id, limit, offset)]}
+@router.get("/captures", dependencies=VIEWER)
+def list_captures(request: Request, camera_id: Optional[str] = None, limit: int = Query(30, ge=1, le=200),
+                  offset: int = Query(0, ge=0), state: AppState = Depends(get_state)) -> dict[str, Any]:
+    mf = message_filter(request)
+    return {"captures": [{**(o := _capture_out(c)), "error": mf.error(o.get("error"))}
+                         for c in state.db.list_captures(camera_id, limit, offset)]}
 
 
-@router.get("/captures/{cap_id}/image")
+@router.get("/captures/{cap_id}/image", dependencies=VIEWER)
 def capture_image(cap_id: str, kind: Literal["original", "annotated"] = "annotated",
                   state: AppState = Depends(get_state)) -> FileResponse:
     c = state.db.get_capture(cap_id)
@@ -429,7 +474,7 @@ def _roi_out(camera_id: str, zones: list[dict[str, Any]]) -> dict[str, Any]:
     return {"camera_id": camera_id, "zones": zones, "active": any(z.get("mode", "include") == "include" for z in zones)}
 
 
-@router.get("/roi/{camera_id}")
+@router.get("/roi/{camera_id}", dependencies=VIEWER)
 def get_roi(camera_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
     """ROI used for detections attributed to ``camera_id`` (a registered camera or an upload context)."""
     check_camera_id(camera_id)
@@ -437,16 +482,16 @@ def get_roi(camera_id: str, state: AppState = Depends(get_state)) -> dict[str, A
     return _roi_out(camera_id, cam["roi"] if cam else state.db.get_setting(f"roi:{camera_id}", []) or [])
 
 
-@router.put("/roi/{camera_id}")
-def put_roi(camera_id: str, body: RoiIn, authorization: Optional[str] = Header(default=None),
+@router.put("/roi/{camera_id}", dependencies=OPERATOR)
+def put_roi(camera_id: str, body: RoiIn, request: Request, authorization: Optional[str] = Header(default=None),
             x_admin_token: Optional[str] = Header(default=None), state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """Save the ROI. An upload context's ROI is an analysis preference; changing a registered
-    camera's ROI changes live monitoring, so that needs the admin token (same as PUT /cameras)."""
+    """Save the ROI. An upload context's ROI is an analysis preference (operator); changing a registered
+    camera's ROI changes live monitoring, so that needs admin (same as PUT /cameras)."""
     check_camera_id(camera_id)
     zones = [z.model_dump() for z in body.zones]
     cam = state.db.get_camera(camera_id)
     if cam:
-        require_admin(authorization, x_admin_token, state)
+        require_admin_here(request, authorization, x_admin_token, state)
         state.db.upsert_camera({**cam, "roi": zones})
         state.sync_cameras()
     else:
@@ -456,7 +501,7 @@ def put_roi(camera_id: str, body: RoiIn, authorization: Optional[str] = Header(d
 
 
 # =========================================================================== detections
-@router.get("/detections")
+@router.get("/detections", dependencies=VIEWER)
 def list_detections(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0),
                     camera_id: Optional[str] = None,
                     status: Optional[Literal["rejected", "weak", "candidate", "confirmed"]] = None,
@@ -469,7 +514,7 @@ def list_detections(limit: int = Query(100, ge=1, le=1000), offset: int = Query(
     return {"detections": rows, "count": len(rows), "total": state.db.count_detections(*args)}
 
 
-@router.post("/detect/image")
+@router.post("/detect/image", dependencies=OPERATOR)
 async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = Form("upload"),
                                 return_image: bool = Form(True), model_version: Optional[str] = Form(None),
                                 confidence: Optional[float] = Form(None, ge=0.01, le=0.99),
@@ -506,7 +551,7 @@ async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = F
     return res
 
 
-@router.post("/detect/video", status_code=202)
+@router.post("/detect/video", status_code=202, dependencies=OPERATOR)
 async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = Form("upload"),
                                 confidence: Optional[float] = Form(None, ge=0.01, le=0.99),
                                 image_size: Optional[int] = Form(None, ge=160, le=4096),
@@ -547,17 +592,19 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/jobs/{job_id}"}
 
 
-@router.get("/jobs")
-def list_jobs(limit: int = Query(50, ge=1, le=500), state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"jobs": state.db.list_jobs(limit)}
+@router.get("/jobs", dependencies=VIEWER)
+def list_jobs(request: Request, limit: int = Query(50, ge=1, le=500), state: AppState = Depends(get_state)) -> dict[str, Any]:
+    mf = message_filter(request)
+    return {"jobs": [{**j, "error": mf.error(j.get("error"))} for j in state.db.list_jobs(limit)]}
 
 
-@router.get("/jobs/{job_id}")
-def get_job(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/jobs/{job_id}", dependencies=VIEWER)
+def get_job(job_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     job = state.db.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     job.pop("output_dir", None)
+    job["error"] = message_filter(request).error(job.get("error"))
     if job["status"] == "done":
         job["files"] = {k: f"/api/jobs/{job_id}/files/{k}" for k in JOB_FILES}
     return job
@@ -567,7 +614,7 @@ JOB_FILES = {"video": ("annotated.mp4", "video/mp4"), "detections": ("detections
              "events": ("events.json", "application/json"), "stats": ("stats.json", "application/json")}
 
 
-@router.get("/jobs/{job_id}/files/{kind}")
+@router.get("/jobs/{job_id}/files/{kind}", dependencies=VIEWER)
 def job_file(job_id: str, kind: str, state: AppState = Depends(get_state)) -> FileResponse:
     job = state.db.get_job(job_id)
     if not job or kind not in JOB_FILES:
@@ -580,7 +627,7 @@ def job_file(job_id: str, kind: str, state: AppState = Depends(get_state)) -> Fi
 
 
 # =========================================================================== alerts
-@router.get("/alerts")
+@router.get("/alerts", dependencies=VIEWER)
 def list_alerts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
                 camera_id: Optional[str] = None, cls: Optional[str] = Query(None, alias="class"),
                 severity: Optional[Literal["LOW", "MEDIUM", "HIGH"]] = None,
@@ -593,7 +640,7 @@ def list_alerts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=
     return {"alerts": [_alert_out(a) for a in rows], "total": total}
 
 
-@router.get("/alerts/{alert_id}")
+@router.get("/alerts/{alert_id}", dependencies=VIEWER)
 def get_alert(alert_id: int, state: AppState = Depends(get_state)) -> dict[str, Any]:
     a = state.db.get_alert(alert_id)
     if not a:
@@ -601,7 +648,7 @@ def get_alert(alert_id: int, state: AppState = Depends(get_state)) -> dict[str, 
     return _alert_out(a)
 
 
-@router.patch("/alerts/{alert_id}")
+@router.patch("/alerts/{alert_id}", dependencies=OPERATOR)
 def update_alert(alert_id: int, body: AlertUpdate, state: AppState = Depends(get_state)) -> dict[str, Any]:
     fields = body.model_dump(exclude_none=True)
     if not fields:
@@ -613,7 +660,7 @@ def update_alert(alert_id: int, body: AlertUpdate, state: AppState = Depends(get
     return _alert_out(state.db.get_alert(alert_id))  # type: ignore[arg-type]
 
 
-@router.get("/alerts/{alert_id}/snapshot")
+@router.get("/alerts/{alert_id}/snapshot", dependencies=VIEWER)
 def alert_snapshot(alert_id: int, kind: Literal["full", "crop"] = "full",
                    state: AppState = Depends(get_state)) -> FileResponse:
     a = state.db.get_alert(alert_id)
@@ -627,7 +674,7 @@ def alert_snapshot(alert_id: int, kind: Literal["full", "crop"] = "full",
 
 
 # =========================================================================== analytics
-@router.get("/analytics")
+@router.get("/analytics", dependencies=VIEWER)
 def analytics(start: Optional[str] = None, end: Optional[str] = None, camera_id: Optional[str] = None,
               cls: Optional[str] = Query(None, alias="class"), model_version: Optional[str] = None,
               state: AppState = Depends(get_state)) -> dict[str, Any]:
@@ -642,8 +689,8 @@ def analytics(start: Optional[str] = None, end: Optional[str] = None, camera_id:
 
 
 # =========================================================================== models
-@router.get("/models")
-def list_models(state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/models", dependencies=VIEWER)
+def list_models(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     import json as _json
     models = state.registry.sync()
     latest_eval: dict[str, dict[str, Any]] = {}
@@ -672,6 +719,13 @@ def list_models(state: AppState = Depends(get_state)) -> dict[str, Any]:
                 pass
         m["size_mb"] = round(p.stat().st_size / 2**20, 1) if p.is_file() else None
         m["latest_evaluation"] = latest_eval.get(m["version"])
+    if not full_details(request):                 # non-admins (login on): path inside the models folder only
+        for m in models:
+            p = Path(m["path"])
+            try:
+                m["path"] = p.resolve().relative_to(state.cfg.models_dir.resolve()).as_posix()
+            except ValueError:
+                m["path"] = p.name
     return {"models": models, "active": state.engine.version if state.engine else None}
 
 
@@ -687,7 +741,7 @@ def activate_model(body: ActivateModel, state: AppState = Depends(get_state)) ->
 
 
 # =========================================================================== settings
-@router.get("/settings")
+@router.get("/settings", dependencies=VIEWER)
 def get_settings(state: AppState = Depends(get_state)) -> dict[str, Any]:
     return {"settings": state.settings().model_dump(), "defaults": DetectionSettings().model_dump(),
             "overrides": state.global_settings_json()}

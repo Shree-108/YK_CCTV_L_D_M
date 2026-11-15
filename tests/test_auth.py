@@ -158,13 +158,28 @@ def test_idle_and_absolute_expiry(svc, clock):
     assert svc.session_principal(raw) is None                   # idle 30 min
     raw, _ = svc.login("alice", PASS, "127.0.0.1")
     start, ended_after = clock.t, None
-    while clock.t - start < 13 * 3600:                          # active every 20 min ...
+    while clock.t - start < 13 * 3600:                          # user activity every 20 min ...
         clock.advance(20)
-        if svc.session_principal(raw) is None:
+        if svc.record_activity(raw) is None:
             ended_after = clock.t - start
             break
     assert ended_after is not None                              # ... the session still ends,
     assert 12 * 3600 <= ended_after < 12 * 3600 + 20 * 60       # at the 12 h absolute limit, not before
+
+
+def test_checking_a_session_never_extends_it(svc, clock):
+    raw, _ = svc.login("alice", PASS, "127.0.0.1")
+    for _ in range(29):                                         # checked every minute (polling, streams, requests)
+        clock.advance(1)
+        assert svc.session_principal(raw) is not None
+    clock.advance(1.1)
+    assert svc.session_principal(raw) is None                   # 30 min after login: ended anyway
+    raw, _ = svc.login("alice", PASS, "127.0.0.1")
+    clock.advance(20)
+    p = svc.record_activity(raw)                                # user activity moves the deadline
+    assert p and p.session_expires_at == clock.t + 30 * 60
+    clock.advance(29)
+    assert svc.session_principal(raw) is not None
 
 
 def test_logout_password_change_and_role_change_end_sessions(svc):
@@ -309,11 +324,12 @@ def test_api_lockout_returns_429_with_retry_after(tmp_path):
         assert r.status_code == 429 and int(r.headers["retry-after"]) > 0
 
 
-def test_auth_on_keeps_admin_token_and_leaves_routes_unprotected_until_step4(tmp_path):
+def test_auth_on_keeps_admin_token_and_protects_routes(tmp_path):
     with _client(_cfg(tmp_path, "on")) as c:
         assert c.get("/api/auth/check", headers={"Authorization": "Bearer test-admin-token"}).status_code == 200
         assert c.get("/api/auth/check").status_code == 401
-        assert c.get("/api/classes").status_code == 200           # Step 2 does not protect routes
+        assert c.get("/api/classes").status_code == 401           # Step 4: routes need a login (tests/test_authz.py)
+        assert c.get("/api/classes", headers={"Authorization": "Bearer test-admin-token"}).status_code == 200
 
 
 def test_auth_endpoints_respect_local_only(tmp_path):

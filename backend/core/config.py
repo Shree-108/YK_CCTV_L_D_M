@@ -55,7 +55,7 @@ class AppConfig:
     # Client names treated as local by the local-only safeguard in addition to loopback IPs. Tests only
     # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
     local_extra_hosts: tuple[str, ...] = ()
-    # Login / sessions (API security plan Step 2). OFF by default; no route is protected by it yet (Step 4).
+    # Login / sessions (API security plan Step 2). OFF by default; when on, routes need a role (Step 4, api/authz.py).
     auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "off").strip().lower())
     auth_db_path: Path = field(default_factory=lambda: _env_path("LM_AUTH_DB_PATH", PROJECT_ROOT / "storage" / "auth.db"))
     auth_idle_minutes: int = field(default_factory=lambda: _env_int("LM_AUTH_IDLE_MINUTES", 30))

@@ -1,7 +1,7 @@
 """Login endpoints (API security plan Step 2): POST /api/auth/login, POST /api/auth/logout, GET /api/auth/me.
 
-Nothing else is protected by these yet - route-level protection is Step 4. With LM_AUTH_MODE=off, login and logout
-answer 404 "login is disabled" and /me reports auth_mode "off" (the existing ADMIN_API_TOKEN still identifies an
+These four are public (POST /api/auth/activity added in Step 4); every other route's permission is declared in
+backend/api/authz.py. With LM_AUTH_MODE=off, login, logout and activity answer 404 "login is disabled" and /me reports auth_mode "off" (the existing ADMIN_API_TOKEN still identifies an
 admin, exactly as require_admin accepts it).
 
 * The session ID travels only in the Set-Cookie header (HttpOnly, SameSite=Strict, Path=/api; Secure over HTTPS or
@@ -20,10 +20,10 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
-from backend.auth.service import AuthService, LoginFailed, LoginLocked, Principal, admin_token_principal
+from backend.api.authz import COOKIE, PUBLIC, allowed_origin, current_principal
+from backend.auth.service import AuthService, LoginFailed, LoginLocked
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-COOKIE = "ldm_session"
 MAX_BODY = 4096
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
@@ -53,22 +53,21 @@ def _disabled() -> JSONResponse:
     return _error(404, "Login is disabled (LM_AUTH_MODE=off)")
 
 
-def current_principal(request: Request, authorization: Optional[str], x_admin_token: Optional[str]) -> Optional[Principal]:
-    """Session cookie (when login is on) or the existing admin token (always), else None."""
-    supplied = x_admin_token or (authorization[7:] if authorization and authorization.lower().startswith("bearer ")
-                                 else None)
-    p = admin_token_principal(supplied, _cfg(request).admin_token)
-    if p:
-        return p
-    svc = _auth(request)
-    return svc.session_principal(request.cookies.get(COOKIE)) if svc else None
+def _foreign_origin(request: Request) -> bool:
+    """A browser request from a page that is not this application (another site, or another port on localhost -
+    SameSite=Strict does not separate ports). Requests without an Origin header (non-browser clients) pass, as for
+    every other cookie-authenticated write (backend/api/authz.py)."""
+    origin = request.headers.get("origin")
+    return origin is not None and not allowed_origin(request, origin)
 
 
-@router.post("/login")
+@router.post("/login", dependencies=PUBLIC)
 async def login(request: Request) -> Response:
     svc = _auth(request)
     if svc is None:
         return _disabled()
+    if _foreign_origin(request):                   # login CSRF: another page signing this browser in
+        return _error(403, "Request origin not allowed")
     raw = await request.body()
     if len(raw) > MAX_BODY or "application/json" not in request.headers.get("content-type", ""):
         return _error(400, "Invalid login request: send JSON {\"username\": ..., \"password\": ...}")
@@ -95,18 +94,37 @@ async def login(request: Request) -> Response:
     return resp
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=PUBLIC)
 def logout(request: Request) -> Response:
     svc = _auth(request)
     if svc is None:
         return _disabled()
+    if _foreign_origin(request):                   # logout CSRF: another local page signing the user out
+        return _error(403, "Request origin not allowed")
     svc.logout(request.cookies.get(COOKIE))
     resp = Response(status_code=204, headers=NO_STORE)
     resp.delete_cookie(COOKIE, path="/api", httponly=True, samesite="strict", secure=_secure(request))
     return resp
 
 
-@router.get("/me")
+@router.post("/activity", dependencies=PUBLIC)
+def activity(request: Request) -> JSONResponse:
+    """The person at the browser interacted (click, key, scroll, touch): extend the idle deadline (never beyond the
+    12-hour absolute limit). This is the ONLY request that extends a session - polling, streams and every other API
+    call only check it. Needs the session cookie and an allowed browser Origin (CORS_ORIGINS or this API's own)."""
+    svc = _auth(request)
+    if svc is None:
+        return _disabled()
+    origin = request.headers.get("origin")
+    if origin is None or not allowed_origin(request, origin):
+        return _error(403, "Request origin not allowed")
+    p = svc.record_activity(request.cookies.get(COOKIE))
+    if p is None:
+        return _error(401, "Authentication required: sign in")
+    return JSONResponse({"idle_expires_at": _iso(p.session_expires_at)}, headers=NO_STORE)
+
+
+@router.get("/me", dependencies=PUBLIC)
 def me(request: Request, authorization: Optional[str] = Header(default=None),
        x_admin_token: Optional[str] = Header(default=None)) -> JSONResponse:
     p = current_principal(request, authorization, x_admin_token)

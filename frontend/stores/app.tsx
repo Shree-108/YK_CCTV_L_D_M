@@ -5,6 +5,7 @@ import { API_BASE, getAdminToken, setAdminToken } from '../api/client'
 import { Api } from '../api/endpoints'
 import type { Alert, LiveSummary, SystemEvent } from '../api/types'
 import { invalidate } from '../hooks/useQuery'
+import { useAuth } from '../features/auth/AuthGate'
 
 // ---------------------------------------------------------------- toasts
 export type Toast = { id: number; tone: 'ok' | 'warn' | 'crit' | 'info'; title: string; body?: string }
@@ -41,9 +42,27 @@ interface AppCtx {
   stream: StreamState
   liveCameras: Record<string, { state: string; fps: number; inference_ms: number; summary: LiveSummary }>
   lastSummaryAt: string | null
+  /** Effective role for showing/hiding controls (display only - the server enforces permissions). */
+  role: UiRole
+  /** Login is on and this browser is signed in with an account (the server enforces roles). */
+  loginOn: boolean
+  /** Admin via a verified ADMIN_API_TOKEN in this tab (as opposed to an admin account). */
+  tokenAdmin: boolean
   isAdmin: boolean
+  /** viewer = read-only; operator and admin may run detections and review alerts. */
+  canOperate: boolean
   adminLogin: (token: string) => Promise<boolean>
   adminLogout: () => void
+}
+
+export type UiRole = 'viewer' | 'operator' | 'admin'
+
+/** Text for a control the current role cannot use. */
+export function lockedFor(need: 'operator' | 'admin', role: UiRole, loginOn: boolean): string | undefined {
+  if (need === 'operator' && role !== 'viewer') return undefined
+  if (need === 'admin' && role === 'admin') return undefined
+  if (need === 'operator') return 'Your role (viewer) is read-only'
+  return loginOn ? 'Only administrators can do this' : 'Admin sign-in required (Settings → Security)'
 }
 
 const Ctx = createContext<AppCtx | null>(null)
@@ -94,7 +113,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [stream, setStream] = useState<StreamState>('connecting')
   const [liveCameras, setLiveCameras] = useState<AppCtx['liveCameras']>({})
   const [lastSummaryAt, setLastSummaryAt] = useState<string | null>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [tokenAdmin, setIsAdmin] = useState(false)
+  // Role for the UI (display only: the server decides). Login on: the account's role. Login off: operator, as
+  // before (anyone on this PC may view, detect and review). A verified admin token makes either an admin.
+  const auth = useAuth()
+  const loginOn = auth.status === 'signed_in'
+  const accountRole: UiRole | null = loginOn && auth.user
+    ? (['viewer', 'operator', 'admin'].includes(auth.user.role) ? auth.user.role as UiRole : 'viewer') : null
+  // with login on only the account counts: a legacy admin token is never used (adminToken.ts clears it)
+  const role: UiRole = loginOn ? (accountRole ?? 'viewer') : tokenAdmin ? 'admin' : 'operator'
+  const isAdmin = role === 'admin'
+  const canOperate = role !== 'viewer'
   const toastId = useRef(0)
 
   useEffect(() => {
@@ -191,7 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       writePref('lm.noticesReadAt', now)
     },
     stream, liveCameras, lastSummaryAt,
-    isAdmin,
+    role, loginOn, tokenAdmin: tokenAdmin && !loginOn, isAdmin, canOperate,
     adminLogin: async (token) => {
       setAdminToken(token)
       try {
@@ -208,7 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setAdminToken(null)
       setIsAdmin(false)
     },
-  }), [theme, sidebarCollapsed, mobileNavOpen, paletteOpen, toasts, toast, notices, readAt, stream, liveCameras, lastSummaryAt, isAdmin])
+  }), [theme, sidebarCollapsed, mobileNavOpen, paletteOpen, toasts, toast, notices, readAt, stream, liveCameras, lastSummaryAt, role, loginOn, tokenAdmin, isAdmin, canOperate])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

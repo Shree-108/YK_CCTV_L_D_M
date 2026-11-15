@@ -1,9 +1,11 @@
-"""Login, sessions and lock-out (API security plan Step 2). No route uses this for protection yet (Step 4).
+"""Login, sessions and lock-out (API security plan Step 2). Route permissions use it via backend/api/authz.py.
 
 * A session ID is 256 random bits (``secrets.token_urlsafe(32)``), created fresh at every login, returned only to
   be placed in an HttpOnly cookie, and stored only as its SHA-256.
-* Sessions end after ``idle_minutes`` without use or ``max_session_hours`` after login, at logout, when the user is
-  disabled, and when the user's password changes.
+* Sessions end after ``idle_minutes`` without *user activity* or ``max_session_hours`` after login, at logout, when
+  the user is disabled, and when the user's password changes. Checking a session (every API request, polling, streams)
+  never extends it; only ``record_activity`` does - called by POST /api/auth/activity when the person at the browser
+  actually interacts (Step 4, approved idle policy). Activity can never move the 12-hour absolute limit.
 * Failed logins are counted per attempted username (whether or not it exists) and per client address. After
   ``max_failures`` within ``window_minutes`` that key is locked for ``lockout_minutes``. Unknown usernames are
   checked against a dummy hash, so timing and messages are the same as for a wrong password.
@@ -27,7 +29,7 @@ from backend.auth.store import ROLES, AuthStore
 log = logging.getLogger(__name__)
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 MAX_SESSION_ID_LENGTH = 128
-TOUCH_INTERVAL_SEC = 60          # write last-seen at most once a minute per session
+ACTIVITY_MIN_INTERVAL_SEC = 30   # record user activity at most twice a minute per session (database writes)
 
 
 class LoginFailed(Exception):
@@ -178,8 +180,7 @@ class AuthService:
         log.info("auth: %s logged in from %s", u, client)
         return raw, Principal(u, user["role"], "session", idle)
 
-    def session_principal(self, raw: Optional[str]) -> Optional[Principal]:
-        """Valid session -> Principal (and sliding idle expiry); anything else -> None."""
+    def _valid_row(self, raw: Optional[str]) -> Optional[tuple[str, dict, float]]:
         if not raw or len(raw) > MAX_SESSION_ID_LENGTH:
             return None
         h = session_hash(raw)
@@ -190,8 +191,26 @@ class AuthService:
         if row["disabled"] or now >= row["idle_expires_at"] or now >= row["absolute_expires_at"]:
             self.store.delete_session(h)
             return None
+        return h, row, now
+
+    def session_principal(self, raw: Optional[str]) -> Optional[Principal]:
+        """Valid session -> Principal; anything else -> None. Only checks: never extends the idle deadline (API
+        requests, background polling and stream re-checks must not keep an unattended session alive)."""
+        v = self._valid_row(raw)
+        if not v:
+            return None
+        _, row, _ = v
+        return Principal(row["username"], row["role"], "session", row["idle_expires_at"])
+
+    def record_activity(self, raw: Optional[str]) -> Optional[Principal]:
+        """The person using this session interacted with the application: move the idle deadline to now + idle
+        minutes, never beyond the absolute limit. Returns None (and changes nothing) for an invalid/expired session."""
+        v = self._valid_row(raw)
+        if not v:
+            return None
+        h, row, now = v
         idle = min(now + self.s.idle_minutes * 60, row["absolute_expires_at"])
-        if now - row["last_seen_at"] >= TOUCH_INTERVAL_SEC:
+        if now - row["last_seen_at"] >= ACTIVITY_MIN_INTERVAL_SEC:
             self.store.touch_session(h, now, idle)
         else:
             idle = row["idle_expires_at"]

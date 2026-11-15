@@ -1,27 +1,13 @@
 // Centralized API client. All data shown in the UI comes through here.
 
+// Legacy admin token: never used while login is on, or before the server's mode is known (see adminToken.ts)
+import { getAdminToken } from './adminToken'
+export { getAdminToken, setAdminToken } from './adminToken'
+
 export const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
 
-const TOKEN_KEY = 'lm.adminToken'
-
-export function getAdminToken(): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    return window.sessionStorage.getItem(TOKEN_KEY)
-  } catch {
-    return null
-  }
-}
-
-export function setAdminToken(token: string | null) {
-  try {
-    if (token) window.sessionStorage.setItem(TOKEN_KEY, token)
-    else window.sessionStorage.removeItem(TOKEN_KEY)
-    window.dispatchEvent(new Event('lm-admin-token'))
-  } catch {
-    /* storage unavailable: token lives only for this call */
-  }
-}
+/** Fired on any 401 from the API; the login gate listens and re-checks the session. */
+export const AUTH_REQUIRED_EVENT = 'ldm-auth-required'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public detail?: unknown) {
@@ -75,6 +61,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     } catch {
       detail = undefined
     }
+    // 401 = no valid session (expired or revoked): let the login gate re-check right away instead of in 60 s
+    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))
     throw new ApiError(res.status, messageFrom(detail, res.status), detail)
   }
   const ct = res.headers.get('content-type') ?? ''
@@ -83,14 +71,27 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 
 export const url = (path: string) => `${API_BASE}${path}`
 
-/** Download a file from an admin-protected endpoint (plain links cannot send the bearer token). */
+/** Fixed, user-facing text for a failed download (server error bodies are never shown). */
+export function downloadErrorMessage(status: number): string {
+  if (status === 0) return `Backend not reachable at ${API_BASE}. Is the API server running?`
+  if (status === 401) return 'Your session has ended. Please sign in again.'
+  if (status === 403) return 'You do not have permission to download this. Ask an administrator.'
+  if (status === 404) return 'Nothing to download: the file was not found.'
+  return `The download failed (error ${status}). Please try again.`
+}
+
+/** Download a file through fetch (plain links cannot send the bearer token, and would show raw error JSON). */
 export async function downloadAuthed(path: string, filename: string): Promise<void> {
   const token = getAdminToken()
-  const res = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include' })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'include' })
+  } catch {
+    throw new ApiError(0, downloadErrorMessage(0))
+  }
   if (!res.ok) {
-    let msg = `Download failed (${res.status})`
-    try { msg = (await res.json()).detail ?? msg } catch { /* not json */ }
-    throw new ApiError(res.status, msg)
+    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))
+    throw new ApiError(res.status, downloadErrorMessage(res.status))
   }
   const blob = await res.blob()
   const a = document.createElement('a')

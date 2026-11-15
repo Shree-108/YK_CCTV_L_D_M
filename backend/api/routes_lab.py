@@ -17,14 +17,15 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.api.deps import IMAGE_EXTS, get_state, require_admin, save_upload
+from backend.api.authz import (ADMIN, ADMIN_IF_LOGIN, OPERATOR, VIEWER, message_filter, redact_json, stream_guard,
+                               text_redactor)
+from backend.api.deps import IMAGE_EXTS, get_state, save_upload
 from backend.database.db import utcnow
 from backend.services.datasets import DatasetError
 from backend.services.evaluation import match_image
 from backend.services.state import AppState
 
 router = APIRouter(prefix="/api")
-ADMIN = [Depends(require_admin)]
 
 
 def _ds_call(fn, *a, **kw):
@@ -41,7 +42,7 @@ def auth_check() -> dict[str, Any]:
 
 
 # =========================================================================== system health
-@router.get("/system/health")
+@router.get("/system/health", dependencies=ADMIN_IF_LOGIN)
 def system_health(state: AppState = Depends(get_state)) -> dict[str, Any]:
     import psutil
 
@@ -102,19 +103,24 @@ def system_health(state: AppState = Depends(get_state)) -> dict[str, Any]:
 
 
 # =========================================================================== live event stream (SSE)
-@router.get("/stream")
+@router.get("/stream", dependencies=VIEWER)
 async def stream(request: Request, state: AppState = Depends(get_state)) -> StreamingResponse:
-    """Server-sent events: `summary` every 2 s, `alert` for each new alert, `event` for system events."""
+    """Server-sent events: `summary` every 2 s, `alert` for each new alert, `event` for system events.
+    Ends when the viewer's session ends (the browser then re-checks the login)."""
+    authorized = stream_guard(request)
+    mf = message_filter(request)                           # decided once per connection
+
     async def gen():
         last_alert = (state.db.list_alerts(limit=1)[0] or [{"id": 0}])[0]["id"]
         last_event = (state.db.list_events(limit=1) or [{"id": 0}])[0]["id"]
-        while not await request.is_disconnected():
+        while not await request.is_disconnected() and authorized():
             rows, _ = state.db.list_alerts(limit=20)
             for a in reversed([r for r in rows if r["id"] > last_alert]):
                 last_alert = a["id"]
                 yield f"event: alert\ndata: {json.dumps(_alert_brief(a))}\n\n"
             for e in reversed([e for e in state.db.list_events(limit=20) if e["id"] > last_event]):
                 last_event = e["id"]
+                e = mf.event(e)
                 yield f"event: event\ndata: {json.dumps(e)}\n\n"
             cams = {cid: {"state": w.status.state, "fps": w.status.fps, "inference_ms": w.status.inference_ms,
                           "summary": w.status.summary} for cid, w in state.cameras.workers.items()}
@@ -130,7 +136,7 @@ def _alert_brief(a: dict[str, Any]) -> dict[str, Any]:
 
 
 # =========================================================================== search
-@router.get("/search")
+@router.get("/search", dependencies=VIEWER)
 def search(q: str = Query(..., min_length=1, max_length=80), state: AppState = Depends(get_state)) -> dict[str, Any]:
     ql = q.lower().strip()
     cams = [{"id": c["id"], "name": c["name"], "location": c["location"]} for c in state.db.list_cameras()
@@ -151,7 +157,7 @@ def search(q: str = Query(..., min_length=1, max_length=80), state: AppState = D
 
 
 # =========================================================================== alerts extras
-@router.get("/alerts/{alert_id}/timeline")
+@router.get("/alerts/{alert_id}/timeline", dependencies=VIEWER)
 def alert_timeline(alert_id: int, state: AppState = Depends(get_state)) -> dict[str, Any]:
     a = state.db.get_alert(alert_id)
     if not a:
@@ -173,7 +179,7 @@ def _csv_response(rows: list[dict[str, Any]], name: str) -> StreamingResponse:
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
-@router.get("/export/{table}.csv")
+@router.get("/export/{table}.csv", dependencies=ADMIN_IF_LOGIN)
 def export_csv(table: Literal["alerts", "detections"], start: Optional[str] = None, end: Optional[str] = None,
                camera_id: Optional[str] = None, state: AppState = Depends(get_state)) -> StreamingResponse:
     rows = state.db.export_rows(table, start, end, camera_id)
@@ -184,8 +190,9 @@ def export_csv(table: Literal["alerts", "detections"], start: Optional[str] = No
 
 
 # =========================================================================== cameras extras
-@router.get("/cameras/{cam_id}/live")
-def camera_live(cam_id: str, since: int = Query(0, ge=0), state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/cameras/{cam_id}/live", dependencies=VIEWER)
+def camera_live(cam_id: str, request: Request, since: int = Query(0, ge=0),
+                state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Latest processed frame: raw JPEG (base64) + the detections computed on exactly that frame.
     Pass ``since=<seq>`` to receive only metadata when no newer frame exists."""
     import base64
@@ -197,7 +204,8 @@ def camera_live(cam_id: str, since: int = Query(0, ge=0), state: AppState = Depe
     fresh = meta is not None and raw is not None and meta["seq"] > since
     return {"camera_id": cam_id, "state": w.status.state, "frame": meta if fresh else None,
             "image": base64.b64encode(raw).decode() if fresh else None, "roi": cam.get("roi", []),
-            "fps": w.status.fps, "inference_ms": w.status.inference_ms, "last_error": w.status.last_error}
+            "fps": w.status.fps, "inference_ms": w.status.inference_ms,
+            "last_error": message_filter(request).error(w.status.last_error)}
 
 
 @router.post("/cameras/{cam_id}/restart", dependencies=ADMIN)
@@ -214,17 +222,17 @@ def restart_camera(cam_id: str, state: AppState = Depends(get_state)) -> dict[st
 
 
 # =========================================================================== datasets
-@router.get("/datasets")
-def datasets(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"datasets": state.datasets.list()}
+@router.get("/datasets", dependencies=VIEWER)
+def datasets(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    return {"datasets": redact_json(state.datasets.list(), text_redactor(request, state))}
 
 
-@router.get("/datasets/{name}")
-def dataset_stats(name: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return _ds_call(state.datasets.stats, name)
+@router.get("/datasets/{name}", dependencies=VIEWER)
+def dataset_stats(name: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    return redact_json(_ds_call(state.datasets.stats, name), text_redactor(request, state))
 
 
-@router.get("/datasets/{name}/images")
+@router.get("/datasets/{name}/images", dependencies=VIEWER)
 def dataset_images(name: str, split: Optional[Literal["train", "val", "test"]] = None,
                    cls: Optional[str] = Query(None, alias="class"),
                    size: Optional[Literal["small", "medium", "large"]] = None,
@@ -234,13 +242,13 @@ def dataset_images(name: str, split: Optional[Literal["train", "val", "test"]] =
     return _ds_call(state.datasets.list_images, name, split, cls, size, status, offset, limit)
 
 
-@router.get("/datasets/{name}/image")
+@router.get("/datasets/{name}/image", dependencies=VIEWER)
 def dataset_image(name: str, id: str, state: AppState = Depends(get_state)) -> FileResponse:
     ref = _ds_call(state.datasets.resolve_image, name, id)
     return FileResponse(ref.path, headers={"Cache-Control": "max-age=300"})
 
 
-@router.get("/datasets/{name}/annotation")
+@router.get("/datasets/{name}/annotation", dependencies=VIEWER)
 def dataset_annotation(name: str, id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
     d = _ds_call(state.datasets.image_detail, name, id)
     d["reviews"] = state.db.list_reviews(name, id)
@@ -272,7 +280,7 @@ class NewVersion(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
-@router.post("/datasets/{name}/versions", dependencies=ADMIN, status_code=201)
+@router.post("/datasets/{name}/versions", status_code=201, dependencies=ADMIN)
 def dataset_version(name: str, body: NewVersion, state: AppState = Depends(get_state)) -> dict[str, Any]:
     res = _ds_call(state.datasets.create_version, name, body.name)
     state.db.log_event("info", "dataset", f"dataset version {body.name} created from {name}")
@@ -286,15 +294,15 @@ def dataset_export(name: str, state: AppState = Depends(get_state)) -> FileRespo
 
 
 # =========================================================================== experiments
-@router.get("/experiments")
-def experiments(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    return {"experiments": state.experiments.list()}
+@router.get("/experiments", dependencies=VIEWER)
+def experiments(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    return {"experiments": redact_json(state.experiments.list(), text_redactor(request, state))}
 
 
-@router.get("/experiments/{exp_id}")
-def experiment(exp_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/experiments/{exp_id}", dependencies=VIEWER)
+def experiment(exp_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     try:
-        return state.experiments.detail(exp_id)
+        return redact_json(state.experiments.detail(exp_id), text_redactor(request, state))
     except KeyError as exc:
         raise HTTPException(404, "Experiment not found") from exc
 
@@ -307,7 +315,7 @@ class RegisterIn(BaseModel):
     notes: str = Field("", max_length=1000)
 
 
-@router.post("/models/register", dependencies=ADMIN, status_code=201)
+@router.post("/models/register", status_code=201, dependencies=ADMIN)
 def register_model(body: RegisterIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Copy an experiment's weights into a new immutable model version (not activated)."""
     try:
@@ -333,7 +341,7 @@ def register_model(body: RegisterIn, state: AppState = Depends(get_state)) -> di
     return meta
 
 
-@router.get("/experiments/{exp_id}/artifacts/{name}")
+@router.get("/experiments/{exp_id}/artifacts/{name}", dependencies=VIEWER)
 def experiment_artifact(exp_id: str, name: str, state: AppState = Depends(get_state)) -> FileResponse:
     try:
         return FileResponse(state.experiments.artifact(exp_id, name))
@@ -351,7 +359,7 @@ class EvalIn(BaseModel):
     operating_threshold: Optional[float] = Field(None, gt=0, lt=1)
 
 
-@router.post("/evaluations", status_code=202)
+@router.post("/evaluations", status_code=202, dependencies=ADMIN_IF_LOGIN)
 def start_evaluation(body: EvalIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
     _ds_call(state.datasets.path, body.dataset)
     if body.model_version and body.model_version not in {m["version"] for m in state.db.list_models()}:
@@ -361,22 +369,23 @@ def start_evaluation(body: EvalIn, state: AppState = Depends(get_state)) -> dict
     return {"job_id": job, "status_url": f"/api/jobs/{job}"}
 
 
-@router.get("/evaluations")
-def evaluations(state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/evaluations", dependencies=VIEWER)
+def evaluations(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    redact, mf = text_redactor(request, state), message_filter(request)
     out = []
     for j in state.db.list_jobs(500):
         if j["kind"] == "evaluation":
             full = state.db.get_job(j["id"]) or {}
-            out.append({**j, "summary": full.get("result")})
+            out.append({**j, "error": mf.error(j.get("error")), "summary": redact_json(full.get("result"), redact)})
     return {"evaluations": out}
 
 
-@router.get("/evaluations/{job_id}")
-def evaluation(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/evaluations/{job_id}", dependencies=VIEWER)
+def evaluation(job_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     p = state.cfg.storage_dir / "evaluations" / f"{job_id}.json"
     if not job_id.replace("_", "").isalnum() or not p.is_file():
         raise HTTPException(404, "Evaluation not found (still running, failed, or unknown id)")
-    return json.loads(p.read_text(encoding="utf-8"))
+    return redact_json(json.loads(p.read_text(encoding="utf-8")), text_redactor(request, state))
 
 
 # =========================================================================== test lab
@@ -429,7 +438,7 @@ def _run_models(state: AppState, img: np.ndarray, versions: list[str], conf: flo
     return out
 
 
-@router.post("/testlab/run")
+@router.post("/testlab/run", dependencies=OPERATOR)
 async def testlab_run(body: TestLabIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
     detail = _ds_call(state.datasets.image_detail, body.dataset, body.image)
     ref = _ds_call(state.datasets.resolve_image, body.dataset, body.image)
@@ -440,7 +449,7 @@ async def testlab_run(body: TestLabIn, state: AppState = Depends(get_state)) -> 
             "ground_truth": detail["ground_truth"], "results": results}
 
 
-@router.post("/testlab/upload")
+@router.post("/testlab/upload", dependencies=OPERATOR)
 async def testlab_upload(file: UploadFile = File(...), versions: str = Form(...),
                          confidence: float = Form(0.25, gt=0, lt=1), image_size: Optional[int] = Form(None),
                          tiling: Literal["auto", "on", "off"] = Form("off"),
@@ -471,7 +480,7 @@ class ReviewIn(BaseModel):
     notes: Optional[str] = Field(None, max_length=500)
 
 
-@router.post("/testlab/reviews", status_code=201)
+@router.post("/testlab/reviews", status_code=201, dependencies=OPERATOR)
 def add_review(body: ReviewIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
     _ds_call(state.datasets.resolve_image, body.dataset, body.image)
     x1, y1, x2, y2 = body.bbox
@@ -488,7 +497,7 @@ def add_review(body: ReviewIn, state: AppState = Depends(get_state)) -> dict[str
 
 
 # =========================================================================== hard examples
-@router.get("/hard-examples")
+@router.get("/hard-examples", dependencies=VIEWER)
 def hard_examples(kind: Optional[str] = None, status: Optional[str] = None, offset: int = Query(0, ge=0),
                   limit: int = Query(48, ge=1, le=200), state: AppState = Depends(get_state)) -> dict[str, Any]:
     rows, total = state.db.list_hard_examples(kind, status, limit, offset)
@@ -501,7 +510,7 @@ class HardUpdate(BaseModel):
     notes: Optional[str] = Field(None, max_length=500)
 
 
-@router.patch("/hard-examples/{hid}")
+@router.patch("/hard-examples/{hid}", dependencies=OPERATOR)
 def update_hard_example(hid: int, body: HardUpdate, state: AppState = Depends(get_state)) -> dict[str, Any]:
     if not state.db.update_hard_example(hid, **body.model_dump(exclude_none=True)):
         raise HTTPException(404, "Hard example not found")

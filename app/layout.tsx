@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import './globals.css'
 import { AppProvider } from '@/frontend/stores/app'
 import { AuthGate } from '@/frontend/features/auth/AuthGate'
@@ -19,11 +20,13 @@ export const viewport: Viewport = {
 // Applies the saved theme before first paint (prevents a light/dark flash).
 const THEME_SCRIPT = `(function(){try{var t=JSON.parse(localStorage.getItem('lm.theme')||'"dark"');var d=t==='dark'||(t==='system'&&!matchMedia('(prefers-color-scheme: light)').matches);document.documentElement.dataset.theme=d?'dark':'light'}catch(e){document.documentElement.dataset.theme='dark'}})()`
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // per-request nonce from proxy.ts (Content-Security-Policy): the only inline script must carry it
+  const nonce = (await headers()).get('x-nonce') ?? undefined
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
         {/* Outermost: with LM_AUTH_MODE=on nothing else starts (streams, polling) until signed in; off = unchanged */}

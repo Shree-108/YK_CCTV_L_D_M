@@ -60,6 +60,20 @@ export async function login(username: string, password: string): Promise<LoginRe
   }
 }
 
+/**
+ * Tells the server the person at this browser interacted with the app, which extends the idle timeout (never past the
+ * 12-hour limit). The ONLY request that does: polling, streams and other API calls never extend a session.
+ * Returns false when the session is no longer valid.
+ */
+export async function recordActivity(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/activity`, { ...opts, method: 'POST' })
+    return res.status !== 401
+  } catch {
+    return true                                    // offline: nothing to conclude; the regular re-check handles it
+  }
+}
+
 /** Ends the server session; the server also clears the cookie. Network failures are ignored (the UI signs out). */
 export async function logout(): Promise<void> {
   try {
