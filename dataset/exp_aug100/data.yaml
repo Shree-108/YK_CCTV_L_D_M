@@ -1,0 +1,7 @@
+# ANNOTATION VIEW for the Ground Truth page. NOT a training config:
+# training uses experiments/exp_aug100/data_*.yaml (scene-split path lists).
+path: .
+train: images/train
+val: images/train
+names:
+  0: litter

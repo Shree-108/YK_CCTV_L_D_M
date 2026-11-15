@@ -1,0 +1,151 @@
+{
+ "n": 100,
+ "dims": [
+  [
+   1280,
+   720
+  ]
+ ],
+ "modes": [
+  "RGB"
+ ],
+ "exact_dup_sets": [],
+ "near_dup_phash_le6": 499,
+ "near_dup_dhash_le6": 771,
+ "phash_dist": {
+  "min": 0,
+  "median": 22.0,
+  "max": 38
+ },
+ "orb_inliers": {
+  "min": 0,
+  "median": 7.0,
+  "max": 1512,
+  "pct_pairs_ge_TH": 49.5
+ },
+ "orb_groups": {
+  "G1": [
+   "cctv_litter_001.jpg",
+   "cctv_litter_003.jpg",
+   "cctv_litter_005.jpg",
+   "cctv_litter_007.jpg",
+   "cctv_litter_009.jpg",
+   "cctv_litter_011.jpg",
+   "cctv_litter_013.jpg",
+   "cctv_litter_015.jpg",
+   "cctv_litter_017.jpg",
+   "cctv_litter_019.jpg",
+   "cctv_litter_021.jpg",
+   "cctv_litter_023.jpg",
+   "cctv_litter_025.jpg",
+   "cctv_litter_027.jpg",
+   "cctv_litter_029.jpg",
+   "cctv_litter_031.jpg",
+   "cctv_litter_033.jpg",
+   "cctv_litter_035.jpg",
+   "cctv_litter_037.jpg",
+   "cctv_litter_039.jpg",
+   "cctv_litter_041.jpg",
+   "cctv_litter_043.jpg",
+   "cctv_litter_045.jpg",
+   "cctv_litter_047.jpg",
+   "cctv_litter_049.jpg",
+   "cctv_litter_051.jpg",
+   "cctv_litter_053.jpg",
+   "cctv_litter_055.jpg",
+   "cctv_litter_057.jpg",
+   "cctv_litter_059.jpg",
+   "cctv_litter_061.jpg",
+   "cctv_litter_063.jpg",
+   "cctv_litter_065.jpg",
+   "cctv_litter_067.jpg",
+   "cctv_litter_069.jpg",
+   "cctv_litter_071.jpg",
+   "cctv_litter_073.jpg",
+   "cctv_litter_075.jpg",
+   "cctv_litter_077.jpg",
+   "cctv_litter_079.jpg",
+   "cctv_litter_081.jpg",
+   "cctv_litter_083.jpg",
+   "cctv_litter_085.jpg",
+   "cctv_litter_087.jpg",
+   "cctv_litter_089.jpg",
+   "cctv_litter_091.jpg",
+   "cctv_litter_093.jpg",
+   "cctv_litter_095.jpg",
+   "cctv_litter_097.jpg",
+   "cctv_litter_099.jpg"
+  ],
+  "G2": [
+   "cctv_litter_002.jpg",
+   "cctv_litter_004.jpg",
+   "cctv_litter_006.jpg",
+   "cctv_litter_008.jpg",
+   "cctv_litter_010.jpg",
+   "cctv_litter_012.jpg",
+   "cctv_litter_014.jpg",
+   "cctv_litter_016.jpg",
+   "cctv_litter_018.jpg",
+   "cctv_litter_020.jpg",
+   "cctv_litter_022.jpg",
+   "cctv_litter_024.jpg",
+   "cctv_litter_026.jpg",
+   "cctv_litter_028.jpg",
+   "cctv_litter_030.jpg",
+   "cctv_litter_032.jpg",
+   "cctv_litter_034.jpg",
+   "cctv_litter_036.jpg",
+   "cctv_litter_038.jpg",
+   "cctv_litter_040.jpg",
+   "cctv_litter_042.jpg",
+   "cctv_litter_044.jpg",
+   "cctv_litter_046.jpg",
+   "cctv_litter_048.jpg",
+   "cctv_litter_050.jpg",
+   "cctv_litter_052.jpg",
+   "cctv_litter_054.jpg",
+   "cctv_litter_056.jpg",
+   "cctv_litter_058.jpg",
+   "cctv_litter_060.jpg",
+   "cctv_litter_062.jpg",
+   "cctv_litter_064.jpg",
+   "cctv_litter_066.jpg",
+   "cctv_litter_068.jpg",
+   "cctv_litter_070.jpg",
+   "cctv_litter_072.jpg",
+   "cctv_litter_074.jpg",
+   "cctv_litter_076.jpg",
+   "cctv_litter_078.jpg",
+   "cctv_litter_080.jpg",
+   "cctv_litter_082.jpg",
+   "cctv_litter_084.jpg",
+   "cctv_litter_086.jpg",
+   "cctv_litter_088.jpg",
+   "cctv_litter_090.jpg",
+   "cctv_litter_092.jpg",
+   "cctv_litter_094.jpg",
+   "cctv_litter_096.jpg",
+   "cctv_litter_098.jpg",
+   "cctv_litter_100.jpg"
+  ]
+ },
+ "quality": {
+  "sharp": {
+   "min": 79.9,
+   "median": 298.3,
+   "max": 915.7
+  },
+  "bright": {
+   "min": 80.4,
+   "max": 117.8
+  },
+  "noise": {
+   "min": 2.09,
+   "max": 6.87
+  },
+  "kb": {
+   "min": 72.5,
+   "max": 216.4
+  }
+ }
+}

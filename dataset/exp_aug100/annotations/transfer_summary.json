@@ -1,0 +1,18 @@
+{
+ "A_shopfront": {
+  "images": 50,
+  "labels": 950,
+  "clipped_ignored": 0,
+  "out_of_roi_ignored": 0,
+  "ambiguous_ignored": 463,
+  "uncovered_images": 16
+ },
+ "B_roadside_bin": {
+  "images": 50,
+  "labels": 914,
+  "clipped_ignored": 8,
+  "out_of_roi_ignored": 0,
+  "ambiguous_ignored": 1197,
+  "uncovered_images": 18
+ }
+}

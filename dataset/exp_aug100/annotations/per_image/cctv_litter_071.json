@@ -1,0 +1,411 @@
+{
+ "image": "cctv_litter_071.jpg",
+ "scene": "A_shopfront",
+ "reference": "cctv_litter_083.jpg",
+ "H_ref_to_image": [
+  [
+   1.096788,
+   -0.000578,
+   -70.377156
+  ],
+  [
+   -0.000219,
+   1.095813,
+   -30.648786
+  ],
+  [
+   -0.0,
+   -1e-06,
+   1.0
+  ]
+ ],
+ "inliers": 1772,
+ "rms_px": 1.272,
+ "roi": "pav_kerb_gutter",
+ "roi_polygon": [
+  [
+   -5533.8,
+   -2388.2
+  ],
+  [
+   478.7,
+   -2394.8
+  ],
+  [
+   807.3,
+   67.8
+  ],
+  [
+   813.9,
+   117.2
+  ],
+  [
+   847.9,
+   254.2
+  ],
+  [
+   897.3,
+   758.8
+  ],
+  [
+   3408.5,
+   26406.4
+  ],
+  [
+   -5644.2,
+   26318.3
+  ]
+ ],
+ "labels": [
+  {
+   "ref_id": 5,
+   "xyxy": [
+    801.5,
+    111.8,
+    842.2,
+    127.0
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9914720281739028,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 8,
+   "xyxy": [
+    462.4,
+    233.3,
+    487.4,
+    242.3
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9887610827182142,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 9,
+   "xyxy": [
+    575.7,
+    283.8,
+    587.8,
+    289.4
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9782670041315529,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 10,
+   "xyxy": [
+    814.6,
+    249.5,
+    850.7,
+    265.3
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9907504891917679,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 11,
+   "xyxy": [
+    412.4,
+    324.3,
+    429.9,
+    332.1
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9582750992639284,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 12,
+   "xyxy": [
+    477.8,
+    359.5,
+    570.2,
+    404.6
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9957271205290223,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 13,
+   "xyxy": [
+    709.2,
+    315.6,
+    743.3,
+    327.6
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9895621737839245,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 14,
+   "xyxy": [
+    809.8,
+    331.7,
+    825.0,
+    338.9
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9865576418923386,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 19,
+   "xyxy": [
+    443.6,
+    458.4,
+    531.2,
+    498.8
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.994235055373984,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 20,
+   "xyxy": [
+    625.4,
+    490.7,
+    646.6,
+    502.0
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9906503213981767,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 22,
+   "xyxy": [
+    825.4,
+    430.6,
+    881.8,
+    448.8
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9912921184167481,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 24,
+   "xyxy": [
+    54.9,
+    540.8,
+    93.5,
+    553.4
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9904015317429246,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 27,
+   "xyxy": [
+    579.7,
+    557.3,
+    636.1,
+    580.4
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.987443088077314,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 28,
+   "xyxy": [
+    632.6,
+    501.8,
+    682.0,
+    535.1
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9890327909228345,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 29,
+   "xyxy": [
+    838.8,
+    510.0,
+    877.7,
+    525.9
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9907352670912638,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 32,
+   "xyxy": [
+    51.7,
+    587.5,
+    77.3,
+    599.5
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9860902399538536,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 34,
+   "xyxy": [
+    848.7,
+    600.4,
+    873.2,
+    627.9
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.9918199067121142,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 36,
+   "xyxy": [
+    876.7,
+    599.6,
+    906.2,
+    618.1
+   ],
+   "zone": "gutter",
+   "visible": 1.0,
+   "ncc": 0.989111342903771,
+   "origin": "transferred"
+  },
+  {
+   "ref_id": 39,
+   "xyxy": [
+    679.9,
+    627.2,
+    740.2,
+    656.2
+   ],
+   "zone": "pavement",
+   "visible": 1.0,
+   "ncc": 0.9943157974781702,
+   "origin": "transferred"
+  }
+ ],
+ "ignore": [
+  {
+   "ref_id": 6,
+   "xyxy": [
+    828.7,
+    204.3,
+    841.6,
+    211.7
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 7,
+   "xyxy": [
+    849.6,
+    227.6,
+    867.5,
+    236.0
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 17,
+   "xyxy": [
+    764.5,
+    411.8,
+    777.0,
+    417.2
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 23,
+   "xyxy": [
+    862.2,
+    472.2,
+    873.3,
+    478.3
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 30,
+   "xyxy": [
+    935.3,
+    496.5,
+    953.8,
+    505.6
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 33,
+   "xyxy": [
+    547.3,
+    584.0,
+    562.4,
+    592.3
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 37,
+   "xyxy": [
+    96.7,
+    683.5,
+    109.5,
+    688.4
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 41,
+   "xyxy": [
+    605.7,
+    695.6,
+    621.9,
+    702.6
+   ],
+   "why": "ambiguous"
+  },
+  {
+   "ref_id": 42,
+   "xyxy": [
+    709.4,
+    717.8,
+    724.1,
+    720.0
+   ],
+   "why": "ambiguous"
+  }
+ ],
+ "uncovered_frac": 0.0,
+ "uncovered_bbox": [],
+ "manual_added": [],
+ "manual_removed": [],
+ "status": "verified",
+ "manual_ignore": [],
+ "verified": {
+  "by": "claude (visual: zoomed tile per box + border strips)",
+  "at": "2026-11-13",
+  "corrections": 0
+ }
+}

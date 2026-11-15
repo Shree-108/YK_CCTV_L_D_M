@@ -1,0 +1,3 @@
+# Pilot (approved): S1 settings, 2 epochs only - checks memory, completion, checkpoints and logs. Not a result.
+epochs: 2
+patience: 0

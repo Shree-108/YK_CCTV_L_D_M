@@ -1,0 +1,41 @@
+# AUG100 fixed settings (docs/model_training/AUG100_EXPERIMENT_PLAN.md section 5). Per-run files override these.
+model: models/pretrained/yolo11s.pt
+model_sha256: 85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5
+imgsz: 640
+batch: 8
+nbs: 8                 # = batch: no gradient accumulation (default 64 => < 1 update/epoch on 50 images)
+epochs: 30
+patience: 8
+optimizer: SGD         # explicit: 'auto' silently switches to AdamW and ignores lr0
+lr0: 0.002
+lrf: 0.1
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 2
+cos_lr: true
+freeze: 10             # backbone frozen
+single_cls: true
+seed: 0
+deterministic: true
+workers: 0             # RAM: ~0.7 GB free on this machine
+cache: false
+amp: false
+device: cpu
+plots: true
+# mild augmentation: the images already contain blur / noise / JPEG / zoom / exposure changes
+hsv_h: 0.01
+hsv_s: 0.3
+hsv_v: 0.3
+degrees: 2.0
+translate: 0.1
+scale: 0.3
+shear: 0.0
+perspective: 0.0002
+flipud: 0.0
+fliplr: 0.5
+mosaic: 0.5
+close_mosaic: 5
+mixup: 0.0
+cutmix: 0.0
+copy_paste: 0.0
+erasing: 0.0

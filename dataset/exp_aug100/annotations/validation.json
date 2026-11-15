@@ -1,0 +1,17 @@
+{
+ "images": 100,
+ "boxes": 1864,
+ "class": {
+  "litter": 1864
+ },
+ "boxes_by_min_side": {
+  "<16px": 1112,
+  "16-32px": 526,
+  ">=32px": 226
+ },
+ "per_scene": {
+  "A_shopfront": 950,
+  "B_roadside_bin": 914
+ },
+ "errors": []
+}

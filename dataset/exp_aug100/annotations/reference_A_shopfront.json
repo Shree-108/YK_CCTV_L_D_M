@@ -1,0 +1,599 @@
+{
+ "image": "cctv_litter_083.jpg",
+ "reviewed_by": "claude (visual, zoomed crops)",
+ "reviewed_at": "2026-11-13",
+ "boundaries": {
+  "pav|kerb": [
+   [
+    760,
+    90
+   ],
+   [
+    778,
+    380
+   ],
+   [
+    800,
+    720
+   ]
+  ],
+  "kerb|gutter": [
+   [
+    790,
+    90
+   ],
+   [
+    805,
+    260
+   ],
+   [
+    830,
+    720
+   ]
+  ],
+  "gutter|road": [
+   [
+    800,
+    90
+   ],
+   [
+    806,
+    135
+   ],
+   [
+    837,
+    260
+   ],
+   [
+    882,
+    720
+   ]
+  ]
+ },
+ "boxes": [
+  {
+   "id": 5,
+   "xyxy": [
+    794.7,
+    130.1,
+    831.8,
+    144.0
+   ],
+   "zone": "gutter",
+   "note": "plastic bag at kerb (far)",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 8,
+   "xyxy": [
+    485.7,
+    240.9,
+    508.5,
+    249.1
+   ],
+   "zone": "pavement",
+   "note": "white paper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 9,
+   "xyxy": [
+    589.0,
+    287.0,
+    600.0,
+    292.1
+   ],
+   "zone": "pavement",
+   "note": "small paper piece",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 10,
+   "xyxy": [
+    806.6,
+    255.7,
+    839.5,
+    270.1
+   ],
+   "zone": "gutter",
+   "note": "red wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 11,
+   "xyxy": [
+    440.2,
+    323.9,
+    456.1,
+    331.0
+   ],
+   "zone": "pavement",
+   "note": "wrapper piece",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 12,
+   "xyxy": [
+    499.8,
+    356.0,
+    584.0,
+    397.1
+   ],
+   "zone": "pavement",
+   "note": "plastic bag",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 13,
+   "xyxy": [
+    710.6,
+    316.0,
+    741.7,
+    326.9
+   ],
+   "zone": "pavement",
+   "note": "wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 14,
+   "xyxy": [
+    802.3,
+    330.7,
+    816.1,
+    337.2
+   ],
+   "zone": "gutter",
+   "note": "paper piece",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 19,
+   "xyxy": [
+    468.7,
+    446.2,
+    548.5,
+    483.0
+   ],
+   "zone": "pavement",
+   "note": "chips packet",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 20,
+   "xyxy": [
+    634.3,
+    475.6,
+    653.6,
+    485.9
+   ],
+   "zone": "pavement",
+   "note": "paper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 22,
+   "xyxy": [
+    816.5,
+    420.8,
+    867.9,
+    437.4
+   ],
+   "zone": "gutter",
+   "note": "red/white wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 24,
+   "xyxy": [
+    114.5,
+    521.3,
+    149.7,
+    532.8
+   ],
+   "zone": "pavement",
+   "note": "wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 27,
+   "xyxy": [
+    592.7,
+    536.4,
+    644.1,
+    557.4
+   ],
+   "zone": "pavement",
+   "note": "purple wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 28,
+   "xyxy": [
+    640.9,
+    485.8,
+    685.9,
+    516.1
+   ],
+   "zone": "pavement",
+   "note": "red wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 29,
+   "xyxy": [
+    828.7,
+    493.2,
+    864.1,
+    507.7
+   ],
+   "zone": "gutter",
+   "note": "white tube / paper roll",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 32,
+   "xyxy": [
+    111.6,
+    563.9,
+    134.9,
+    574.8
+   ],
+   "zone": "pavement",
+   "note": "crumpled wrapper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 34,
+   "xyxy": [
+    837.7,
+    575.6,
+    860.0,
+    600.7
+   ],
+   "zone": "gutter",
+   "note": "tissue / paper",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 36,
+   "xyxy": [
+    863.2,
+    574.9,
+    890.1,
+    591.8
+   ],
+   "zone": "gutter",
+   "note": "orange carton piece",
+   "origin": "v3_proposal_accepted"
+  },
+  {
+   "id": 39,
+   "xyxy": [
+    684.0,
+    600.1,
+    738.9,
+    626.5
+   ],
+   "zone": "pavement",
+   "note": "yellow wrapper",
+   "origin": "v3_proposal_accepted"
+  }
+ ],
+ "ambiguous": [
+  {
+   "id": 6,
+   "xyxy": [
+    819.5,
+    214.5,
+    831.2,
+    221.2
+   ],
+   "zone": "gutter",
+   "note": "white speck",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 7,
+   "xyxy": [
+    838.5,
+    235.7,
+    854.8,
+    243.4
+   ],
+   "zone": "road",
+   "note": "ring / lid?",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 17,
+   "xyxy": [
+    761.0,
+    403.7,
+    772.4,
+    408.6
+   ],
+   "zone": "pavement",
+   "note": "thin sliver",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 23,
+   "xyxy": [
+    850.0,
+    458.8,
+    860.1,
+    464.3
+   ],
+   "zone": "gutter",
+   "note": "grey speck",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 30,
+   "xyxy": [
+    916.6,
+    480.9,
+    933.4,
+    489.2
+   ],
+   "zone": "road",
+   "note": "white blob on road edge",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 33,
+   "xyxy": [
+    563.2,
+    560.7,
+    576.9,
+    568.3
+   ],
+   "zone": "pavement",
+   "note": "leaf or paper",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 37,
+   "xyxy": [
+    152.6,
+    651.4,
+    164.3,
+    655.9
+   ],
+   "zone": "pavement",
+   "note": "thin sliver",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 41,
+   "xyxy": [
+    616.4,
+    662.4,
+    631.1,
+    668.8
+   ],
+   "zone": "pavement",
+   "note": "faint piece",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 42,
+   "xyxy": [
+    710.8,
+    682.7,
+    724.2,
+    689.4
+   ],
+   "zone": "pavement",
+   "note": "faint piece",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 44,
+   "xyxy": [
+    929.7,
+    714.4,
+    945.7,
+    720.0
+   ],
+   "zone": "road",
+   "note": "cut by frame edge",
+   "origin": "v3_proposal"
+  }
+ ],
+ "rejected": [
+  {
+   "id": 0,
+   "xyxy": [
+    42.0,
+    26.8,
+    59.1,
+    43.0
+   ],
+   "zone": "pavement",
+   "note": "CAM overlay text",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 1,
+   "xyxy": [
+    815.5,
+    0.7,
+    829.9,
+    11.1
+   ],
+   "zone": "road",
+   "note": "foliage",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 2,
+   "xyxy": [
+    817.7,
+    51.5,
+    834.3,
+    62.1
+   ],
+   "zone": "road",
+   "note": "foliage",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 3,
+   "xyxy": [
+    1107.0,
+    88.6,
+    1119.3,
+    95.6
+   ],
+   "zone": "road",
+   "note": "car reflection",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 4,
+   "xyxy": [
+    1123.9,
+    90.9,
+    1140.6,
+    99.6
+   ],
+   "zone": "road",
+   "note": "car reflection",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 15,
+   "xyxy": [
+    927.6,
+    326.8,
+    938.6,
+    332.1
+   ],
+   "zone": "road",
+   "note": "road smudge",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 16,
+   "xyxy": [
+    606.1,
+    379.7,
+    616.3,
+    386.0
+   ],
+   "zone": "pavement",
+   "note": "faint smudge",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 18,
+   "xyxy": [
+    951.3,
+    411.8,
+    968.7,
+    419.1
+   ],
+   "zone": "road",
+   "note": "road smudge",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 21,
+   "xyxy": [
+    786.3,
+    473.3,
+    824.1,
+    498.1
+   ],
+   "zone": "kerb",
+   "note": "kerb texture",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 25,
+   "xyxy": [
+    176.8,
+    480.7,
+    183.7,
+    485.5
+   ],
+   "zone": "pavement",
+   "note": "speck",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 26,
+   "xyxy": [
+    216.3,
+    511.5,
+    225.5,
+    516.3
+   ],
+   "zone": "pavement",
+   "note": "speck",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 31,
+   "xyxy": [
+    933.8,
+    530.0,
+    961.6,
+    541.1
+   ],
+   "zone": "road",
+   "note": "leaf",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 35,
+   "xyxy": [
+    862.3,
+    572.3,
+    926.2,
+    593.2
+   ],
+   "zone": "road",
+   "note": "merged box (34+36)",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 38,
+   "xyxy": [
+    285.5,
+    654.8,
+    294.1,
+    661.4
+   ],
+   "zone": "pavement",
+   "note": "speck",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 40,
+   "xyxy": [
+    484.5,
+    682.3,
+    499.8,
+    689.2
+   ],
+   "zone": "pavement",
+   "note": "dark smudge",
+   "origin": "v3_proposal"
+  },
+  {
+   "id": 43,
+   "xyxy": [
+    872.5,
+    676.0,
+    897.0,
+    692.1
+   ],
+   "zone": "road",
+   "note": "faint smudge",
+   "origin": "v3_proposal"
+  }
+ ]
+}

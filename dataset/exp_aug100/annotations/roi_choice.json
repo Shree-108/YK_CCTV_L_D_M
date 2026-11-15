@@ -1,0 +1,29 @@
+{
+ "roi": "pav_kerb_gutter",
+ "zones": [
+  "pavement",
+  "kerb",
+  "gutter"
+ ],
+ "edge": "gutter|road",
+ "desc": "pavement + kerb + gutter/drain channel; carriageway excluded",
+ "status": "PROVISIONAL - awaiting user approval",
+ "options": {
+  "pavement": {
+   "zones": [
+    "pavement"
+   ],
+   "edge": "pav|kerb",
+   "desc": "pavement only; kerb, gutter and road litter are ignore regions"
+  },
+  "pav_kerb_gutter": {
+   "zones": [
+    "pavement",
+    "kerb",
+    "gutter"
+   ],
+   "edge": "gutter|road",
+   "desc": "pavement + kerb + gutter/drain channel; carriageway excluded"
+  }
+ }
+}

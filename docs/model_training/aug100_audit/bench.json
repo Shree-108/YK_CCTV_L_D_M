@@ -1,0 +1,112 @@
+[
+ {
+  "model": "v3_store_cctv",
+  "mode": "full",
+  "imgsz": 640,
+  "conf": 0.25,
+  "dets_per_img": 19.8,
+  "ms_per_img": 415,
+  "classes": {
+   "plastic_bag": 5,
+   "plastic_piece": 57,
+   "food_wrapper": 90,
+   "paper": 29,
+   "cup": 5,
+   "other_litter": 5,
+   "plastic_packaging": 7
+  },
+  "min_side_px_median": 15.3
+ },
+ {
+  "model": "v3_store_cctv",
+  "mode": "full",
+  "imgsz": 640,
+  "conf": 0.1,
+  "dets_per_img": 28.4,
+  "ms_per_img": 406,
+  "classes": {
+   "plastic_bag": 8,
+   "plastic_piece": 105,
+   "food_wrapper": 109,
+   "paper": 39,
+   "cup": 5,
+   "other_litter": 8,
+   "plastic_packaging": 10
+  },
+  "min_side_px_median": 14.2
+ },
+ {
+  "model": "v3_store_cctv",
+  "mode": "full",
+  "imgsz": 1280,
+  "conf": 0.25,
+  "dets_per_img": 26.9,
+  "ms_per_img": 1343,
+  "classes": {
+   "food_wrapper": 108,
+   "paper": 29,
+   "other_litter": 6,
+   "plastic_bag": 28,
+   "plastic_piece": 81,
+   "plastic_packaging": 13,
+   "cup": 4
+  },
+  "min_side_px_median": 12.3
+ },
+ {
+  "model": "v3_store_cctv",
+  "mode": "full",
+  "imgsz": 1280,
+  "conf": 0.1,
+  "dets_per_img": 46.6,
+  "ms_per_img": 1334,
+  "classes": {
+   "food_wrapper": 174,
+   "paper": 51,
+   "other_litter": 9,
+   "plastic_bag": 41,
+   "plastic_piece": 166,
+   "plastic_packaging": 19,
+   "cup": 5,
+   "plastic_bottle": 1
+  },
+  "min_side_px_median": 10.1
+ },
+ {
+  "model": "v3_store_cctv",
+  "mode": "tiled640",
+  "imgsz": 640,
+  "conf": 0.25,
+  "dets_per_img": 92.1,
+  "ms_per_img": 3803,
+  "classes": {
+   "food_wrapper": 433,
+   "paper": 101,
+   "plastic_piece": 246,
+   "plastic_bag": 73,
+   "plastic_packaging": 28,
+   "other_litter": 24,
+   "cup": 16
+  },
+  "min_side_px_median": 12.5
+ },
+ {
+  "model": "v3_store_cctv",
+  "mode": "tiled640",
+  "imgsz": 640,
+  "conf": 0.1,
+  "dets_per_img": 171.4,
+  "ms_per_img": 3840,
+  "classes": {
+   "food_wrapper": 701,
+   "paper": 183,
+   "plastic_piece": 578,
+   "plastic_bag": 140,
+   "plastic_packaging": 54,
+   "other_litter": 31,
+   "cup": 26,
+   "plastic_bottle": 1
+  },
+  "min_side_px_median": 10.0
+ }
+]

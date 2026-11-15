@@ -1,0 +1,2 @@
+# S2: as S1 but SGD lr0 0.01 (Ultralytics default)
+lr0: 0.01

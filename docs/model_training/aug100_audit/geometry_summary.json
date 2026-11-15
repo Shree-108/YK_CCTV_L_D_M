@@ -1,0 +1,226 @@
+{
+ "A_shopfront": {
+  "reference": "cctv_litter_083.jpg",
+  "n_variants": 49,
+  "failed": [],
+  "scale": [
+   1.001,
+   1.132
+  ],
+  "rot_deg": [
+   -0.02,
+   0.01
+  ],
+  "aniso": [
+   1.0,
+   1.001
+  ],
+  "shear": [
+   -0.0011,
+   0.0007
+  ],
+  "persp_e3_max": 0.0013,
+  "flips": 0,
+  "rms_px": [
+   1.13,
+   1.32
+  ],
+  "ncc_median_min": 0.849,
+  "ncc_p05_min": 0.422,
+  "worst": [
+   {
+    "file": "cctv_litter_021.jpg",
+    "inliers": 3575,
+    "rms_px": 1.17,
+    "scale": 1.007,
+    "aniso": 1.0,
+    "rot_deg": -0.0,
+    "shear": -0.0003,
+    "persp_e3": 0.0003,
+    "flip": false,
+    "patches": 323,
+    "ncc_median": 0.878,
+    "ncc_p05": 0.422,
+    "frac_below_0_5": 0.09,
+    "coverage": 0.984
+   },
+   {
+    "file": "cctv_litter_057.jpg",
+    "inliers": 1555,
+    "rms_px": 1.26,
+    "scale": 1.08,
+    "aniso": 1.001,
+    "rot_deg": 0.0,
+    "shear": 0.0002,
+    "persp_e3": 0.0002,
+    "flip": false,
+    "patches": 310,
+    "ncc_median": 0.878,
+    "ncc_p05": 0.423,
+    "frac_below_0_5": 0.103,
+    "coverage": 0.855
+   },
+   {
+    "file": "cctv_litter_055.jpg",
+    "inliers": 1866,
+    "rms_px": 1.32,
+    "scale": 1.08,
+    "aniso": 1.0,
+    "rot_deg": 0.01,
+    "shear": 0.0001,
+    "persp_e3": 0.0004,
+    "flip": false,
+    "patches": 310,
+    "ncc_median": 0.876,
+    "ncc_p05": 0.424,
+    "frac_below_0_5": 0.097,
+    "coverage": 0.855
+   },
+   {
+    "file": "cctv_litter_023.jpg",
+    "inliers": 1511,
+    "rms_px": 1.29,
+    "scale": 1.089,
+    "aniso": 1.0,
+    "rot_deg": -0.01,
+    "shear": 0.0007,
+    "persp_e3": 0.0013,
+    "flip": false,
+    "patches": 287,
+    "ncc_median": 0.866,
+    "ncc_p05": 0.429,
+    "frac_below_0_5": 0.105,
+    "coverage": 0.837
+   },
+   {
+    "file": "cctv_litter_075.jpg",
+    "inliers": 1499,
+    "rms_px": 1.29,
+    "scale": 1.1,
+    "aniso": 1.001,
+    "rot_deg": -0.0,
+    "shear": -0.0005,
+    "persp_e3": 0.0009,
+    "flip": false,
+    "patches": 297,
+    "ncc_median": 0.883,
+    "ncc_p05": 0.43,
+    "frac_below_0_5": 0.098,
+    "coverage": 0.822
+   }
+  ],
+  "coverage_min": 0.78
+ },
+ "B_roadside_bin": {
+  "reference": "cctv_litter_006.jpg",
+  "n_variants": 49,
+  "failed": [],
+  "scale": [
+   0.994,
+   1.128
+  ],
+  "rot_deg": [
+   -0.01,
+   0.01
+  ],
+  "aniso": [
+   0.999,
+   1.002
+  ],
+  "shear": [
+   -0.0008,
+   0.0008
+  ],
+  "persp_e3_max": 0.0016,
+  "flips": 0,
+  "rms_px": [
+   1.11,
+   1.26
+  ],
+  "ncc_median_min": 0.931,
+  "ncc_p05_min": 0.36,
+  "worst": [
+   {
+    "file": "cctv_litter_004.jpg",
+    "inliers": 2699,
+    "rms_px": 1.16,
+    "scale": 1.059,
+    "aniso": 1.0,
+    "rot_deg": 0.01,
+    "shear": 0.0004,
+    "persp_e3": 0.0006,
+    "flip": false,
+    "patches": 310,
+    "ncc_median": 0.931,
+    "ncc_p05": 0.36,
+    "frac_below_0_5": 0.119,
+    "coverage": 0.889
+   },
+   {
+    "file": "cctv_litter_090.jpg",
+    "inliers": 3937,
+    "rms_px": 1.15,
+    "scale": 1.004,
+    "aniso": 1.0,
+    "rot_deg": -0.0,
+    "shear": 0.0001,
+    "persp_e3": 0.0003,
+    "flip": false,
+    "patches": 348,
+    "ncc_median": 0.934,
+    "ncc_p05": 0.374,
+    "frac_below_0_5": 0.098,
+    "coverage": 0.986
+   },
+   {
+    "file": "cctv_litter_034.jpg",
+    "inliers": 3865,
+    "rms_px": 1.13,
+    "scale": 1.003,
+    "aniso": 1.0,
+    "rot_deg": -0.0,
+    "shear": -0.0,
+    "persp_e3": 0.0002,
+    "flip": false,
+    "patches": 336,
+    "ncc_median": 0.936,
+    "ncc_p05": 0.392,
+    "frac_below_0_5": 0.089,
+    "coverage": 0.989
+   },
+   {
+    "file": "cctv_litter_040.jpg",
+    "inliers": 2797,
+    "rms_px": 1.15,
+    "scale": 1.053,
+    "aniso": 1.001,
+    "rot_deg": 0.01,
+    "shear": 0.0008,
+    "persp_e3": 0.0014,
+    "flip": false,
+    "patches": 310,
+    "ncc_median": 0.935,
+    "ncc_p05": 0.392,
+    "frac_below_0_5": 0.113,
+    "coverage": 0.903
+   },
+   {
+    "file": "cctv_litter_098.jpg",
+    "inliers": 2077,
+    "rms_px": 1.24,
+    "scale": 1.116,
+    "aniso": 0.999,
+    "rot_deg": -0.0,
+    "shear": 0.0001,
+    "persp_e3": 0.0009,
+    "flip": false,
+    "patches": 274,
+    "ncc_median": 0.952,
+    "ncc_p05": 0.394,
+    "frac_below_0_5": 0.088,
+    "coverage": 0.802
+   }
+  ],
+  "coverage_min": 0.781
+ }
+}

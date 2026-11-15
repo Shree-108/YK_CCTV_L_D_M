@@ -1,0 +1,6 @@
+﻿yolo11s.pt - official Ultralytics COCO-pretrained YOLO11s (80 classes)
+source:     https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11s.pt
+fetched by: ultralytics 8.4.173 attempt_download_asset, 2026-11-13
+size:       19313732 bytes
+sha256:     85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5
+purpose:    starting weights for the AUG100 exploratory experiment (experiments/exp_aug100). NOT a production model.
