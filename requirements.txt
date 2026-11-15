@@ -1,6 +1,7 @@
 ultralytics>=8.4,<9
 torch>=2.2
 opencv-python>=4.9
+transformers>=4.40,<6          # outdoor-ROI scene segmentation (four-screenshot video analysis); weights in models/roi_segmenter
 numpy>=1.26
 scipy>=1.11
 fastapi>=0.115

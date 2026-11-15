@@ -254,11 +254,19 @@ def open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> tuple[cv
 def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSettings,
                  roi: Optional[ROISet] = None, meta: Optional[ClassMetadata] = None,
                  db: Optional[Database] = None, alerts: Optional[AlertManager] = None,
-                 camera_id: str = "upload", filename: str = "", job_id: Optional[str] = None) -> dict[str, Any]:
+                 camera_id: str = "upload", filename: str = "", job_id: Optional[str] = None, *,
+                 source_type: str = "image", frame_idx: int = 0, video_time_sec: Optional[float] = None,
+                 session_id: Optional[str] = None, create_alerts: Optional[bool] = None,
+                 location: str = "") -> dict[str, Any]:
     """Detect litter in one image. A still image has no temporal evidence, so
     'confirmed' here means: passed every filter AND confidence >= confirmed_threshold.
     ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
-    scheduled screenshots of one fixed camera share one so persisting litter updates its alert."""
+    scheduled screenshots of one fixed camera share one so persisting litter updates its alert.
+
+    Keyword-only extras (defaults = the original image-upload behaviour): ``source_type``/``frame_idx``/
+    ``video_time_sec`` are recorded on the detection rows; for any source other than "image" the ``job_id`` is
+    recorded too (sampled video screenshots link every row to their job). ``session_id`` fixes the alert session,
+    ``create_alerts`` overrides ``alerts.alert_on_image_uploads``."""
     dets, info = detect_in_roi(engine, [image], settings, roi)[0]
     apply_filters(dets, image.shape, settings, roi)
     confirm_single_image(dets, settings)
@@ -270,19 +278,23 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
     if db is not None:
         ts = utcnow()
         db.insert_detections([{
-            "ts": ts, "camera_id": camera_id, "source_type": "image", "job_id": None, "frame_idx": 0,
-            "video_time_sec": None, "class": d.cls_name, "confidence": round(d.confidence, 4),
+            "ts": ts, "camera_id": camera_id, "source_type": source_type,
+            "job_id": None if source_type == "image" else job_id, "frame_idx": frame_idx,
+            "video_time_sec": video_time_sec, "session_id": session_id if source_type != "image" else None,
+            "class": d.cls_name, "confidence": round(d.confidence, 4),
             "x1": d.bbox[0], "y1": d.bbox[1], "x2": d.bbox[2], "y2": d.bbox[3], "status": d.status,
             "reason": d.reason, "track_id": None, "model_version": engine.version} for d in dets])
-    if alerts is not None and settings.alerts.alert_on_image_uploads:
-        session = uuid.uuid4().hex[:12]
+    want_alerts = settings.alerts.alert_on_image_uploads if create_alerts is None else create_alerts
+    if alerts is not None and want_alerts:
+        session = session_id or uuid.uuid4().hex[:12]
         confirmed = [d for d in dets if d.status == CONFIRMED]
         for d in confirmed:
             a = alerts.on_confirmed(ConfirmedEvent(
                 camera_id=camera_id, session_id=session, track_id=d.track_id or 0, cls_name=d.cls_name,
                 confidence=d.confidence, bbox=[round(v, 1) for v in d.bbox], frame=image, annotated=annotated,
-                video_time_sec=None, first_seen_ts=utcnow(), hits=1, active_objects=len(confirmed),
-                job_id=job_id or f"image:{session}", source_type="image", model_version=engine.version,
+                video_time_sec=video_time_sec, first_seen_ts=utcnow(), hits=1, active_objects=len(confirmed),
+                location=location, job_id=job_id or f"image:{session}", source_type=source_type,
+                model_version=engine.version,
                 live_track_ids=frozenset(x.track_id for x in confirmed)), settings)
             if a:
                 alerts_out.append(a)

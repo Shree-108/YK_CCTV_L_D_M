@@ -5,6 +5,10 @@ import type {
   Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
   TestLabResponse, VideoResult,
 } from './types'
+import type {
+  RoiConfirmBody, SampledAnalysisRow, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob, SampledMedia,
+  SampledMonth, SampledOverview,
+} from './sampledTypes'
 
 export type AlertQuery = {
   limit?: number; offset?: number; camera_id?: string; class?: string; severity?: string; status?: string
@@ -85,6 +89,23 @@ export const Api = {
 
   addReview: (body: { dataset: string; image: string; model_version: string; verdict: string; cls?: string; confidence?: number; bbox: number[] }) =>
     api<{ id: number }>('/api/testlab/reviews', { method: 'POST', body }),
+
+  // four-screenshot video analysis
+  sampledUpload: (form: FormData) => api<SampledMedia>('/api/sampled/media', { form }),
+  sampledMedia: (id: string) => api<SampledMedia>(`/api/sampled/media/${encodeURIComponent(id)}`),
+  sampledCreate: (body: SampledCreateBody) => api<{ job_id: string; reused: boolean; state: string }>('/api/sampled/jobs', { method: 'POST', body }),
+  sampledJob: (id: string) => api<SampledJob>(`/api/sampled/jobs/${encodeURIComponent(id)}`),
+  sampledConfirmRoi: (id: string, body: RoiConfirmBody) =>
+    api<{ job_id: string; state: string; stage: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/roi`, { method: 'PUT', body }),
+  sampledCancel: (id: string) => api<{ job_id: string; state: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  sampledOverview: () => api<SampledOverview>('/api/sampled/reports/overview'),
+  sampledMonth: (month: string, by: 'completion' | 'recording') => api<SampledMonth>(`/api/sampled/reports/months/${month}${qs({ by })}`),
+  sampledHistory: (q: { store?: string; camera?: string; start?: string; end?: string; state?: string; q?: string; limit?: number; offset?: number }) =>
+    api<{ total: number; stores: string[]; cameras: string[]; analyses: SampledAnalysisRow[] }>(`/api/sampled/reports/history${qs(q)}`),
+  sampledDetections: (q: { store?: string; camera?: string; class?: string; start?: string; end?: string; limit?: number; offset?: number }) =>
+    api<{ total: number; classes: string[]; detections: SampledDetectionRow[] }>(`/api/sampled/reports/detections${qs(q)}`),
+  sampledHourly: (q: { store?: string; camera?: string; date?: string }) =>
+    api<{ available: boolean; basis: string; rows: SampledHourlyRow[]; excluded_analyses: number; note: string }>(`/api/sampled/reports/hourly${qs(q)}`),
 
   hardExamples: (q: { kind?: string; status?: string; offset?: number; limit?: number }) =>
     api<{ items: HardExample[]; total: number; counts: { kind: string; review_status: string; n: number }[] }>(`/api/hard-examples${qs(q)}`),

@@ -173,6 +173,60 @@ CREATE TABLE IF NOT EXISTS jobs (
     result_json TEXT,
     error TEXT
 );
+-- four-screenshot video analysis (backend/sampling): one uploaded video -> jobs -> 4 sampled frames
+CREATE TABLE IF NOT EXISTS sampled_media (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    filename TEXT NOT NULL,            -- original name (display only)
+    path TEXT NOT NULL,                -- stored copy under storage/media/
+    sha256 TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    width INTEGER, height INTEGER, fps REAL, frames INTEGER, duration_sec REAL,
+    suggested_recording_start TEXT     -- parsed from an NVR file name; a suggestion only
+);
+CREATE INDEX IF NOT EXISTS idx_smedia_sha ON sampled_media(sha256);
+CREATE TABLE IF NOT EXISTS sampled_jobs (
+    id TEXT PRIMARY KEY,
+    media_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    stage TEXT NOT NULL,               -- see backend/sampling/runner.py STAGES
+    state TEXT NOT NULL,               -- queued | running | awaiting_roi | done | failed | cancelled | interrupted
+    error TEXT,
+    store_id TEXT, camera_id TEXT, recording_start TEXT,
+    seed INTEGER NOT NULL,
+    sample_count INTEGER NOT NULL,
+    roi_mode TEXT NOT NULL,            -- auto | camera | manual
+    auto_accept INTEGER NOT NULL DEFAULT 0,
+    roi_json TEXT,                     -- confirmed zones (normalised ROIZone list)
+    roi_source TEXT,                   -- auto | camera | manual | whole_frame
+    roi_status TEXT NOT NULL DEFAULT 'pending',   -- pending | proposed | uncertain | confirmed
+    roi_confidence REAL,
+    proposal_json TEXT,                -- automatic proposal (zones, confidence, per-frame evidence)
+    model_version TEXT,
+    create_alerts INTEGER NOT NULL DEFAULT 1,
+    counts_json TEXT,
+    output_dir TEXT NOT NULL,
+    csv_path TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sjobs_media ON sampled_jobs(media_id);
+CREATE INDEX IF NOT EXISTS idx_sjobs_created ON sampled_jobs(created_at);
+CREATE TABLE IF NOT EXISTS sampled_frames (
+    job_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,              -- 1..4 in video order
+    frame_idx INTEGER NOT NULL,
+    video_time_sec REAL,
+    status TEXT NOT NULL,              -- planned | saved | unreadable | failed
+    outcome TEXT,                      -- LITTER_DETECTED | NO_LITTER | ROI_UNCERTAIN | UNREADABLE | FAILED
+    original_path TEXT, annotated_path TEXT,
+    roi_json TEXT,                     -- per-frame ROI when the view differs from the job ROI
+    roi_status TEXT,
+    detection_count INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    error TEXT,
+    PRIMARY KEY (job_id, idx)
+);
 """
 
 ALERT_FILTERS = {"camera_id", "class", "severity", "status"}

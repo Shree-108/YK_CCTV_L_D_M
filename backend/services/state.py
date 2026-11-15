@@ -55,6 +55,9 @@ class AppState:
         self.experiments = ExperimentService([PROJECT_ROOT / "runs", PROJECT_ROOT / "backend" / "runs",
                                               cfg.storage_dir / "runs"], PROJECT_ROOT)
         self.load_engine()
+        from backend.sampling.runner import SampledRunner
+        from backend.sampling.segmenter import load_segmenter
+        self.sampled = SampledRunner(self, segmenter=lambda: load_segmenter(cfg))
         from backend.cameras.scheduler import CaptureScheduler
         self.scheduler = CaptureScheduler(self)
         self.scheduler.start_loop()

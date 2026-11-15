@@ -58,3 +58,5 @@ invoices/input/*
 invoices/output/*
 !invoices/output/.gitkeep
 .venv-invoice/
+# ROI scene-segmentation weights (downloaded; see docs/video_analysis/README.md)
+models/roi_segmenter/**/*.safetensors

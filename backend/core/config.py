@@ -56,6 +56,11 @@ class AppConfig:
     # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
     local_extra_hosts: tuple[str, ...] = ()
     # Login / sessions (API security plan Step 2). OFF by default; when on, routes need a role (Step 4, api/authz.py).
+    # four-screenshot analysis: scene-segmentation model that proposes the outdoor ROI ("off" disables it;
+    # the operator then always draws/confirms the ROI). Weights: models/roi_segmenter/upernet-convnext-tiny (MIT).
+    roi_segmenter: str = field(default_factory=lambda: os.getenv("LM_ROI_SEGMENTER", "auto").strip().lower())
+    roi_segmenter_dir: Path = field(default_factory=lambda: _env_path(
+        "LM_ROI_SEGMENTER_DIR", PROJECT_ROOT / "models" / "roi_segmenter" / "upernet-convnext-tiny"))
     auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "off").strip().lower())
     auth_db_path: Path = field(default_factory=lambda: _env_path("LM_AUTH_DB_PATH", PROJECT_ROOT / "storage" / "auth.db"))
     auth_idle_minutes: int = field(default_factory=lambda: _env_int("LM_AUTH_IDLE_MINUTES", 30))
@@ -94,10 +99,20 @@ class AppConfig:
         return self.storage_dir / "hard_examples"
 
     @property
+    def media_dir(self) -> Path:
+        """Uploaded videos kept for the four-screenshot analysis (unlike uploads/, which is temporary)."""
+        return self.storage_dir / "media"
+
+    @property
+    def sampled_dir(self) -> Path:
+        """Per-job outputs of the four-screenshot analysis: frames/, annotated/, roi/, report CSV."""
+        return self.storage_dir / "sampled"
+
+    @property
     def yolo_models_dir(self) -> Path:
         return self.models_dir / "litter_yolo"
 
     def ensure_dirs(self) -> None:
-        for d in (self.storage_dir, self.alerts_dir, self.videos_dir, self.uploads_dir,
+        for d in (self.storage_dir, self.alerts_dir, self.videos_dir, self.uploads_dir, self.media_dir, self.sampled_dir,
                   self.hard_examples_dir, self.yolo_models_dir, self.db_path.parent):
             d.mkdir(parents=True, exist_ok=True)

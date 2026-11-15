@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, Cctv, BarChart3, Boxes, Camera, ClipboardCheck, Database, FileBarChart, FileVideo,
-  FlaskConical, History, ImageIcon, LayoutGrid, Microscope, ScanSearch, Settings, Sparkles, Target, type LucideIcon,
+  FlaskConical, History, ImageIcon, LifeBuoy, LayoutGrid, Microscope, ScanSearch, Settings, Sparkles, Target, type LucideIcon,
 } from 'lucide-react'
 
 export type BadgeKey = 'online' | 'newAlerts' | 'cameras' | 'hardPending'
@@ -8,21 +8,26 @@ export type BadgeKey = 'online' | 'newAlerts' | 'cameras' | 'hardPending'
 export interface NavItem { href: string; label: string; icon: LucideIcon; badge?: BadgeKey; description: string }
 export interface NavGroup { label: string; items: NavItem[]; hidden?: boolean }
 
-// The sidebar shows only the core workflow. Advanced tools are hidden from the sidebar
+// The sidebar shows the core workflow (Workspace) and System pages. Advanced tools are hidden from the sidebar
 // but remain reachable through the Ctrl+K command palette and in-page links.
 export const NAV: NavGroup[] = [
   { label: 'Workspace', items: [
     { href: '/', label: 'Overview', icon: LayoutGrid, description: 'Summary of detections and alerts' },
     { href: '/detect/image', label: 'Image Analysis', icon: ImageIcon, description: 'Upload a CCTV image and detect litter' },
     { href: '/detect/video', label: 'Video Analysis', icon: FileVideo, description: 'Upload a CCTV video and detect litter' },
-    { href: '/live-cctv', label: 'Live CCTV', icon: Cctv, badge: 'online', description: 'Connect an authorized NVR/RTSP stream and detect litter live' },
     { href: '/alerts', label: 'Alerts', icon: AlertTriangle, badge: 'newAlerts', description: 'Detected litter incidents' },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, description: 'Detection trends and distributions' },
+  ] },
+  { label: 'System', items: [
     { href: '/settings', label: 'Settings', icon: Settings, description: 'Detection, alerts, appearance, security' },
   ] },
+  // Not in the sidebar, but the pages, routes and features remain (Ctrl+K palette and in-page links).
   { label: 'Advanced', hidden: true, items: [
+    { href: '/results', label: 'Results Dashboard', icon: FileBarChart, description: 'Four-screenshot video analyses: summary, CSV, monthly, history' },
+    { href: '/live-cctv', label: 'Live CCTV', icon: Cctv, badge: 'online', description: 'Connect an authorized NVR/RTSP stream and detect litter live' },
+    { href: '/cameras', label: 'Camera Integration', icon: Camera, badge: 'cameras', description: 'Camera configuration, RTSP and ROI' },
+    { href: '/help', label: 'Help Center', icon: LifeBuoy, description: 'How to use the litter detection workspace' },
     { href: '/history', label: 'History', icon: History, description: 'Searchable detection log' },
-    { href: '/cameras', label: 'Cameras', icon: Camera, badge: 'cameras', description: 'Camera configuration' },
     { href: '/test-lab', label: 'Test Lab', icon: Microscope, description: 'Compare models on the same input' },
     { href: '/model-lab', label: 'Model Lab', icon: Sparkles, description: 'Model cards, deployment and rollback' },
     { href: '/models', label: 'Models', icon: Boxes, description: 'Model comparison table' },
