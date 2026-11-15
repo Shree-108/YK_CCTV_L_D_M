@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from backend.alerts.notifier import Notifier
 from backend.cameras.grabber import frame_problem, grab_frame
 
-from .conftest import needs_model
+from .conftest import V3_VERSION, needs_v3
 
 AUTH = {"Authorization": "Bearer test-admin-token"}
 
@@ -100,11 +100,11 @@ def test_notifier_records_delivery_only_on_success():
 def client(cfg):
     from backend.main import create_app
     with TestClient(create_app(cfg)) as c:
-        c.post("/api/models/activate", json={"version": "v1_litter_s1_synthetic"}, headers=AUTH)
+        c.post("/api/models/activate", json={"version": V3_VERSION}, headers=AUTH)
         yield c
 
 
-@needs_model
+@needs_v3
 def test_invalid_frames_skip_inference(client, make_video):
     blank = make_video([np.full((368, 640, 3), 40, np.uint8)], repeat=20, name="blank.mp4")
     client.post("/api/cameras", headers=AUTH, json={"id": "blank1", "name": "Blank", "source": str(blank), "enabled": False})
@@ -116,7 +116,7 @@ def test_invalid_frames_skip_inference(client, make_video):
     assert s["last_status"] == "invalid_frame" and s["last_success_at"] is None
 
 
-@needs_model
+@needs_v3
 def test_hanging_camera_does_not_block_api_or_uploads(client, litter_image):
     srv = HangingServer()
     try:
@@ -142,7 +142,7 @@ def test_hanging_camera_does_not_block_api_or_uploads(client, litter_image):
         srv.close()
 
 
-@needs_model
+@needs_v3
 def test_repeated_failures_back_off_and_never_crash(client):
     client.post("/api/cameras", headers=AUTH, json={"id": "gone1", "name": "Gone", "enabled": False,
                                                     "source": "D:/no/such/camera.mp4"})

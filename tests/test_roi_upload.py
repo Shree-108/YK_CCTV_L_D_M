@@ -12,7 +12,7 @@ from backend.detection.types import CONFIRMED, Detection
 from backend.services.pipeline import detect_in_roi, litter_summary, roi_window
 from backend.services.visualization import annotate_litter, display_name
 
-from .conftest import needs_model
+from .conftest import V3_VERSION, needs_v3
 
 AUTH = {"Authorization": "Bearer test-admin-token"}
 LEFT_HALF = [{"name": "outside-store", "type": "sidewalk", "mode": "include",
@@ -90,11 +90,11 @@ def test_annotate_litter_draws_only_confirmed():
 def client(cfg):
     from backend.main import create_app
     with TestClient(create_app(cfg)) as c:
-        c.post("/api/models/activate", json={"version": "v1_litter_s1_synthetic"}, headers=AUTH)
+        c.post("/api/models/activate", json={"version": V3_VERSION}, headers=AUTH)
         yield c
 
 
-@needs_model
+@needs_v3
 def test_upload_roi_is_saved_reset_and_applied(client, litter_image):
     assert client.get("/api/roi/upload").json() == {"camera_id": "upload", "zones": [], "active": False}
     r = client.put("/api/roi/upload", json={"zones": LEFT_HALF})
@@ -115,7 +115,7 @@ def test_upload_roi_is_saved_reset_and_applied(client, litter_image):
     assert client.put("/api/roi/bad id!", json={"zones": []}).status_code in (404, 422)
 
 
-@needs_model
+@needs_v3
 def test_camera_roi_needs_admin(client):
     cam = {"id": "cam1", "name": "Front", "source": "0", "enabled": False}
     assert client.post("/api/cameras", json=cam, headers=AUTH).status_code in (200, 201)

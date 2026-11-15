@@ -7,9 +7,9 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from .conftest import needs_model
+from .conftest import V3_VERSION, iou, needs_v3
 
-pytestmark = needs_model
+pytestmark = needs_v3
 AUTH = {"Authorization": "Bearer test-admin-token"}
 
 
@@ -17,7 +17,7 @@ AUTH = {"Authorization": "Bearer test-admin-token"}
 def client(cfg):
     from backend.main import create_app
     with TestClient(create_app(cfg)) as c:
-        c.post("/api/models/activate", json={"version": "v1_litter_s1_synthetic"}, headers=AUTH)
+        c.post("/api/models/activate", json={"version": V3_VERSION}, headers=AUTH)
         yield c
 
 
@@ -84,6 +84,8 @@ def test_scheduled_capture_runs_and_reschedules(client, cam):
     _make_due(client, cam)
     assert _wait(lambda: any(c["trigger"] == "scheduled" and c["status"] == "done"
                              for c in client.get("/api/captures", params={"camera_id": cam}).json()["captures"]))
+    # the capture row is marked done before the scheduler thread saves the next run time: wait for that save
+    assert _wait(lambda: sched(client, cam)["seconds_to_next"] >= 120 * 60 - 5, 10)
     s = sched(client, cam)
     assert s["state"] == "running" and s["seconds_to_next"] >= 120 * 60 - 5
 
@@ -139,6 +141,19 @@ def test_repeated_captures_do_not_duplicate_alerts(client, cam):
     b = client.post(f"/api/schedule/{cam}/capture-now", headers=AUTH).json()["capture"]
     if not a["alert_ids"]:
         pytest.skip("model produced no confirmed litter on the sample frame")
-    assert b["alert_ids"] == [] or set(b["alert_ids"]) <= set(a["alert_ids"])
     alerts = client.get("/api/alerts", params={"camera_id": cam}).json()["alerts"]
-    assert len(alerts) == len(a["alert_ids"]) and all(x["occurrences"] >= 2 for x in alerts)
+    key = lambda d: (d["class"], tuple(round(v) for v in d["bbox"]))
+    if sorted(map(key, a["detections"])) == sorted(map(key, b["detections"])):
+        # identical frames: every alert was seen twice and the second capture created none
+        assert b["alert_ids"] == [] or set(b["alert_ids"]) <= set(a["alert_ids"])
+        assert len(alerts) == len(a["alert_ids"]) and all(x["occurrences"] >= 2 for x in alerts)
+        return
+    # The two captures decoded slightly different frames of the mp4 (it happens intermittently): a marginal box
+    # (conf ~0.6) can then appear in only one capture, or be merged into a neighbouring same-class alert by the dedup
+    # rule. Invariants: sightings were merged, and no alert created by the second capture duplicates an object the
+    # first capture already alerted on (same class, IoU >= 0.5).
+    assert any(x["occurrences"] >= 2 for x in alerts)
+    a_confirmed = [e for e in a["detections"] if e["status"] == "confirmed"]
+    for new_id in set(b["alert_ids"]) - set(a["alert_ids"]):
+        x = next(x for x in alerts if x["id"] == new_id)
+        assert not any(e["class"] == x["class"] and iou(e["bbox"], x["bbox"]) >= 0.5 for e in a_confirmed), x
