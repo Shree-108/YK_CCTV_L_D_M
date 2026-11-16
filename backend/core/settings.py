@@ -58,8 +58,40 @@ class FilterSettings(_M):
     roi_enabled: bool = True
     roi_anchor: Literal["footpoint", "center"] = "footpoint"
     roi_margin_frac: float = Field(0.02, ge=0, le=0.2)  # tolerance so the ROI edge doesn't drop real litter
-    roi_crop_inference: bool = True                     # run the model only on the ROI's bounding rectangle
+    # EXPERIMENTAL, OFF by default: run the model only on the ROI's bounding rectangle. It changed recall sharply on
+    # real footage (raw detections indoor 15 -> 0, EZVIZ 61 -> 1); full-frame inference + ROI post-filter is the
+    # baseline. Enable per camera only after an independent recall evaluation.
+    roi_crop_inference: bool = False
     roi_crop_pad_frac: float = Field(0.08, ge=0, le=0.5)  # padding around it (objects standing on the edge)
+
+
+class SizeLimit(_M):
+    """Minimum box size, NORMALISED to the original frame so it survives stream-resolution changes.
+    ``min_side_frac``: shorter box side / shorter frame side. ``min_area_frac``: box area / frame area."""
+    min_side_frac: float = Field(0.012, ge=0, le=1)
+    min_area_frac: float = Field(0.00015, ge=0, le=1)
+
+
+class PavementSettings(_M):
+    """Pavement-only mode (backend/detection/pavement.py). OFF by default: with ``enabled=false`` detection output is
+    exactly the pre-existing behaviour. Turn it on globally or per camera (cameras.settings_json) only after the
+    camera's ROI has been approved."""
+    enabled: bool = False
+    # ROI membership. footpoint: the bottom-centre (ground contact) must be inside the pavement polygon or within
+    # edge_tolerance_frac of it. footpoint_or_overlap: additionally accept a box with >= min_include_overlap of its
+    # area inside the polygon (litter whose foot point is hidden just behind the boundary).
+    membership: Literal["footpoint", "footpoint_or_overlap"] = "footpoint_or_overlap"
+    edge_tolerance_frac: float = Field(0.01, ge=0, le=0.1)      # of the frame's shorter side, in pixels
+    min_include_overlap: float = Field(0.5, gt=0, le=1)
+    # Exclusion zones are applied AFTER membership: foot point inside, or >= max_exclusion_overlap of the box inside
+    max_exclusion_overlap: float = Field(0.5, gt=0, le=1)
+    size: SizeLimit = SizeLimit()
+    class_size: dict[str, SizeLimit] = {}                      # per-class overrides (none proposed yet)
+    # Frame size the ROI was drawn on. When set, a frame with a different aspect ratio (another camera or stream)
+    # gets ROI_FRAME_MISMATCH and no confirmed litter instead of a wrongly placed polygon.
+    roi_reference_size: Optional[tuple[int, int]] = None
+    aspect_tolerance: float = Field(0.02, ge=0, le=0.5)
+    diagnostic_images: bool = True                             # sampled jobs also save <name>_diagnostic.jpg
 
 
 class TrackingSettings(_M):
@@ -123,6 +155,7 @@ class DetectionSettings(_M):
     inference: InferenceSettings = InferenceSettings()
     tiling: TileSettings = TileSettings()
     filters: FilterSettings = FilterSettings()
+    pavement: PavementSettings = PavementSettings()
     tracking: TrackingSettings = TrackingSettings()
     severity: SeveritySettings = SeveritySettings()
     alerts: AlertSettings = AlertSettings()

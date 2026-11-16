@@ -232,10 +232,14 @@ class CameraWorker:
                 if len(self._times) > 1:
                     st.fps = round((len(self._times) - 1) / max(self._times[-1] - self._times[0], 1e-6), 2)
                 from backend.services.pipeline import roi_is_active
-                img = annotate_litter(frame, res.detections, self.pipeline.roi,
-                                      roi_active=roi_is_active(self.pipeline.roi, self.pipeline.settings),
-                                      extra=[f"LIVE  {self.cam.get('name', self.id)}",
-                                             f"FPS {st.fps:.1f}  |  {st.inference_ms:.0f} ms"])
+                if res.pavement_status:                  # pavement-only mode: approved ROI + outcomes
+                    from backend.services.visualization import annotate_pavement
+                    img = annotate_pavement(frame, res.detections, self.pipeline.roi, res.pavement_status, self.id)
+                else:
+                    img = annotate_litter(frame, res.detections, self.pipeline.roi,
+                                          roi_active=roi_is_active(self.pipeline.roi, self.pipeline.settings),
+                                          extra=[f"LIVE  {self.cam.get('name', self.id)}",
+                                                 f"FPS {st.fps:.1f}  |  {st.inference_ms:.0f} ms"])
                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 ok_raw, raw = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok and ok_raw:

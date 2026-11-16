@@ -121,22 +121,34 @@ const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' }> = 
 
 export const overallLabel = (s: string | undefined | null) => (s && OVERALL[s]) || { text: s || '—', tone: 'warn' as const }
 
-export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string }
+export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string; outcome?: string }
 export interface FrameLike {
   idx: number; frame_idx: number; video_time_sec: number | null; status: string; outcome: string | null
   detections: DetLike[]; sampling_note?: string | null; error?: string | null
+  pavement?: { status: string; counts: Record<string, number> } | null
 }
 
 /** What one screenshot card shows: confirmed litter (class, model confidence, severity) and the count. */
 export function screenshotFacts(f: FrameLike) {
   const confirmed = f.detections.filter((d) => d.status === 'confirmed').sort((a, b) => b.confidence - a.confidence)
-  const possible = f.detections.filter((d) => d.status === 'candidate').length
+  // camera ROI mode: candidates are the SMALL_OR_WEAK_CANDIDATE outcome (small or weak, inside the approved ROI);
+  // general image mode and the mode switched off keep the existing rule
+  const validated = f.pavement?.status === 'CAMERA_ROI_MODE'
+  const possible = validated ? f.detections.filter((d) => d.outcome === 'SMALL_OR_WEAK_CANDIDATE').length
+    : f.detections.filter((d) => d.status === 'candidate').length
+  const pv = f.pavement
   return {
+    pavement: pv ? {
+      active: validated, general: pv.status === 'GENERAL_IMAGE_MODE', status: pv.status,
+      rejected: (pv.counts.rejected_outside_roi ?? 0) + (pv.counts.rejected_filter ?? 0),
+      unverified: pv.counts.unverified_roi_not_configured ?? 0,
+    } : null,
     count: confirmed.length,
     items: confirmed.map((d) => ({ cls: d.class, confidence: d.confidence, severity: d.severity ?? null, object: d.object_id ?? null })),
     possible,
     adjusted: !!f.sampling_note,
     analysed: f.outcome === 'LITTER_DETECTED' || f.outcome === 'NO_LITTER',
+    roiUnavailable: f.outcome === 'ROI_NOT_CONFIGURED' || f.outcome === 'ROI_FRAME_MISMATCH',
   }
 }
 

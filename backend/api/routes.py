@@ -545,7 +545,7 @@ async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = F
         roi = state.roi_for(cam, camera_id) if use_roi else None
         res = await asyncio.to_thread(detect_image, engine, img, s, roi, state.meta, state.db,
                                       state.alerts if create_alerts else None, camera_id,
-                                      safe_display_name(file.filename))
+                                      safe_display_name(file.filename), camera_registered=cam is not None)
     finally:
         path.unlink(missing_ok=True)
     annotated = res.pop("annotated")

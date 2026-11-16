@@ -3,11 +3,12 @@
 // Zero-click video analysis: drop a video -> upload + automatic analysis (one request) -> live progress ->
 // four screenshots (original + annotated), summary and reports. Nothing to click after the drop.
 // Logic (validation, duplicate-drop guard, lifecycle, labels) lives in frontend/lib/autoAnalysis.ts (unit-tested).
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
 import { downloadAuthed, url } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SampledFrame, SampledJob, SampledStage } from '../../api/sampledTypes'
+import type { RoiZone } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { cx, dateTime, duration, num, pct } from '../../lib/format'
 import {
@@ -29,6 +30,8 @@ const LIFECYCLE_TONE: Record<Lifecycle, Tone> = {
 }
 const REPORT_COLS = ['record_type', 'screenshot_number', 'screenshot_timestamp_seconds', 'litter_class', 'confidence_score',
   'severity', 'object_track_id', 'final_classification', 'review_required']
+const PAVEMENT_COLS = ['record_type', 'screenshot_number', 'litter_class', 'confidence_score', 'pavement_outcome',
+  'pavement_reason', 'size_check', 'review_required']
 
 /** Where a stopped job got to (for the progress strip of a FAILED / CANCELLED job). */
 function stageLifecycle(stage: SampledStage): Lifecycle {
@@ -230,7 +233,8 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
 
       {job.frames.some((f) => f.status !== 'planned') && (
         <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}>
-          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)} />)}</div>
+          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)}
+            zones={f.roi ?? job.roi_policy?.zones ?? job.roi ?? []} />)}</div>
         </Panel>
       )}
 
@@ -240,18 +244,38 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
             <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_csv, `${job.id}_analysis_summary.csv`)}>Summary CSV</Button>
             <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_json, `${job.id}_analysis_summary.json`)}>Summary JSON</Button>
           </>}>
-          <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`} cols={REPORT_COLS} />
+          <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`}
+            cols={job.frames.some((f) => f.pavement) ? PAVEMENT_COLS : REPORT_COLS} />
         </Panel>
       )}
     </>
   )
 }
 
-function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean }) {
+/** The camera's saved ROI drawn over the untouched original (green = pavement, red dashed = exclusion). The SVG uses
+ * the frame's own pixel size as viewBox with "meet", which is exactly how object-contain places the picture. */
+function RoiOverlay({ zones, size }: { zones: RoiZone[]; size: [number, number] }) {
+  const [w, h] = size
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="pointer-events-none absolute inset-0 size-full" aria-hidden>
+      {zones.map((z, i) => (
+        <polygon key={i} points={z.polygon.map(([x, y]) => `${x * w},${y * h}`).join(' ')}
+          fill={z.mode === 'include' ? 'rgba(60,200,60,0.12)' : 'rgba(220,40,40,0.16)'}
+          stroke={z.mode === 'include' ? 'rgb(60,200,60)' : 'rgb(220,40,40)'} strokeWidth={Math.max(2, w / 640)}
+          strokeDasharray={z.mode === 'include' ? undefined : `${w / 160} ${w / 240}`} vectorEffect="non-scaling-stroke" />
+      ))}
+    </svg>
+  )
+}
+
+function AutoFrameCard({ frame, done, zones }: { frame: SampledFrame; done: boolean; zones: RoiZone[] }) {
   const facts = screenshotFacts(frame)
   const o = frame.outcome ? OUTCOME[frame.outcome] : null
   const pending = !done && !frame.outcome
-  const image = (src: string | null, label: string, dl: string | null) => (
+  const [showDiag, setShowDiag] = useState(false)
+  const pav = facts.pavement
+  const overlay = pav?.active && frame.image_size && zones.length ? <RoiOverlay zones={zones} size={frame.image_size} /> : null
+  const image = (src: string | null, label: string, dl: string | null, extra?: ReactNode) => (
     <figure className="flex min-w-0 flex-col gap-1">
       <div className="relative aspect-video overflow-hidden rounded-md bg-video">
         {src ? (
@@ -263,6 +287,7 @@ function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean }) 
             {pending ? 'Processing…' : 'Not available'}
           </div>
         )}
+        {src && extra}
       </div>
       <figcaption className="flex items-center justify-between text-[11.5px] text-fg-3">
         {label}
@@ -282,9 +307,28 @@ function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean }) 
         </div>
       </header>
       <div className="grid grid-cols-2 gap-2">
-        {image(frame.original_url, 'Original', frame.download_original_url)}
-        {image(frame.annotated_url, 'Annotated', frame.download_annotated_url)}
+        {image(frame.original_url, overlay ? 'Original + approved ROI' : 'Original', frame.download_original_url, overlay)}
+        {image(showDiag && frame.diagnostic_url ? frame.diagnostic_url : frame.annotated_url,
+          showDiag && frame.diagnostic_url ? 'Diagnostic (incl. rejected)' : 'Annotated', frame.download_annotated_url)}
       </div>
+      {pav && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+          <Badge tone={pav.active ? 'ok' : pav.general ? 'neutral' : 'warn'}>{pav.active ? 'Camera ROI mode · pavement-validated'
+            : pav.general ? 'General image mode · not pavement-validated'
+              : `${pav.status.replace(/_/g, ' ')} · pavement-only detection unavailable`}</Badge>
+          {frame.pavement?.camera_id && <Badge>Camera {frame.pavement.camera_id}</Badge>}
+          {pav.active && <Badge tone={facts.count ? 'crit' : 'neutral'}>{facts.count} confirmed</Badge>}
+          {pav.active && <Badge tone={facts.possible ? 'warn' : 'neutral'}>{facts.possible} candidate{facts.possible === 1 ? '' : 's'} (review)</Badge>}
+          {pav.rejected > 0 && <Badge>{pav.rejected} rejected</Badge>}
+          {pav.unverified > 0 && <Badge tone="warn">{pav.unverified} unverified (no ROI)</Badge>}
+          {frame.diagnostic_url && (
+            <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-fg-3">
+              <input type="checkbox" checked={showDiag} onChange={(e) => setShowDiag(e.target.checked)} />Diagnostic view
+            </label>
+          )}
+        </div>
+      )}
+      {facts.roiUnavailable && o && <p className="flex gap-1.5 text-[12px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />{o.hint}</p>}
       {facts.analysed && (
         facts.count === 0 ? <EmptyState compact title="No litter detected" body={facts.possible ? `${facts.possible} possible object(s) below the confirmed threshold.` : undefined} /> : (
           <div className="flex flex-col gap-1.5">

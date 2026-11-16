@@ -202,7 +202,7 @@ class AppState:
     # ------------------------------------------------------------------ cameras
     def _make_pipeline(self, cam: dict[str, Any]) -> StreamPipeline:
         return StreamPipeline(self.require_engine(), self.settings(cam), self.roi_for(cam), self.alerts, self.db,
-                              cam["id"], "live", None, cam.get("location", ""))
+                              cam["id"], "live", None, cam.get("location", ""), camera_registered=True)
 
     def _live_fps(self, cam: dict[str, Any]) -> float:
         return self.settings(cam).video.live_process_fps
@@ -233,7 +233,7 @@ class AppState:
             try:
                 res = detect_video(self.get_engine(model_version), path, out_dir, self.settings_with(cam, overrides),
                                    self.roi_for(cam, camera_id) if use_roi else None,
-                                   self.db, self.alerts, camera_id, job_id,
+                                   self.db, self.alerts, camera_id, job_id, camera_registered=cam is not None,
                                    progress=lambda p, info: self.db.update_job(job_id, progress=round(p, 3),
                                                                                result={"progress": info}))
                 self.db.update_job(job_id, status="done", finished_at=utcnow(), progress=1.0,

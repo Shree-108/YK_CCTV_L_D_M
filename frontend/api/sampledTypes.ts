@@ -3,12 +3,33 @@ import type { Detection, RoiZone } from './types'
 import type { Lifecycle } from '../lib/autoAnalysis'
 
 /** A detection of a sampled screenshot: model output plus severity, estimated object and alert (when created). */
-export type SampledDetection = Detection & { severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number }
+export type SampledDetection = Detection & {
+  severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number
+  // pavement-only mode (backend/detection/pavement.py)
+  outcome?: PavementOutcome; outcome_reason?: string
+  geometry?: { membership?: string; zone?: string | null; size_ok?: boolean; min_side_frac?: number; area_frac?: number }
+}
+
+export type PavementOutcome = 'CONFIRMED_LITTER' | 'SMALL_OR_WEAK_CANDIDATE' | 'REJECTED_OUTSIDE_ROI' | 'REJECTED_FILTER'
+  | 'UNVERIFIED_ROI_NOT_CONFIGURED' | 'GENERAL_CONFIRMED' | 'GENERAL_CANDIDATE'
+/** Analysis mode: CAMERA_ROI_MODE is the only pavement-validated one. */
+export type PavementStatus = 'CAMERA_ROI_MODE' | 'GENERAL_IMAGE_MODE' | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
+
+/** Present on a screenshot result only when pavement-only mode is on. Counts are per outcome (lower-case keys). */
+export interface PavementResult {
+  status: PavementStatus
+  mode: PavementStatus
+  pavement_validated: boolean
+  note: string
+  camera_id: string | null
+  counts: Record<Lowercase<PavementOutcome> | 'raw', number>
+}
 
 export type SampledState = 'queued' | 'running' | 'awaiting_roi' | 'done' | 'failed' | 'cancelled' | 'interrupted'
 export type SampledStage = 'received' | 'validating' | 'sampling' | 'identifying_roi' | 'roi_confirmation' | 'analysing'
   | 'generating_images' | 'generating_csv' | 'completed'
 export type FrameOutcome = 'LITTER_DETECTED' | 'NO_LITTER' | 'ROI_UNCERTAIN' | 'UNREADABLE' | 'FAILED'
+  | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
 
 export interface SampledMedia {
   id: string
@@ -58,6 +79,8 @@ export interface SampledFrame {
   sampling_note: string | null
   download_original_url: string | null
   download_annotated_url: string | null
+  pavement?: PavementResult | null
+  diagnostic_url?: string | null
 }
 
 export interface RoiPolicy {

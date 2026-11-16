@@ -27,12 +27,17 @@ def test_crop_box_covers_include_zones_with_padding():
     assert ROISet.from_json(exclude_only).crop_box(1000, 500, 0.1) is None
 
 
+CROP_ON = {"filters": {"roi_crop_inference": True}}   # experimental setting, OFF by default
+
+
 def test_roi_window_skips_full_frame_and_disabled_roi():
-    s = DetectionSettings()
+    s = merged_settings(CROP_ON)
     roi = ROISet.from_json(LEFT_HALF)
     assert roi_window((500, 1000, 3), s, roi) is not None
+    assert roi_window((500, 1000, 3), DetectionSettings(), roi) is None          # default: full-frame inference
     assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_crop_inference": False}}), roi) is None
-    assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_enabled": False}}), roi) is None
+    assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_enabled": False, "roi_crop_inference": True}}),
+                      roi) is None
     whole = [{**LEFT_HALF[0], "polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]}]
     assert roi_window((500, 1000, 3), s, ROISet.from_json(whole)) is None
 
@@ -50,8 +55,8 @@ class _FakeEngine:
 def test_detect_in_roi_runs_on_crop_and_maps_boxes_back():
     eng = _FakeEngine()
     frame = np.zeros((500, 1000, 3), np.uint8)
-    (dets, _), = detect_in_roi(eng, [frame], DetectionSettings(), ROISet.from_json(LEFT_HALF))
-    x1, y1, x2, y2 = roi_window(frame.shape, DetectionSettings(), ROISet.from_json(LEFT_HALF))
+    (dets, _), = detect_in_roi(eng, [frame], merged_settings(CROP_ON), ROISet.from_json(LEFT_HALF))
+    x1, y1, x2, y2 = roi_window(frame.shape, merged_settings(CROP_ON), ROISet.from_json(LEFT_HALF))
     assert eng.shapes == [(y2 - y1, x2 - x1, 3)]
     assert dets[0].bbox == [10.0 + x1, 20.0 + y1, 30.0 + x1, 40.0 + y1]
     (dets, _), = detect_in_roi(eng, [frame], DetectionSettings(), None)   # no ROI: full frame

@@ -56,6 +56,9 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
         "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
         "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
         "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,
+        # pavement-only mode
+        "pavement": res.get("pavement"),
+        "diagnostic_url": f"{base}/diagnostic.jpg" if res.get("diagnostic_path") else None,
     }
 
 

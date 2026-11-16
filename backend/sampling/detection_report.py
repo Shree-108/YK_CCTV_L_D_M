@@ -9,6 +9,11 @@ Record types in detection_report.csv (column ``record_type``):
               confirmed threshold) and detections removed because they lie outside the ROI. Weak and otherwise
               filtered detections (size, aspect, class) are not listed.
 
+Pavement-only mode (settings.pavement.enabled): every detection is listed, whatever its outcome, so nothing is
+dropped from the audit trail. ``pavement_outcome`` is one of CONFIRMED_LITTER, SMALL_OR_WEAK_CANDIDATE,
+REJECTED_OUTSIDE_ROI, REJECTED_FILTER or UNVERIFIED_ROI_NOT_CONFIGURED, with ``pavement_reason`` and the normalised
+size measurements. A screenshot of a camera without an approved ROI is PAVEMENT_ROI_NOT_CONFIGURED.
+
 Job-wide totals are NOT repeated on every row (summing them in a spreadsheet would multiply them); they are in
 analysis_summary.csv (one row) and analysis_summary.json. Only the per-screenshot and overall *status* texts are on
 every row. Original model confidence (confidence_score) is kept separate from the cross-screenshot evidence
@@ -58,6 +63,9 @@ DETECTION_FIELDS = [
     # traceability
     "planned_frame_number", "sampling_adjustment", "object_sightings", "object_max_confidence", "rejection_reason",
     "model_version",
+    # pavement-only mode (empty when the mode is off)
+    "analysis_mode", "pavement_validated", "pavement_outcome", "pavement_reason", "foot_point_x", "foot_point_y",
+    "box_min_side_fraction", "box_area_fraction", "size_check",
 ]
 
 SUMMARY_FIELDS = [
@@ -69,11 +77,20 @@ SUMMARY_FIELDS = [
     "total_low_severity", "possible_litter_objects", "outside_roi_detections",
     "roi_status", "roi_source", "roi_name", "roi_configuration_id", "alerts_created",
     "overall_analysis_status", "review_required", "model_version", "note",
+    # pavement-only mode (empty when the mode is off); counts are detections over all screenshots
+    "analysis_mode", "pavement_validated", "confirmed_litter_detections", "small_or_weak_candidates",
+    "rejected_outside_roi", "rejected_other_filters", "unverified_roi_not_configured", "general_confirmed_detections",
+    "general_candidate_detections",
 ]
 
 SCREENSHOT_STATUS = {"LITTER_DETECTED": "LITTER_OBSERVED", "NO_LITTER": "NO_LITTER_OBSERVED",
-                     "UNREADABLE": "UNREADABLE", "FAILED": "FAILED", "ROI_UNCERTAIN": "NOT_ANALYSED_ROI_UNCERTAIN"}
+                     "UNREADABLE": "UNREADABLE", "FAILED": "FAILED", "ROI_UNCERTAIN": "NOT_ANALYSED_ROI_UNCERTAIN",
+                     "ROI_NOT_CONFIGURED": "PAVEMENT_ROI_NOT_CONFIGURED",
+                     "ROI_FRAME_MISMATCH": "PAVEMENT_ROI_FRAME_MISMATCH"}
 ANALYSED = ("LITTER_OBSERVED", "NO_LITTER_OBSERVED")
+UNVERIFIED_STATUS = ("PAVEMENT_ROI_NOT_CONFIGURED", "PAVEMENT_ROI_FRAME_MISMATCH")
+PAVEMENT_LISTED = ("CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE")     # get an object id in pavement-only mode
+GENERAL_LISTED = ("confirmed", "candidate")                         # general image mode: the existing rule
 
 
 # ---------------------------------------------------------------------- linking
@@ -96,7 +113,9 @@ def link_objects(frames: list[dict[str, Any]], *, iou_min: float, center_frac: f
         size = res.get("image_size") or [0, 0]
         diag = math.hypot(*size) or 1.0
         used: set[str] = set()
-        dets = sorted((d for d in res.get("detections", []) if d.get("status") in LISTED),
+        dets = sorted((d for d in res.get("detections", [])
+                       if (d.get("outcome") in PAVEMENT_LISTED if d.get("outcome") and not str(d["outcome"]).startswith(
+                           "GENERAL_") else d.get("status") in LISTED)),
                       key=lambda d: -d["confidence"])
         for d in dets:
             cx, cy = (d["bbox"][0] + d["bbox"][2]) / 2, (d["bbox"][1] + d["bbox"][3]) / 2
@@ -161,7 +180,8 @@ def overall_status(frames: list[dict[str, Any]], failed: bool = False) -> str:
     st = [screenshot_status(f) for f in frames]
     analysed = [s for s in st if s in ANALYSED]
     if failed or not analysed:
-        return "FAILED"
+        unverified = [s for s in st if s in UNVERIFIED_STATUS]
+        return unverified[0] if unverified and not failed else "FAILED"
     litter = "LITTER_OBSERVED" in analysed
     if len(analysed) < len(st):
         return "INCOMPLETE_LITTER_OBSERVED" if litter else "INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS"
@@ -209,14 +229,33 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
                      "final_classification": sstat,
                      "review_required": "TRUE" if sstat not in ANALYSED or (confirmed and not roi_verified) else "FALSE",
                      "stationary_confirmation_status": "NOT_APPLICABLE", "duplicate_detection_status": "NOT_APPLICABLE"})
-        listed = [d for d in res.get("detections", [])
-                  if d.get("status") in LISTED or (d.get("status") == "rejected" and d.get("reason") == "outside_roi")]
+        pav = res.get("pavement")
+        if pav:                     # pavement-only mode: every detection is audit evidence, nothing is left out
+            listed = list(res.get("detections", []))
+        else:
+            listed = [d for d in res.get("detections", [])
+                      if d.get("status") in LISTED or (d.get("status") == "rejected" and d.get("reason") == "outside_roi")]
+        if pav:
+            rows[-1]["analysis_mode"] = pav.get("status", "")
+            rows[-1]["pavement_validated"] = "TRUE" if pav.get("status") == "CAMERA_ROI_MODE" else "FALSE"
         for d in sorted(listed, key=lambda d: -d["confidence"]):
             x1, y1, x2, y2 = (float(v) for v in d["bbox"])
             bw, bh = max(0.0, x2 - x1), max(0.0, y2 - y1)
             o = objects.get(d.get("object_id") or "")
             status = d.get("status", "")
-            if status == "rejected":
+            outcome = d.get("outcome")
+            geo = d.get("geometry") or {}
+            if outcome:
+                final = outcome
+                membership = {"INSIDE": "INSIDE", "EDGE_TOLERANCE": "INSIDE_EDGE_TOLERANCE",
+                              "AREA_OVERLAP": "INSIDE_AREA_OVERLAP", "OUTSIDE": "OUTSIDE",
+                              "EXCLUDED": "EXCLUSION_ZONE"}.get(geo.get("membership", ""), "NOT_EVALUATED")
+                review = "FALSE" if outcome in ("REJECTED_OUTSIDE_ROI", "REJECTED_FILTER") or (
+                    outcome == "CONFIRMED_LITTER" and roi_verified) else "TRUE"
+                if outcome.startswith("GENERAL_"):          # existing rule, existing review logic, not ROI-validated
+                    membership = "NOT_EVALUATED_GENERAL_MODE"
+                    review = "TRUE" if status != "confirmed" or not roi_verified else "FALSE"
+            elif status == "rejected":
                 membership, final, review = "OUTSIDE", "EXCLUDED_OUTSIDE_ROI", "FALSE"
             else:
                 membership = "INSIDE" if roi_applied and has_include else "NOT_APPLICABLE"
@@ -243,12 +282,27 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
                 "final_classification": final, "review_required": review,
                 "object_sightings": n_seen or "", "object_max_confidence": round(o["max_confidence"], 4) if o else "",
                 "rejection_reason": d.get("reason") or "",
+                **({"analysis_mode": pav.get("status", ""),
+                    "pavement_validated": "TRUE" if outcome in ("CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE",
+                                                                "REJECTED_OUTSIDE_ROI") else "FALSE",
+                    "pavement_outcome": outcome or "",
+                    "pavement_reason": d.get("outcome_reason") or "",
+                    "foot_point_x": (geo.get("foot_point") or ["", ""])[0],
+                    "foot_point_y": (geo.get("foot_point") or ["", ""])[1],
+                    "box_min_side_fraction": geo.get("min_side_frac", ""), "box_area_fraction": geo.get("area_frac", ""),
+                    "size_check": ("" if "size_ok" not in geo else "SIGNIFICANT" if geo["size_ok"] else "BELOW_MIN_SIZE")}
+                   if pav else {}),
             })
 
     confirmed_objects = [o for o in objects.values() if o["confirmed_sightings"]]
     sev = {s: sum(1 for o in confirmed_objects if o["severity"] == s) for s in SEVERITIES}
     statuses = [screenshot_status(f) for f in frames]
     all_dets = [d for f in frames for d in (f.get("result") or {}).get("detections", [])]
+    pav_status = next(((f.get("result") or {}).get("pavement", {}).get("status") for f in frames
+                       if (f.get("result") or {}).get("pavement")), None)
+    oc = {o: sum(1 for d in all_dets if d.get("outcome") == o) for o in (
+        "CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE", "REJECTED_OUTSIDE_ROI", "REJECTED_FILTER",
+        "UNVERIFIED_ROI_NOT_CONFIGURED", "GENERAL_CONFIRMED", "GENERAL_CANDIDATE")}
     summary = {
         **job_cols,
         "analysis_mode": job.get("mode") or "manual", "sampling_strategy": job.get("sampling") or "",
@@ -271,6 +325,21 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
             ((f.get("result") or {}).get("model_version") for f in frames if (f.get("result") or {}).get("model_version")), ""),
         "note": REPRESENTATIVE_NOTE + (" " + roi["note"] if roi.get("note") else ""),
     }
+    if pav_status:
+        summary.update({
+            "analysis_mode": pav_status, "pavement_validated": "TRUE" if pav_status == "CAMERA_ROI_MODE" else "FALSE",
+            "confirmed_litter_detections": oc["CONFIRMED_LITTER"],
+            "small_or_weak_candidates": oc["SMALL_OR_WEAK_CANDIDATE"], "rejected_outside_roi": oc["REJECTED_OUTSIDE_ROI"],
+            "rejected_other_filters": oc["REJECTED_FILTER"],
+            "unverified_roi_not_configured": oc["UNVERIFIED_ROI_NOT_CONFIGURED"],
+            "general_confirmed_detections": oc["GENERAL_CONFIRMED"],
+            "general_candidate_detections": oc["GENERAL_CANDIDATE"]})
+        if pav_status == "GENERAL_IMAGE_MODE":
+            summary["note"] += " General image mode: results are not validated against a camera pavement ROI."
+        elif pav_status != "CAMERA_ROI_MODE":
+            summary["review_required"] = "TRUE"
+            summary["note"] += (" Pavement-only detection is unavailable for this camera (" + pav_status +
+                                "): nothing was confirmed; detections are listed for review only.")
     return rows, summary
 
 
@@ -284,8 +353,15 @@ def to_csv(rows: Iterable[dict[str, Any]], fields: list[str]) -> str:
 
 def summary_json(summary: dict[str, Any], objects: dict[str, dict[str, Any]], frames: list[dict[str, Any]],
                  roi: dict[str, Any]) -> str:
+    pav = next(((f.get("result") or {}).get("pavement") for f in frames if (f.get("result") or {}).get("pavement")), None)
     return json.dumps({
         "summary": summary,
+        **({"pavement": {"status": pav["status"], "analysis_mode": pav["status"],
+                         "pavement_validated": pav["status"] == "CAMERA_ROI_MODE", "note": pav.get("note"),
+                         "camera_id": pav.get("camera_id"),
+                         "size_rule": pav.get("size_rule"), "membership_rule": pav.get("membership_rule"),
+                         "per_screenshot": [{"number": f["idx"], **((f.get("result") or {}).get("pavement") or {}).get(
+                             "counts", {})} for f in frames]}} if pav else {}),
         "severity_counted_per": "estimated unique object (highest severity of its confirmed sightings)",
         "roi": {k: roi.get(k) for k in ("status", "source", "name", "configuration_id", "approved", "note", "zones")},
         "screenshots": [{"number": f["idx"], "frame_number": f.get("frame_idx"),
@@ -293,6 +369,8 @@ def summary_json(summary: dict[str, Any], objects: dict[str, dict[str, Any]], fr
                          "timestamp_seconds": f.get("video_time_sec"), "status": screenshot_status(f),
                          "sampling_adjustment": f.get("sampling_note"), "error": f.get("error"),
                          "screenshot_filename": _name(f.get("original_path")),
-                         "annotated_screenshot_filename": _name(f.get("annotated_path"))} for f in frames],
+                         "annotated_screenshot_filename": _name(f.get("annotated_path")),
+                         **({"diagnostic_screenshot_filename": _name((f.get("result") or {}).get("diagnostic_path"))}
+                            if (f.get("result") or {}).get("diagnostic_path") else {})} for f in frames],
         "objects": list(objects.values()),
     }, indent=2)

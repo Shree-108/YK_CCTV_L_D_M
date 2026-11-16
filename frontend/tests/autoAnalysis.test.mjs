@@ -119,3 +119,38 @@ test('remembered upload defaults are validated', () => {
   assert.deepEqual(cleanDefaults({ camera_id: '../x', store_id: '=cmd()' }), { camera_id: '', store_id: '' })
   assert.deepEqual(cleanDefaults(null), { camera_id: '', store_id: '' })
 })
+
+test('pavement-only mode: candidates are the SMALL_OR_WEAK_CANDIDATE outcome; no ROI is never "analysed clean"', () => {
+  const active = screenshotFacts({
+    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'LITTER_DETECTED', sampling_note: null,
+    pavement: { status: 'CAMERA_ROI_MODE', counts: { rejected_outside_roi: 3, rejected_filter: 1, unverified_roi_not_configured: 0 } },
+    detections: [{ class: 'food_wrapper', confidence: 0.8, status: 'confirmed', outcome: 'CONFIRMED_LITTER' },
+      { class: 'plastic_piece', confidence: 0.9, status: 'weak', outcome: 'SMALL_OR_WEAK_CANDIDATE' },
+      { class: 'paper', confidence: 0.5, status: 'candidate', outcome: 'SMALL_OR_WEAK_CANDIDATE' },
+      { class: 'cup', confidence: 0.9, status: 'rejected', outcome: 'REJECTED_OUTSIDE_ROI' }],
+  })
+  assert.equal(active.count, 1)
+  assert.equal(active.possible, 2)
+  assert.deepEqual(active.pavement, { active: true, general: false, status: 'CAMERA_ROI_MODE', rejected: 4, unverified: 0 })
+  const none = screenshotFacts({
+    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'ROI_NOT_CONFIGURED', sampling_note: null,
+    pavement: { status: 'ROI_NOT_CONFIGURED', counts: { unverified_roi_not_configured: 2 } },
+    detections: [{ class: 'food_wrapper', confidence: 0.8, status: 'weak', outcome: 'UNVERIFIED_ROI_NOT_CONFIGURED' }],
+  })
+  assert.equal(none.count, 0)
+  assert.equal(none.analysed, false)
+  assert.equal(none.roiUnavailable, true)
+  assert.equal(none.pavement.active, false)
+  const general = screenshotFacts({
+    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'LITTER_DETECTED', sampling_note: null,
+    pavement: { status: 'GENERAL_IMAGE_MODE', counts: {} },
+    detections: [{ class: 'cup', confidence: 0.8, status: 'confirmed', outcome: 'GENERAL_CONFIRMED' },
+      { class: 'paper', confidence: 0.5, status: 'candidate', outcome: 'GENERAL_CANDIDATE' },
+      { class: 'paper', confidence: 0.35, status: 'weak', outcome: 'GENERAL_CANDIDATE' }],
+  })
+  assert.equal(general.count, 1)                 // existing behaviour: confirmed still counted
+  assert.equal(general.possible, 1)              // existing rule: only status candidate
+  assert.equal(general.pavement.active, false)
+  assert.equal(general.pavement.general, true)
+  assert.equal(general.analysed, true)
+})

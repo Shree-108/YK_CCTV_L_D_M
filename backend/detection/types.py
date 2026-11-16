@@ -17,6 +17,10 @@ class Detection:
     reason: Optional[str] = None      # why rejected (roi, size, class, moving, ...)
     track_id: Optional[int] = None
     source: str = "full"              # "full" or "tile:<i>" (diagnostics for tiled inference)
+    # pavement-only mode (backend/detection/pavement.py); None when that mode is off
+    outcome: Optional[str] = None     # CONFIRMED_LITTER | SMALL_OR_WEAK_CANDIDATE | REJECTED_OUTSIDE_ROI | ...
+    outcome_reason: Optional[str] = None
+    geometry: Optional[dict[str, Any]] = None   # membership + normalised size measurements (audit)
 
     @property
     def area(self) -> float:
@@ -34,6 +38,12 @@ class Detection:
             d["track_id"] = self.track_id
         if priority:
             d["priority"] = priority
+        if self.outcome:
+            d["outcome"] = self.outcome
+            if self.outcome_reason:
+                d["outcome_reason"] = self.outcome_reason
+            if self.geometry:
+                d["geometry"] = self.geometry
         return d
 
 

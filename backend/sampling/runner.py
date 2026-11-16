@@ -19,6 +19,12 @@ Modes:
           being analysed returns the running job instead of starting a second one.
 Every completed job also gets reports/detection_report.csv, reports/analysis_summary.csv and
 reports/analysis_summary.json (backend/sampling/detection_report.py), written before the job is marked done.
+
+Pavement-only mode (settings.pavement.enabled; off by default) changes no stage. Each screenshot result then carries
+a ``pavement`` block with the analysis mode. A job without a camera runs in GENERAL_IMAGE_MODE (existing behaviour,
+not pavement-validated); a named camera that is not registered or has no approved ROI gets outcome
+ROI_NOT_CONFIGURED (never NO_LITTER, never confirmed litter); annotated/<name>_diagnostic.jpg also shows rejected
+detections.
 """
 from __future__ import annotations
 
@@ -35,6 +41,7 @@ import cv2
 
 from backend.alerts.manager import compute_severity
 from backend.database.db import utcnow
+from backend.detection import pavement
 from backend.detection.filters import ROISet, ROIZone
 from backend.sampling import SAMPLE_COUNT, auto_roi, detection_report, report
 from backend.sampling.extract import Extracted, Stopped, extract
@@ -55,6 +62,17 @@ ACTIVE = ("queued", "running", "awaiting_roi")
 ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 STORE_RE = re.compile(r"^[A-Za-z0-9._ \-]{1,64}$")
 REPORT_FILES = ("detection_report.csv", "analysis_summary.csv", "analysis_summary.json")
+
+
+def roi_approved_for(job: dict[str, Any]) -> bool:
+    """Was the ROI applied to this job approved by a person? A registered/saved camera ROI (automatic policy) or an
+    operator confirmation counts; the whole frame, or a segmenter proposal accepted automatically (manual mode with
+    auto_accept), does not."""
+    if job.get("roi_source") == "whole_frame":
+        return False
+    if job.get("auto_accept") and job.get("roi_source") == "auto":
+        return False
+    return bool(roi_info(job).get("approved"))
 
 
 def _include_names(zones: list[dict]) -> str:
@@ -406,10 +424,12 @@ class SampledRunner:
         out = Path(job["output_dir"])
         (out / "annotated").mkdir(exist_ok=True)
         whole = job.get("roi_source") == "whole_frame"
+        approved = roi_approved_for(job)
         location = " · ".join(x for x in (job.get("store_id"), job.get("camera_id")) if x)
         totals = {"screenshots_planned": job["sample_count"], "screenshots_extracted": 0, "screenshots_analysed": 0,
                   "litter": 0, "by_class": {}, "alerts": 0, "outcomes": {}}
         annotated_frames: list[tuple[int, Any, Path]] = []
+        diagnostic_frames: list[tuple[Path, Any]] = []
         for f in self.repo.frames(job_id):
             if job_id in self._cancel:
                 raise Stopped()
@@ -431,8 +451,10 @@ class SampledRunner:
                                    job.get("camera_id") or "upload", Path(f["original_path"]).name, job_id,
                                    source_type="sample", frame_idx=f["frame_idx"], video_time_sec=f["video_time_sec"],
                                    session_id=f"{job_id}:s{f['idx']}", create_alerts=bool(job["create_alerts"]),
-                                   location=location)
+                                   location=location, roi_approved=approved, want_diagnostic=True,
+                                   camera_registered=cam is not None)
                 annotated = res.pop("annotated")
+                diagnostic = res.pop("diagnostic", None)
                 alerts = res.pop("alerts")
                 res["alert_ids"] = [a["id"] for a in alerts]
                 n = res["counts"]["confirmed"]
@@ -443,8 +465,19 @@ class SampledRunner:
                         if d.get("track_id") in alert_of:
                             d["alert_id"] = alert_of[d["track_id"]]
                 outcome = "LITTER_DETECTED" if n else "NO_LITTER"
+                pav = res.get("pavement")
+                if pav and pav["status"] in (pavement.ROI_NOT_CONFIGURED, pavement.ROI_FRAME_MISMATCH):
+                    outcome = pav["status"]          # never "NO_LITTER", never confirmed litter
+                if pav:
+                    totals.setdefault("pavement", {})
+                    for k, v in pav["counts"].items():
+                        totals["pavement"][k] = totals["pavement"].get(k, 0) + v
+                if diagnostic is not None:
+                    res["diagnostic_path"] = str(out / "annotated" / f"{Path(f['original_path']).stem}_diagnostic.jpg")
                 self.repo.update_frame(job_id, f["idx"], outcome=outcome, detection_count=n, result=res, error=None)
                 annotated_frames.append((f["idx"], annotated, Path(f["original_path"])))
+                if diagnostic is not None:
+                    diagnostic_frames.append((Path(res["diagnostic_path"]), diagnostic))
                 totals["screenshots_analysed"] += 1
                 totals["litter"] += n
                 totals["alerts"] += len(alerts)
@@ -459,6 +492,8 @@ class SampledRunner:
             p = out / "annotated" / f"{orig.stem}_annotated.jpg"
             if cv2.imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 90]):
                 self.repo.update_frame(job_id, idx, annotated_path=str(p))
+        for p, img in diagnostic_frames:                 # pavement-only mode: incl. rejected detections
+            cv2.imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
         self._stage(job_id, "generating_csv")
         frames = self.repo.frames(job_id)

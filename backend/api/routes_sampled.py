@@ -249,6 +249,8 @@ def frame_image(job_id: str, idx: int, kind: str, download: bool = False,
     root = Path(job["output_dir"]).resolve()
     if kind == "proposal":
         p = root / "roi" / f"proposal_s{idx}.jpg"
+    elif kind == "diagnostic" and (f.get("result") or {}).get("diagnostic_path"):   # pavement-only mode
+        p = Path(f["result"]["diagnostic_path"])
     elif kind in FRAME_KINDS and f.get(FRAME_KINDS[kind]):
         p = Path(f[FRAME_KINDS[kind]])
     else:

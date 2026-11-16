@@ -302,8 +302,10 @@ class CaptureScheduler:
                 settings = settings.model_copy(update={"alerts": settings.alerts.model_copy(update={
                     "dedup_window_sec": window, "alert_on_image_uploads": True})})
                 roi = st.roi_for(cam, cam_id) if cfg["task"] == "litter" else None
+                if cfg["task"] != "litter":            # pavement-only mode is for litter; other models are unaffected
+                    settings = settings.model_copy(update={"pavement": settings.pavement.model_copy(update={"enabled": False})})
                 res = detect_image(engine, frame, settings, roi, st.meta, st.db, st.alerts, cam_id, f"capture {cap_id}",
-                                   job_id=f"schedule:{cam_id}")
+                                   job_id=f"schedule:{cam_id}", camera_registered=True)
                 cv2.imwrite(str(out / "annotated.jpg"), res.pop("annotated"), [cv2.IMWRITE_JPEG_QUALITY, 90])
                 fields.update(status="done", model_version=res["model_version"], annotated_path=str(out / "annotated.jpg"),
                               counts={**res["counts"], "by_class": res["by_class"],
