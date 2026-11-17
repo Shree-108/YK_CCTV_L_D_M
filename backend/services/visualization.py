@@ -113,29 +113,34 @@ def _panel(img: np.ndarray, x: int, y: int, w: int, h: int, alpha: float = 0.55)
 
 
 def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], roi: Optional[ROISet] = None,
-                    roi_active: bool = False, max_listed: int = 5, extra: Sequence[str] = ()) -> np.ndarray:
+                    roi_active: bool = False, max_listed: int = 5, extra: Sequence[str] = (),
+                    approved: bool = False) -> np.ndarray:
     """Clean CCTV-analytics overlay: ROI outline, a tight box + ``Plastic Bag 78%`` label on every
     confirmed litter object, and a small HUD with the ROI state and the current litter count.
-    Candidates, weak and rejected detections (incl. everything outside the ROI) are not drawn."""
+    Candidates, weak and rejected detections (incl. everything outside the ROI) are not drawn.
+    ``approved``: the ROI is a person-approved monitoring region - drawn green, labelled APPROVED ROI."""
     img = frame.copy()
     h, w = img.shape[:2]
     s = float(np.clip(w / 900, 0.6, 1.4))
     thick = max(2, int(round(2 * s)))
+    roi_line = PAVEMENT_GREEN if approved else ROI_LINE
+    roi_text = "APPROVED ROI" if approved else "LITTER DETECTION ROI"
 
     if roi is not None and roi.zones:
         overlay = img.copy()
         for z in roi.zones:
             pts = (np.asarray(z.polygon) * [w, h]).astype(np.int32)
-            color = ROI_LINE if z.mode == "include" else EXCLUDE_LINE
+            color = roi_line if z.mode == "include" else EXCLUDE_LINE
             cv2.fillPoly(overlay, [pts], color)
-        cv2.addWeighted(overlay, 0.08, img, 0.92, 0, dst=img)
+        fill = 0.14 if approved else 0.08
+        cv2.addWeighted(overlay, fill, img, 1 - fill, 0, dst=img)
         for z in roi.zones:
             pts = (np.asarray(z.polygon) * [w, h]).astype(np.int32)
-            color = ROI_LINE if z.mode == "include" else EXCLUDE_LINE
+            color = roi_line if z.mode == "include" else EXCLUDE_LINE
             cv2.polylines(img, [pts], True, color, thick, cv2.LINE_AA)
             if z.mode == "include":
                 tx, ty = pts[np.argmin(pts[:, 1])]
-                label = "LITTER DETECTION ROI"
+                label = roi_text
                 (tw, th), base = cv2.getTextSize(label, FONT, 0.5 * s, 1)
                 tx = int(np.clip(tx, 0, w - tw - 8))
                 ty = int(np.clip(ty - 6, th + 6, h - 2))
@@ -165,8 +170,8 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], roi: Optional[
     for x1, y1, x2, y2 in boxes:   # outlines last: a box is never hidden under a label
         cv2.rectangle(img, (x1, y1), (x2, y2), LITTER_BOX, thick, cv2.LINE_AA)
 
-    lines = [(t, (0, 230, 120)) for t in extra] + [("LITTER DETECTION ROI - ACTIVE" if roi_active else "ROI NOT SET - FULL FRAME",
-              ROI_LINE if roi_active else (170, 170, 170)),
+    lines = [(t, (0, 230, 120)) for t in extra] + [(f"{roi_text} - ACTIVE" if roi_active else "ROI NOT SET - FULL FRAME",
+              roi_line if roi_active else (170, 170, 170)),
              (f"Litter Detected: {len(litter)}", (255, 255, 255))]
     lines += [(f"{display_name(d.cls_name)} - {d.confidence * 100:.0f}%", (200, 200, 200)) for d in litter[:max_listed]]
     if len(litter) > max_listed:

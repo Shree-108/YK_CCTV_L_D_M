@@ -14,6 +14,10 @@ expensive step on CPU. There is no store-scoped ROI in LDM (ROIs are stored per 
 job and in the report but does not select an ROI.
 
 If ROI filtering is switched off in Settings (filters.roi_enabled = false), no ROI is applied and the status says so.
+
+Revalidation: when the size of the picture the ROI was drawn on is known (``reference_size``) and this video's frames
+have a different aspect ratio, the camera view has changed (other stream, other camera, re-mounted camera): the ROI is
+NOT applied, the status is REVALIDATION_REQUIRED and nothing is confirmed until an operator approves an ROI again.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ from backend.detection.filters import ROIZone
 APPROVED = "APPROVED"
 NOT_CONFIGURED = "NOT_CONFIGURED"
 DISABLED = "DISABLED_IN_SETTINGS"
+REVALIDATION = "REVALIDATION_REQUIRED"
 
 REGISTERED_CAMERA = "REGISTERED_CAMERA"
 SAVED_CAMERA_ROI = "SAVED_CAMERA_ROI"
@@ -35,12 +40,13 @@ FULL_FRAME = "FULL_FRAME_FALLBACK"
 
 @dataclass(frozen=True)
 class RoiDecision:
-    status: str                       # APPROVED | NOT_CONFIGURED | DISABLED_IN_SETTINGS
+    status: str                       # APPROVED | NOT_CONFIGURED | DISABLED_IN_SETTINGS | REVALIDATION_REQUIRED
     source: str                       # REGISTERED_CAMERA | SAVED_CAMERA_ROI | FULL_FRAME_FALLBACK
     zones: list[dict] = field(default_factory=list)   # zones actually applied (normalised ROIZone dicts)
     name: str = ""                    # include-zone names, ";"-separated ("" for the full frame)
     configuration_id: str = ""        # "<kind>:<camera>#<hash of the zones>" so a later ROI change is traceable
     note: str = ""
+    reference_size: Optional[list[int]] = None   # [w, h] of the picture the ROI was drawn on, when known
 
     @property
     def approved(self) -> bool:
@@ -68,8 +74,10 @@ def _config_id(kind: str, camera_id: str, zones: list[dict]) -> str:
 
 
 def decide(camera_id: Optional[str], camera: Optional[dict[str, Any]], saved_zones: Any,
-           roi_enabled: bool = True) -> RoiDecision:
-    """``camera`` = the registered camera row (or None); ``saved_zones`` = settings["roi:<camera_id>"] (or None)."""
+           roi_enabled: bool = True, *, frame_size: Optional[tuple[int, int]] = None,
+           reference_size: Optional[Any] = None, aspect_tolerance: float = 0.02) -> RoiDecision:
+    """``camera`` = the registered camera row (or None); ``saved_zones`` = settings["roi:<camera_id>"] (or None);
+    ``frame_size`` = this video's (w, h); ``reference_size`` = (w, h) the ROI was drawn on, if recorded."""
     found: Optional[tuple[str, str, list[dict]]] = None
     if camera_id and camera is not None:
         found = (REGISTERED_CAMERA, "camera", _clean(camera.get("roi")))
@@ -80,11 +88,19 @@ def decide(camera_id: Optional[str], camera: Optional[dict[str, Any]], saved_zon
     if not roi_enabled:
         return RoiDecision(DISABLED, found[0] if found else FULL_FRAME, [], "", "",
                            "ROI filtering is switched off in Settings: the whole frame is analysed.")
+    ref = [int(v) for v in reference_size[:2]] if reference_size else None
     if found and includes:
         src, kind, zones = found
+        from backend.sampling.roi_calibration import aspect_mismatch
+        if aspect_mismatch(frame_size, ref, aspect_tolerance):
+            return RoiDecision(REVALIDATION, src, [], "", _config_id(kind, camera_id or "", zones),
+                               f"The ROI of camera {camera_id} was drawn on a {ref[0]}x{ref[1]} picture but this video is "
+                               f"{frame_size[0]}x{frame_size[1]} (different aspect ratio): the camera view may have "
+                               "changed, so the ROI was not applied. Approve an ROI again for this view. Nothing is "
+                               "confirmed until then.", ref)
         return RoiDecision(APPROVED, src, zones, ";".join(z["name"] for z in includes),
                            _config_id(kind, camera_id or "", zones),
-                           f"The ROI saved for camera {camera_id} was applied automatically.")
+                           f"The ROI saved for camera {camera_id} was applied automatically.", ref)
     excludes = [z for z in (found[2] if found else []) if z["mode"] == "exclude"]
     if not camera_id:
         why = "No camera was given for this upload"

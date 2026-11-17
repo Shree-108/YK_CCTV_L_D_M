@@ -75,6 +75,8 @@ export interface SampledFrame {
   inference_ms: number | null
   image_size: [number, number] | null
   outside_roi_ignored: number | null
+  /** Set when an ROI with a ground area was applied: every raw detection classified by its ground-contact point. */
+  roi_counts?: RoiCounts | null
   planned_frame_idx: number | null
   sampling_note: string | null
   download_original_url: string | null
@@ -83,15 +85,23 @@ export interface SampledFrame {
   diagnostic_url?: string | null
 }
 
+export interface RoiCounts { raw: number; inside_roi: number; outside_roi: number; review_required: number; confirmed: number }
+
 export interface RoiPolicy {
-  status: 'APPROVED' | 'NOT_CONFIGURED' | 'DISABLED_IN_SETTINGS'
-  source: 'REGISTERED_CAMERA' | 'SAVED_CAMERA_ROI' | 'FULL_FRAME_FALLBACK'
+  status: 'APPROVED' | 'NOT_CONFIGURED' | 'DISABLED_IN_SETTINGS' | 'REVALIDATION_REQUIRED'
+  source: 'REGISTERED_CAMERA' | 'SAVED_CAMERA_ROI' | 'FULL_FRAME_FALLBACK' | 'OPERATOR_APPROVED_FOR_JOB'
   zones: RoiZone[]
   name: string
   configuration_id: string
   note: string
   approved: boolean
+  /** [w, h] of the screenshot the ROI was drawn on (when known) */
+  reference_size?: [number, number] | null
+  reference_idx?: number
+  approved_at?: string
 }
+
+export interface RoiApproveBody { zones: RoiZone[]; reference_idx: number; save_for_camera?: boolean }
 
 /** analysis_summary.csv / .json of a job (backend/sampling/detection_report.py SUMMARY_FIELDS). */
 export interface SampledReportSummary {

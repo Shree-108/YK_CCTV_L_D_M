@@ -4,7 +4,7 @@
 // four screenshots (original + annotated), summary and reports. Nothing to click after the drop.
 // Logic (validation, duplicate-drop guard, lifecycle, labels) lives in frontend/lib/autoAnalysis.ts (unit-tested).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
+import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, PenLine, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
 import { downloadAuthed, url } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SampledFrame, SampledJob, SampledStage } from '../../api/sampledTypes'
@@ -12,7 +12,7 @@ import type { RoiZone } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { cx, dateTime, duration, num, pct } from '../../lib/format'
 import {
-  DEFAULTS_KEY, ID_RE, LIFECYCLE_STEPS, STORE_RE, cleanDefaults, createAutoUploader, isTerminal, overallLabel, resultsReady,
+  DEFAULTS_KEY, ID_RE, LIFECYCLE_STEPS, STORE_RE, canCalibrate, cleanDefaults, createAutoUploader, isTerminal, overallLabel, resultsReady,
   roiLabel, screenshotFacts, stepIndex, validateVideo, type Lifecycle, type UploadDefaults,
 } from '../../lib/autoAnalysis'
 import { lockedFor, useApp } from '../../stores/app'
@@ -21,6 +21,7 @@ import { MetricCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState } from '../../components/ui/states'
 import { DropZone, litterName } from '../detection/common'
 import { CsvPreview, OUTCOME } from './shared'
+import { RoiCalibration, RoiLegend, RoiOverlay, frameSize } from './roi'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v,.mov,.mp4,.webm'
 const SEVERITY_TONE: Record<string, Tone> = { HIGH: 'crit', MEDIUM: 'warn', LOW: 'neutral' }
@@ -143,7 +144,7 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
                 <Input value={defaults.store_id} maxLength={64} placeholder="none" onChange={(e) => update({ store_id: e.target.value })} />
               </Field>
             </div>
-            <p className="mt-2 text-[12px] text-fg-3">Without a camera that has a saved ROI, the whole frame is analysed and the ROI status says NOT_CONFIGURED.</p>
+            <p className="mt-2 text-[12px] text-fg-3">Without a camera that has a saved ROI, the result is ROI_NOT_CONFIGURED (never reported as clean) and you can draw and approve the monitored ground area on the screenshots afterwards.</p>
           </details>
         </div>
       </Panel>
@@ -152,7 +153,7 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
           {[
             'The video is checked and uploaded; the analysis is created at the same time.',
             'Four screenshots are taken at 10 %, 35 %, 65 % and 90 % of the video. An unreadable frame is replaced by the nearest readable one (recorded).',
-            'The ROI saved for the camera is applied. Without one, the whole frame is analysed and marked NOT_CONFIGURED.',
+            'The approved ROI saved for the camera is applied. Without one, the result is ROI_NOT_CONFIGURED and you draw and approve the ROI on a screenshot.',
             'The litter model analyses the four screenshots. The same object seen in several screenshots is counted once.',
             'Annotated screenshots, a summary and a CSV report appear here automatically.',
           ].map((t, i) => (
@@ -178,6 +179,10 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
   const s = job.summary
   const roi = roiLabel(job.roi_policy, job.camera_id)
   const overall = overallLabel(s?.overall_analysis_status)
+  const roiApproved = !!job.roi_policy?.approved
+  const calibratable = canCalibrate(job)
+  const [editRoi, setEditRoi] = useState(false)
+  const showCalibration = calibratable && (!roiApproved || editRoi)
   const cancel = async () => {
     setCancelling(true)
     try { await Api.sampledCancel(job.id); invalidate(`sampled:job:${job.id}`) } catch (e) { toast({ tone: 'crit', title: 'Could not cancel', body: (e as Error).message }) } finally { setCancelling(false) }
@@ -201,22 +206,26 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
               <span>{job.error}{l === 'FAILED' ? ' This video has not been reported as clean.' : ''}</span></p>
           )}
           {job.roi_policy && (
-            <p className={cx('flex gap-2 rounded-md px-3 py-2 text-[12.5px]', roi.tone === 'ok' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn')}>
-              <Layers className="mt-0.5 size-3.5 shrink-0" aria-hidden /><span><b className="font-medium">ROI: {roi.text}.</b> {job.roi_policy.note}</span>
-            </p>
+            <div className={cx('flex flex-wrap items-start gap-2 rounded-md px-3 py-2 text-[12.5px]', roi.tone === 'ok' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn')}>
+              <Layers className="mt-0.5 size-3.5 shrink-0" aria-hidden /><span className="min-w-0 flex-1"><b className="font-medium">ROI: {roi.text}.</b> {job.roi_policy.note}</span>
+              {calibratable && roiApproved && !editRoi && <Button size="sm" icon={PenLine} onClick={() => setEditRoi(true)}>Edit ROI</Button>}
+            </div>
           )}
         </div>
       </Panel>
 
+      {showCalibration && <RoiCalibration key={job.roi_policy?.configuration_id ?? 'none'} job={job} onDone={() => setEditRoi(false)} />}
+
       {ready && s && (
         <Panel title="Summary" icon={Layers} subtitle={s.note}>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-            <MetricCard label="Total detected objects" value={num(s.total_objects_detected)} tone={s.total_objects_detected ? 'crit' : undefined} hint="confirmed, all screenshots" />
+            <MetricCard label={roiApproved ? 'Total detected objects' : 'Full-frame detections (unverified)'} value={num(s.total_objects_detected)}
+              tone={s.total_objects_detected ? (roiApproved ? 'crit' : 'warn') : undefined} hint={roiApproved ? 'confirmed inside the ROI, all screenshots' : 'no approved ROI: review only, not counted as litter'} />
             <MetricCard label="Estimated unique objects" value={num(s.unique_objects_estimated)} hint="same object counted once" />
             <MetricCard label="High severity" value={num(s.total_high_severity)} tone={s.total_high_severity ? 'crit' : undefined} hint="per unique object" />
             <MetricCard label="Medium severity" value={num(s.total_medium_severity)} tone={s.total_medium_severity ? 'warn' : undefined} />
             <MetricCard label="Low severity" value={num(s.total_low_severity)} />
-            <MetricCard label="ROI status" value={job.roi_policy?.status.replace(/_/g, ' ') ?? '—'} tone={roi.tone === 'ok' ? 'ok' : 'warn'} />
+            <MetricCard label="ROI status" value={job.roi_policy ? (roiApproved ? 'APPROVED ROI' : job.roi_policy.status === 'REVALIDATION_REQUIRED' ? 'REVALIDATION REQUIRED' : 'ROI_NOT_CONFIGURED') : '—'} tone={roi.tone === 'ok' ? 'ok' : 'warn'} />
             <MetricCard label="Analysis duration" value={typeof s.processing_duration_seconds === 'number' ? `${num(s.processing_duration_seconds, 1)} s` : '—'} />
             <MetricCard label="Result" value={overall.text} tone={overall.tone} hint={`${s.screenshots_analysed} of ${s.screenshots_planned} screenshots analysed`} />
           </div>
@@ -233,8 +242,9 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
 
       {job.frames.some((f) => f.status !== 'planned') && (
         <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}>
+          <RoiLegend className="mb-3" />
           <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)}
-            zones={f.roi ?? job.roi_policy?.zones ?? job.roi ?? []} />)}</div>
+            zones={f.roi ?? job.roi_policy?.zones ?? job.roi ?? []} roiApproved={roiApproved} size={frameSize(job, f.idx)} />)}</div>
         </Panel>
       )}
 
@@ -252,29 +262,17 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
   )
 }
 
-/** The camera's saved ROI drawn over the untouched original (green = pavement, red dashed = exclusion). The SVG uses
- * the frame's own pixel size as viewBox with "meet", which is exactly how object-contain places the picture. */
-function RoiOverlay({ zones, size }: { zones: RoiZone[]; size: [number, number] }) {
-  const [w, h] = size
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="pointer-events-none absolute inset-0 size-full" aria-hidden>
-      {zones.map((z, i) => (
-        <polygon key={i} points={z.polygon.map(([x, y]) => `${x * w},${y * h}`).join(' ')}
-          fill={z.mode === 'include' ? 'rgba(60,200,60,0.12)' : 'rgba(220,40,40,0.16)'}
-          stroke={z.mode === 'include' ? 'rgb(60,200,60)' : 'rgb(220,40,40)'} strokeWidth={Math.max(2, w / 640)}
-          strokeDasharray={z.mode === 'include' ? undefined : `${w / 160} ${w / 240}`} vectorEffect="non-scaling-stroke" />
-      ))}
-    </svg>
-  )
-}
-
-function AutoFrameCard({ frame, done, zones }: { frame: SampledFrame; done: boolean; zones: RoiZone[] }) {
+export function AutoFrameCard({ frame, done, zones, roiApproved, size }: { frame: SampledFrame; done: boolean; zones: RoiZone[]; roiApproved?: boolean; size?: [number, number] | null }) {
   const facts = screenshotFacts(frame)
   const o = frame.outcome ? OUTCOME[frame.outcome] : null
   const pending = !done && !frame.outcome
   const [showDiag, setShowDiag] = useState(false)
   const pav = facts.pavement
-  const overlay = pav?.active && frame.image_size && zones.length ? <RoiOverlay zones={zones} size={frame.image_size} /> : null
+  const dims = frame.image_size ?? size ?? null
+  // the approved ROI over the untouched original (the annotated JPG has the same polygon drawn in by the server)
+  const overlay = (roiApproved || pav?.active) && dims && zones.some((z) => z.mode === 'include') ? <RoiOverlay zones={zones} size={dims} /> : null
+  const rc = frame.roi_counts
+  const unverified = facts.roiUnavailable ? frame.detections.filter((d) => d.status === 'confirmed').length : 0
   const image = (src: string | null, label: string, dl: string | null, extra?: ReactNode) => (
     <figure className="flex min-w-0 flex-col gap-1">
       <div className="relative aspect-video overflow-hidden rounded-md bg-video">
@@ -328,7 +326,18 @@ function AutoFrameCard({ frame, done, zones }: { frame: SampledFrame; done: bool
           )}
         </div>
       )}
-      {facts.roiUnavailable && o && <p className="flex gap-1.5 text-[12px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />{o.hint}</p>}
+      {rc && roiApproved && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[12px]" aria-label="Detections by ROI">
+          <Badge tone="ok">APPROVED ROI</Badge>
+          <Badge title="All model detections on this screenshot (full frame)">{rc.raw} raw</Badge>
+          <Badge tone="info" title="Ground-contact point inside the approved ROI">{rc.inside_roi} inside ROI</Badge>
+          <Badge title="Excluded from pavement-litter confirmation; kept in the CSV">{rc.outside_roi} outside ROI</Badge>
+          <Badge tone={rc.review_required ? 'warn' : 'neutral'} title="Inside the ROI but below the confirmed threshold">{rc.review_required} review</Badge>
+          <Badge tone={rc.confirmed ? 'crit' : 'neutral'}>{rc.confirmed} confirmed</Badge>
+        </div>
+      )}
+      {facts.roiUnavailable && o && <p className="flex gap-1.5 text-[12px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />{o.hint}
+        {unverified > 0 ? ` ${unverified} full-frame detection${unverified === 1 ? '' : 's'} (unverified, not counted).` : ''}</p>}
       {facts.analysed && (
         facts.count === 0 ? <EmptyState compact title="No litter detected" body={facts.possible ? `${facts.possible} possible object(s) below the confirmed threshold.` : undefined} /> : (
           <div className="flex flex-col gap-1.5">

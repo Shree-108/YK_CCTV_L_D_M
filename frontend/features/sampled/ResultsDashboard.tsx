@@ -10,7 +10,7 @@ import { downloadAuthed, url } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SampledAnalysisRow, SampledDetectionRow, SampledHourlyRow } from '../../api/sampledTypes'
 import { useQuery } from '../../hooks/useQuery'
-import { dateTime, dayEndIso, dayStartIso, duration, num, pct } from '../../lib/format'
+import { cx, dateTime, dayEndIso, dayStartIso, duration, num, pct } from '../../lib/format'
 import { lockedFor, useApp } from '../../stores/app'
 import { Badge, Button, Field, Input, PageHeader, Panel, Segmented, Select, Tabs } from '../../components/ui/primitives'
 import { BarList } from '../../components/ui/charts'
@@ -18,7 +18,10 @@ import { KpiCard, MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState, LoadingState, QueryView } from '../../components/ui/states'
 import { litterName } from '../detection/common'
+import { canCalibrate, roiLabel } from '../../lib/autoAnalysis'
 import { CsvPreview, FrameCard, STATE } from './shared'
+import { AutoFrameCard } from './AutoAnalysis'
+import { RoiLegend, frameSize } from './roi'
 
 export default function ResultsDashboard() {
   const ov = useQuery('sampled:overview', Api.sampledOverview, { poll: 10000 })
@@ -54,6 +57,9 @@ export default function ResultsDashboard() {
           <QueryView q={ov} isEmpty={(d) => !d.latest} empty={<EmptyState icon={FileVideo} compact title="No completed analysis yet" body="Analyse a video to see its four screenshots here." />}>
             {(d) => {
               const l = d.latest!
+              const auto = l.mode === 'auto'
+              const roi = roiLabel(l.roi_policy, l.camera_id)
+              const approved = !!l.roi_policy?.approved
               return (
                 <div className="flex flex-col gap-3">
                   {d.newest_other && (
@@ -69,7 +75,20 @@ export default function ResultsDashboard() {
                     <MetricCard label="Litter detected" value={l.counts?.litter ?? 0} tone={l.counts?.litter ? 'crit' : 'ok'}
                       hint={Object.entries(l.counts?.by_class ?? {}).map(([k, v]) => `${v}× ${litterName(k)}`).join(', ') || 'no litter'} />
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2">{l.frames.map((f) => <FrameCard key={f.idx} frame={f} compact />)}</div>
+                  {auto && l.roi_policy && (
+                    <div className={cx('flex flex-wrap items-center gap-2 rounded-md px-3 py-2 text-[12.5px]', roi.tone === 'ok' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn')}>
+                      <Badge tone={roi.tone === 'ok' ? 'ok' : 'warn'}>{approved ? 'APPROVED ROI' : l.roi_policy.status === 'REVALIDATION_REQUIRED' ? 'REVALIDATION REQUIRED' : 'ROI_NOT_CONFIGURED'}</Badge>
+                      <span className="min-w-0 flex-1">{roi.text}</span>
+                      {canCalibrate(l) && !approved && <Link href={`/detect/video?job=${l.id}`} className="font-medium underline">Define the monitoring ROI →</Link>}
+                    </div>
+                  )}
+                  {auto ? (
+                    <>
+                      <RoiLegend />
+                      <div className="grid gap-3 xl:grid-cols-2">{l.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done
+                        zones={f.roi ?? l.roi_policy?.zones ?? l.roi ?? []} roiApproved={approved} size={frameSize(l, f.idx)} />)}</div>
+                    </>
+                  ) : <div className="grid gap-3 md:grid-cols-2">{l.frames.map((f) => <FrameCard key={f.idx} frame={f} compact />)}</div>}
                 </div>
               )
             }}

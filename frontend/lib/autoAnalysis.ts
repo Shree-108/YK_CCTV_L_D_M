@@ -103,12 +103,20 @@ export interface RoiPolicyLike { status: string; source: string; name?: string; 
 export function roiLabel(p: RoiPolicyLike | null | undefined, cameraId?: string | null): { text: string; tone: 'ok' | 'warn' | 'neutral' } {
   if (!p) return { text: 'Not recorded', tone: 'neutral' }
   if (p.status === 'APPROVED') {
+    if (p.source === 'OPERATOR_APPROVED_FOR_JOB') return { text: 'Approved ROI (drawn by the operator for this video)', tone: 'ok' }
     const where = p.source === 'REGISTERED_CAMERA' ? 'registered camera' : 'saved camera ROI'
     return { text: `Approved ROI (${where}${cameraId ? ` ${cameraId}` : ''})`, tone: 'ok' }
   }
+  if (p.status === 'REVALIDATION_REQUIRED') return { text: 'Camera ROI needs revalidation (view changed): not applied', tone: 'warn' }
   if (p.status === 'DISABLED_IN_SETTINGS') return { text: 'ROI filtering off in Settings (whole frame)', tone: 'warn' }
   if (p.status === 'CONFIRMED_BY_OPERATOR') return { text: 'Confirmed by operator', tone: 'ok' }
-  return { text: 'Not configured: whole frame analysed', tone: 'warn' }
+  return { text: 'ROI_NOT_CONFIGURED: no monitored ground area approved', tone: 'warn' }
+}
+
+/** Can the operator draw and approve an ROI for this completed automatic job? Never when a camera ROI is in force. */
+export function canCalibrate(job: { mode?: string; lifecycle?: Lifecycle; roi_policy?: RoiPolicyLike | null } | null | undefined): boolean {
+  if (!job || job.mode !== 'auto' || job.lifecycle !== 'COMPLETED' || !job.roi_policy) return false
+  return !job.roi_policy.approved || job.roi_policy.source === 'OPERATOR_APPROVED_FOR_JOB'
 }
 
 const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' }> = {
@@ -117,6 +125,8 @@ const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' }> = 
   INCOMPLETE_LITTER_OBSERVED: { text: 'Litter observed (incomplete analysis)', tone: 'crit' },
   INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS: { text: 'Incomplete: no litter in the readable screenshots', tone: 'warn' },
   FAILED: { text: 'Failed', tone: 'crit' },
+  PAVEMENT_ROI_NOT_CONFIGURED: { text: 'ROI_NOT_CONFIGURED: not reported as clean', tone: 'warn' },
+  PAVEMENT_ROI_FRAME_MISMATCH: { text: 'ROI revalidation needed: not reported as clean', tone: 'warn' },
 }
 
 export const overallLabel = (s: string | undefined | null) => (s && OVERALL[s]) || { text: s || '—', tone: 'warn' as const }

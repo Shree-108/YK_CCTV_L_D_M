@@ -95,7 +95,7 @@ test('progress steps follow the server lifecycle', () => {
 test('ROI and overall status labels never present the full frame as an approved ROI', () => {
   assert.deepEqual(roiLabel({ status: 'APPROVED', source: 'REGISTERED_CAMERA' }, 'CAM-1'), { text: 'Approved ROI (registered camera CAM-1)', tone: 'ok' })
   assert.equal(roiLabel({ status: 'NOT_CONFIGURED', source: 'FULL_FRAME_FALLBACK' }).tone, 'warn')
-  assert.match(roiLabel({ status: 'NOT_CONFIGURED', source: 'FULL_FRAME_FALLBACK' }).text, /Not configured/)
+  assert.match(roiLabel({ status: 'NOT_CONFIGURED', source: 'FULL_FRAME_FALLBACK' }).text, /^ROI_NOT_CONFIGURED/)
   assert.equal(overallLabel('NO_LITTER_OBSERVED').tone, 'ok')
   assert.equal(overallLabel('INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS').tone, 'warn')
   assert.equal(overallLabel('FAILED').tone, 'crit')

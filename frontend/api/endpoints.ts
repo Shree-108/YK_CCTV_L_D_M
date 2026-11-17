@@ -6,7 +6,7 @@ import type {
   TestLabResponse, VideoResult,
 } from './types'
 import type {
-  RoiConfirmBody, SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
+  RoiApproveBody, RoiConfirmBody, SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
   SampledMedia, SampledMonth, SampledOverview,
 } from './sampledTypes'
 
@@ -106,6 +106,8 @@ export const Api = {
   sampledJob: (id: string) => api<SampledJob>(`/api/sampled/jobs/${encodeURIComponent(id)}`),
   sampledConfirmRoi: (id: string, body: RoiConfirmBody) =>
     api<{ job_id: string; state: string; stage: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/roi`, { method: 'PUT', body }),
+  sampledApproveRoi: (id: string, body: RoiApproveBody) =>
+    api<{ job_id: string; state: string; stage: string; saved_for_camera: boolean }>(`/api/sampled/jobs/${encodeURIComponent(id)}/roi/approve`, { method: 'POST', body }),
   sampledCancel: (id: string) => api<{ job_id: string; state: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   sampledOverview: () => api<SampledOverview>('/api/sampled/reports/overview'),
   sampledMonth: (month: string, by: 'completion' | 'recording') => api<SampledMonth>(`/api/sampled/reports/months/${month}${qs({ by })}`),

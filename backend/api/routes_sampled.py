@@ -225,6 +225,55 @@ def confirm_roi(job_id: str, body: RoiConfirmIn, request: Request,
     return {"job_id": out["id"], "state": out["state"], "stage": out["stage"]}
 
 
+class RoiApproveIn(BaseModel):
+    """Operator ROI calibration of a completed automatic analysis (backend/sampling/roi_calibration.py)."""
+    model_config = ConfigDict(extra="forbid")
+    zones: list[ROIZone] = Field(..., min_length=1, max_length=10)
+    reference_idx: int = Field(..., ge=1, le=4)
+    save_for_camera: bool = False
+
+
+@router.post("/jobs/{job_id}/roi/approve", status_code=202, dependencies=OPERATOR)
+def approve_roi(job_id: str, body: RoiApproveIn, request: Request,
+                authorization: Optional[str] = Header(default=None), x_admin_token: Optional[str] = Header(default=None),
+                state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """Approve the monitored ground polygon drawn on one screenshot; it is applied to all four screenshots of this
+    job and they are analysed again. With ``save_for_camera`` it also becomes the ROI of the job's camera ID (with
+    the picture size, so a different view later needs revalidation)."""
+    from backend.sampling.roi_calibration import InvalidPolygon
+    r = _runner(state)
+    job = r.repo.job(job_id)
+    if not job:
+        raise HTTPException(404, "Analysis not found")
+    if state.engine is None and not job.get("model_version"):
+        raise HTTPException(503, "No detection model is loaded; the analysis cannot run.")
+    cam_id = job.get("camera_id")
+    if body.save_for_camera:
+        if not cam_id:
+            raise HTTPException(422, "This analysis has no Camera ID: the ROI is kept for this video only.")
+        if state.db.get_camera(cam_id):           # a registered camera's ROI is admin configuration (as PUT /roi)
+            require_admin_here(request, authorization, x_admin_token, state, off_mode="open")
+    zones = [z.model_dump() for z in body.zones]
+    try:
+        out = r.approve_roi(job_id, zones, body.reference_idx)
+    except InvalidPolygon as exc:
+        raise HTTPException(422, f"Invalid ROI polygon: {exc}") from None
+    except JobError as exc:
+        raise HTTPException(409 if "state" in str(exc) else 422, str(exc)) from None
+    if body.save_for_camera:
+        size = ((out.get("counts") or {}).get("roi_policy") or {}).get("reference_size")
+        cam = state.db.get_camera(cam_id)
+        if cam:
+            cam["roi"] = zones
+            state.db.upsert_camera(cam)
+            state.sync_cameras()
+        else:
+            state.db.set_setting(f"roi:{cam_id}", zones)
+        state.db.set_setting(f"roi_ref:{cam_id}", size)
+        state.db.log_event("info", "roi", f"ROI saved from analysis {job_id} ({len(zones)} zone(s), {size})", cam_id)
+    return {"job_id": out["id"], "state": out["state"], "stage": out["stage"], "saved_for_camera": body.save_for_camera}
+
+
 @router.post("/jobs/{job_id}/cancel", dependencies=OPERATOR)
 def cancel_job(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
     try:

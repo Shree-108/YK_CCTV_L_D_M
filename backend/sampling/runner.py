@@ -17,6 +17,11 @@ Modes:
               received -> validating -> sampling -> analysing -> generating_images -> generating_csv -> completed
           Only one active automatic job per video *content* (SHA-256): a repeated upload of the same file while it is
           being analysed returns the running job instead of starting a second one.
+Operator ROI calibration (auto mode, backend/sampling/roi_calibration.py): a completed automatic job whose ROI is not
+approved (no camera ROI, or one that needs revalidation) is reported ROI_NOT_CONFIGURED per screenshot - never
+NO_LITTER, and its full-frame detections are not counted as litter. The operator can draw and approve a polygon on
+one of the four screenshots (approve_roi); it is stored on the job (source OPERATOR_APPROVED_FOR_JOB), applied to all
+four screenshots of that video, and the same screenshots are analysed again (queued -> analysing -> ... -> completed).
 Every completed job also gets reports/detection_report.csv, reports/analysis_summary.csv and
 reports/analysis_summary.json (backend/sampling/detection_report.py), written before the job is marked done.
 
@@ -43,7 +48,7 @@ from backend.alerts.manager import compute_severity
 from backend.database.db import utcnow
 from backend.detection import pavement
 from backend.detection.filters import ROISet, ROIZone
-from backend.sampling import SAMPLE_COUNT, auto_roi, detection_report, report
+from backend.sampling import SAMPLE_COUNT, auto_roi, detection_report, report, roi_calibration
 from backend.sampling.extract import Extracted, Stopped, extract
 from backend.sampling.plan import (STRATEGY_FIXED, STRATEGY_RANDOM, Sample, new_seed, parse_recording_start,
                                    plan_fixed, plan_samples)
@@ -230,6 +235,60 @@ class SampledRunner:
         self._q.put(("analyse", job_id))
         return self.repo.job(job_id)  # type: ignore[return-value]
 
+    def approve_roi(self, job_id: str, zones: list[dict], reference_idx: int) -> dict[str, Any]:
+        """Operator-approved ROI for a completed automatic job without an approved camera ROI (or re-approval of an
+        earlier operator ROI of this job). Validates the polygon on the reference screenshot's size, stores it on
+        the job, and queues a re-analysis of the same four screenshots. Raises KeyError / JobError /
+        roi_calibration.InvalidPolygon."""
+        job = self.repo.job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.get("mode") != "auto":
+            raise JobError("Only automatic analyses use this ROI approval; the operator workflow confirms its ROI "
+                           "before analysis.")
+        if job["state"] != "done":
+            raise JobError(f"The ROI can be approved once the analysis has completed (state: {job['state']}).")
+        old = (job.get("counts") or {}).get("roi_policy") or {}
+        if old.get("approved") and old.get("source") != roi_calibration.OPERATOR_SOURCE:
+            raise JobError(f"This analysis already uses the approved ROI of camera {job.get('camera_id')}. "
+                           "Change that ROI on the Cameras page instead.")
+        frames = {f["idx"]: f for f in self.repo.frames(job_id)}
+        ref = frames.get(reference_idx)
+        if ref is None or ref["status"] != "saved" or not ref.get("original_path"):
+            raise JobError(f"Screenshot {reference_idx} is not available as the reference picture.")
+        img = cv2.imread(ref["original_path"])
+        if img is None:
+            raise JobError(f"Screenshot {reference_idx} could not be read back.")
+        h, w = img.shape[:2]
+        clean = [ROIZone(**z).model_dump() for z in zones]
+        roi_calibration.validate_zones(clean, w, h)
+        includes = [z for z in clean if z["mode"] == "include"]
+        policy = auto_roi.RoiDecision(
+            auto_roi.APPROVED, roi_calibration.OPERATOR_SOURCE, clean, ";".join(z["name"] for z in includes),
+            auto_roi._config_id("job", job_id, clean),
+            f"ROI drawn and approved by the operator on screenshot {reference_idx} ({w}x{h}) and applied to all "
+            "screenshots of this video. It is not reused for other videos unless it is saved for the camera.",
+            [w, h]).as_dict() | {"reference_idx": reference_idx, "approved_at": utcnow(),
+                                 "replaces": {k: old.get(k) for k in ("status", "source", "configuration_id")}}
+        with self._lock:
+            cur = self.repo.job(job_id)
+            if cur is None or cur["state"] != "done":
+                raise JobError("The analysis changed state; reload and try again.")
+            for i, f in frames.items():
+                if f["status"] == "saved":
+                    self.repo.update_frame(job_id, i, roi=None, roi_status="approved", outcome=None, result=None,
+                                           detection_count=0, error=None)
+            # the re-analysis writes its own detection rows; the previous full-frame rows of this job go
+            self.state.db._write("DELETE FROM detections WHERE job_id=? AND source_type='sample'", (job_id,))
+            self.repo.update_job(job_id, roi=clean, roi_source="operator_job", roi_status="approved",
+                                 counts={**(cur.get("counts") or {}), "roi_policy": policy}, state="queued",
+                                 stage="analysing", finished_at=None, error=None)
+        self.state.db.log_event("info", "sampled", f"ROI approved by the operator for analysis {job_id} "
+                                f"({len(clean)} zone(s), reference screenshot {reference_idx}); re-analysing",
+                                job.get("camera_id"))
+        self._q.put(("analyse", job_id))
+        return self.repo.job(job_id)  # type: ignore[return-value]
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         # Decided under the lock: the worker moves a job from running to awaiting_roi under the same lock after a
         # last cancel check (_await_roi), so a cancel can never fall between the two and be lost.
@@ -371,7 +430,12 @@ class SampledRunner:
         cam = self.state.db.get_camera(cam_id) if cam_id else None
         saved = None if cam or not cam_id else self.state.db.get_setting(f"roi:{cam_id}")
         settings = self.state.settings_with(cam, None)
-        d = auto_roi.decide(cam_id, cam, saved, roi_enabled=settings.filters.roi_enabled)
+        media = self.repo.media(job["media_id"]) or {}
+        ref = ((self.state.db.get_setting(f"roi_ref:{cam_id}") if cam_id else None)
+               or settings.pavement.roi_reference_size)
+        d = auto_roi.decide(cam_id, cam, saved, roi_enabled=settings.filters.roi_enabled,
+                            frame_size=(media.get("width") or 0, media.get("height") or 0), reference_size=ref,
+                            aspect_tolerance=settings.pavement.aspect_tolerance)
         counts = job.get("counts") or {}
         with self._lock:
             self._check_cancel(job_id)
@@ -425,9 +489,13 @@ class SampledRunner:
         (out / "annotated").mkdir(exist_ok=True)
         whole = job.get("roi_source") == "whole_frame"
         approved = roi_approved_for(job)
+        policy = (job.get("counts") or {}).get("roi_policy") or {}
+        auto_unverified = job.get("mode") == "auto" and not approved     # never a clean result without an ROI
+        unverified_outcome = ("ROI_FRAME_MISMATCH" if policy.get("status") == auto_roi.REVALIDATION
+                              else pavement.ROI_NOT_CONFIGURED)
         location = " · ".join(x for x in (job.get("store_id"), job.get("camera_id")) if x)
         totals = {"screenshots_planned": job["sample_count"], "screenshots_extracted": 0, "screenshots_analysed": 0,
-                  "litter": 0, "by_class": {}, "alerts": 0, "outcomes": {}}
+                  "litter": 0, "by_class": {}, "alerts": 0, "outcomes": {}, "unverified_full_frame": 0}
         annotated_frames: list[tuple[int, Any, Path]] = []
         diagnostic_frames: list[tuple[Path, Any]] = []
         for f in self.repo.frames(job_id):
@@ -446,13 +514,21 @@ class SampledRunner:
                     raise RuntimeError("the saved screenshot could not be read back")
                 zones = None if whole else (f.get("roi") or job.get("roi") or [])
                 roi = ROISet.from_json(zones) if zones else None
+                if approved and roi is not None and roi.includes and roi_calibration.aspect_mismatch(
+                        img.shape[1::-1], policy.get("reference_size"), settings.pavement.aspect_tolerance):
+                    rw, rh = policy["reference_size"]
+                    self.repo.update_frame(job_id, f["idx"], outcome="ROI_FRAME_MISMATCH", error=(
+                        f"This screenshot is {img.shape[1]}x{img.shape[0]} but the ROI was approved on a {rw}x{rh} "
+                        "picture: not analysed."))
+                    continue
                 res = detect_image(engine, img, settings, roi, meta, self.state.db,
                                    self.state.alerts if job["create_alerts"] else None,
                                    job.get("camera_id") or "upload", Path(f["original_path"]).name, job_id,
                                    source_type="sample", frame_idx=f["frame_idx"], video_time_sec=f["video_time_sec"],
                                    session_id=f"{job_id}:s{f['idx']}", create_alerts=bool(job["create_alerts"]),
                                    location=location, roi_approved=approved, want_diagnostic=True,
-                                   camera_registered=cam is not None)
+                                   camera_registered=cam is not None,
+                                   approved_roi_style=approved and roi is not None and bool(roi.includes))
                 annotated = res.pop("annotated")
                 diagnostic = res.pop("diagnostic", None)
                 alerts = res.pop("alerts")
@@ -465,6 +541,12 @@ class SampledRunner:
                         if d.get("track_id") in alert_of:
                             d["alert_id"] = alert_of[d["track_id"]]
                 outcome = "LITTER_DETECTED" if n else "NO_LITTER"
+                if roi is not None and roi.includes and settings.filters.roi_enabled:
+                    h_, w_ = img.shape[:2]
+                    res["roi_counts"] = roi_calibration.tag_membership(
+                        res["detections"], roi, w_, h_, settings.filters.roi_anchor, settings.filters.roi_margin_frac)
+                if auto_unverified:
+                    outcome = unverified_outcome      # full-frame detections are listed for review, never counted
                 pav = res.get("pavement")
                 if pav and pav["status"] in (pavement.ROI_NOT_CONFIGURED, pavement.ROI_FRAME_MISMATCH):
                     outcome = pav["status"]          # never "NO_LITTER", never confirmed litter
@@ -479,10 +561,13 @@ class SampledRunner:
                 if diagnostic is not None:
                     diagnostic_frames.append((Path(res["diagnostic_path"]), diagnostic))
                 totals["screenshots_analysed"] += 1
-                totals["litter"] += n
                 totals["alerts"] += len(alerts)
-                for k, v in res["by_class"].items():
-                    totals["by_class"][k] = totals["by_class"].get(k, 0) + v
+                if outcome in ("LITTER_DETECTED", "NO_LITTER"):
+                    totals["litter"] += n
+                    for k, v in res["by_class"].items():
+                        totals["by_class"][k] = totals["by_class"].get(k, 0) + v
+                else:
+                    totals["unverified_full_frame"] += n
             except Exception as exc:  # noqa: BLE001 - one bad screenshot does not fail the others
                 log.exception("sampled job %s screenshot %s failed", job_id, f["idx"])
                 self.repo.update_frame(job_id, f["idx"], outcome="FAILED", error=str(exc))

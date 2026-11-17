@@ -74,6 +74,7 @@ MATRIX = {
     ("GET", "/api/sampled/media/{media_id}/preview.jpg"): "viewer",
     ("POST", "/api/sampled/jobs"): "operator", ("GET", "/api/sampled/jobs"): "viewer",
     ("GET", "/api/sampled/jobs/{job_id}"): "viewer", ("PUT", "/api/sampled/jobs/{job_id}/roi"): "operator",
+    ("POST", "/api/sampled/jobs/{job_id}/roi/approve"): "operator",
     ("POST", "/api/sampled/jobs/{job_id}/cancel"): "operator",
     ("GET", "/api/sampled/jobs/{job_id}/frames/{idx}/{kind}.jpg"): "viewer",
     ("GET", "/api/sampled/jobs/{job_id}/report.csv"): "admin_if_login",

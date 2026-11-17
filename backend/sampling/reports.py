@@ -53,6 +53,7 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
         "detections": res.get("detections", []), "counts": res.get("counts"), "by_class": res.get("by_class", {}),
         "alert_ids": res.get("alert_ids", []), "inference_ms": res.get("inference_ms"),
         "image_size": res.get("image_size"), "outside_roi_ignored": res.get("outside_roi_ignored"),
+        "roi_counts": res.get("roi_counts"),
         "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
         "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
         "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,
@@ -258,7 +259,9 @@ class Reports:
     def detections(self, *, store: str = "", camera: str = "", cls: str = "", start: str = "", end: str = "",
                    limit: int = 100, offset: int = 0) -> dict[str, Any]:
         """Confirmed litter detections from the four-screenshot analyses, with evidence links."""
-        where, p = ["d.source_type='sample'", "d.status='confirmed'"], []
+        # screenshots without an approved ROI (ROI_NOT_CONFIGURED / ROI_FRAME_MISMATCH) are review material only
+        where, p = ["d.source_type='sample'", "d.status='confirmed'",
+                    "IFNULL(f.outcome,'') NOT IN ('ROI_NOT_CONFIGURED','ROI_FRAME_MISMATCH')"], []
         if store:
             where.append("j.store_id=?"); p.append(store)
         if camera:

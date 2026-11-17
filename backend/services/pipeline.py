@@ -304,7 +304,8 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
                  source_type: str = "image", frame_idx: int = 0, video_time_sec: Optional[float] = None,
                  session_id: Optional[str] = None, create_alerts: Optional[bool] = None,
                  location: str = "", roi_approved: Optional[bool] = None,
-                 want_diagnostic: bool = False, camera_registered: Optional[bool] = None) -> dict[str, Any]:
+                 want_diagnostic: bool = False, camera_registered: Optional[bool] = None,
+                 approved_roi_style: bool = False) -> dict[str, Any]:
     """Detect litter in one image. A still image has no temporal evidence, so
     'confirmed' here means: passed every filter AND confidence >= confirmed_threshold.
     ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
@@ -328,11 +329,11 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
     cam_label = None if camera_id == "upload" else camera_id
     if pav and pav[0] == pavement.GENERAL_IMAGE_MODE:     # the existing view, labelled as not pavement-validated
         annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings),
-                                    extra=["GENERAL IMAGE MODE - not pavement-validated"])
+                                    extra=["GENERAL IMAGE MODE - not pavement-validated"], approved=approved_roi_style)
     elif pav:
         annotated = annotate_pavement(image, dets, roi, pav[0], cam_label)
     else:
-        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings))
+        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings), approved=approved_roi_style)
     alerts_out: list[dict[str, Any]] = []
     if db is not None:
         ts = utcnow()

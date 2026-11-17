@@ -325,11 +325,13 @@ def test_drop_starts_the_whole_analysis_and_reports_exist_at_completion(client, 
     # no camera given -> whole frame, clearly NOT_CONFIGURED, no alerts from unverified full-frame detections
     assert j["roi_policy"]["status"] == "NOT_CONFIGURED" and j["roi_policy"]["source"] == "FULL_FRAME_FALLBACK"
     assert j["create_alerts"] is False and j["counts"]["alerts"] == 0
-    # the fixture holds 19 visually verified litter boxes: the model must find litter in every screenshot
-    assert all(f["outcome"] == "LITTER_DETECTED" for f in j["frames"])
+    # the fixture holds 19 visually verified litter boxes: the model must find litter in every screenshot, but
+    # without an approved ROI that is never pavement-litter confirmation: ROI_NOT_CONFIGURED, listed for review
+    assert all(f["outcome"] == "ROI_NOT_CONFIGURED" and f["detection_count"] > 0 for f in j["frames"])
+    assert j["counts"]["litter"] == 0 and j["counts"]["unverified_full_frame"] >= 4
     s = j["summary"]
     assert s["total_objects_detected"] >= 4 and 1 <= s["unique_objects_estimated"] < s["total_objects_detected"]
-    assert s["overall_analysis_status"] == "LITTER_OBSERVED"
+    assert s["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED" and s["review_required"] == "TRUE"
     assert s["total_high_severity"] + s["total_medium_severity"] + s["total_low_severity"] == s["unique_objects_estimated"]
     # reports were written before COMPLETED and are downloadable
     assert set(j["reports"]) == {"detection_csv", "summary_csv", "summary_json"}
@@ -393,7 +395,8 @@ def test_partly_unreadable_video_completes_as_incomplete(client, tmp_path):
     j, _ = _wait(client, _drop(client, v).json()["job_id"])
     assert j["lifecycle"] == "COMPLETED"
     assert j["frames"][1]["outcome"] == "UNREADABLE" and j["frames"][1]["error"]
-    assert j["summary"]["overall_analysis_status"].startswith("INCOMPLETE_")
+    # no approved ROI: never clean (the old INCOMPLETE_NO_LITTER_... status no longer applies to an unverified job)
+    assert j["summary"]["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED"
     rows = list(csv.DictReader(io.StringIO(client.get(j["reports"]["detection_csv"]).text)))
     shots = [r for r in rows if r["record_type"] == "SCREENSHOT"]
     assert [r["screenshot_analysis_status"] for r in shots][1] == "UNREADABLE" and len(shots) == 4   # failed one kept

@@ -18,8 +18,8 @@ export const OUTCOME: Record<FrameOutcome, { label: string; tone: Tone; hint: st
   ROI_UNCERTAIN: { label: 'ROI uncertain', tone: 'warn', hint: 'Not analysed: the outdoor area was not confirmed for this screenshot.' },
   UNREADABLE: { label: 'Unreadable', tone: 'neutral', hint: 'Not analysed: the decoded picture was corrupted or blank.' },
   FAILED: { label: 'Failed', tone: 'crit', hint: 'Processing failed for this screenshot.' },
-  ROI_NOT_CONFIGURED: { label: 'ROI not configured', tone: 'warn', hint: 'No approved pavement ROI for this camera: pavement-only detection is unavailable. Detections are listed for review; none is confirmed.' },
-  ROI_FRAME_MISMATCH: { label: 'ROI frame mismatch', tone: 'warn', hint: 'The camera ROI was drawn on a frame of a different shape: it is not applied. Nothing is confirmed.' },
+  ROI_NOT_CONFIGURED: { label: 'ROI_NOT_CONFIGURED', tone: 'warn', hint: 'No approved monitoring ROI: litter on the monitored ground cannot be confirmed, and this screenshot is not reported as clean. Full-frame detections are listed for review only.' },
+  ROI_FRAME_MISMATCH: { label: 'ROI revalidation needed', tone: 'warn', hint: 'The ROI was drawn on a picture of a different shape (the camera view may have changed): it is not applied. Nothing is confirmed until an ROI is approved again.' },
 }
 
 export const STATE: Record<SampledState, { label: string; tone: Tone }> = {
