@@ -3,36 +3,34 @@
 // Zero-click video analysis: drop a video -> upload + automatic analysis (one request) -> live progress ->
 // four screenshots (original + annotated), summary and reports. Nothing to click after the drop.
 // Logic (validation, duplicate-drop guard, lifecycle, labels) lives in frontend/lib/autoAnalysis.ts (unit-tested).
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, PenLine, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
 import { downloadAuthed, url } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SampledFrame, SampledJob, SampledStage } from '../../api/sampledTypes'
-import type { RoiZone } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { cx, dateTime, duration, num, pct } from '../../lib/format'
 import {
-  DEFAULTS_KEY, ID_RE, LIFECYCLE_STEPS, STORE_RE, canCalibrate, cleanDefaults, createAutoUploader, isTerminal, overallLabel, resultsReady,
-  roiLabel, screenshotFacts, stepIndex, validateVideo, type Lifecycle, type UploadDefaults,
+  DEFAULTS_KEY, LIFECYCLE_STEPS, cleanDefaults, createAutoUploader, isTerminal, overallLabel, resultsReady,
+  screenshotFacts, stepIndex, validateVideo, type Lifecycle, type UploadDefaults,
 } from '../../lib/autoAnalysis'
 import { lockedFor, useApp } from '../../stores/app'
-import { Badge, Button, Field, Input, Panel, type Tone } from '../../components/ui/primitives'
+import { Badge, Button, Panel, type Tone } from '../../components/ui/primitives'
 import { MetricCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState } from '../../components/ui/states'
 import { DropZone, litterName } from '../detection/common'
+import { Downloads, IdentityBlock, ProcessingBanner } from '../detection/AnalysisOutputs'
 import { CsvPreview, OUTCOME } from './shared'
-import { RoiCalibration, RoiLegend, RoiOverlay, frameSize } from './roi'
+import { StoreCameraSelect } from '../stores/StoreCameraSelect'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v,.mov,.mp4,.webm'
 const SEVERITY_TONE: Record<string, Tone> = { HIGH: 'crit', MEDIUM: 'warn', LOW: 'neutral' }
 const LIFECYCLE_TONE: Record<Lifecycle, Tone> = {
   UPLOADING: 'info', QUEUED: 'neutral', PROCESSING: 'warn', EXTRACTING_SCREENSHOTS: 'warn', RUNNING_DETECTION: 'warn',
-  GENERATING_REPORT: 'warn', COMPLETED: 'ok', FAILED: 'crit', CANCELLED: 'neutral', AWAITING_ROI: 'warn',
+  GENERATING_REPORT: 'warn', COMPLETED: 'ok', FAILED: 'crit', CANCELLED: 'neutral',
 }
 const REPORT_COLS = ['record_type', 'screenshot_number', 'screenshot_timestamp_seconds', 'litter_class', 'confidence_score',
   'severity', 'object_track_id', 'final_classification', 'review_required']
-const PAVEMENT_COLS = ['record_type', 'screenshot_number', 'litter_class', 'confidence_score', 'pavement_outcome',
-  'pavement_reason', 'size_check', 'review_required']
 
 /** Where a stopped job got to (for the progress strip of a FAILED / CANCELLED job). */
 function stageLifecycle(stage: SampledStage): Lifecycle {
@@ -78,7 +76,6 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
   const { toast, canOperate, role, loginOn } = useApp()
   const lock = lockedFor('operator', role, loginOn)
   const health = useQuery('health', Api.health)
-  const cams = useQuery('cameras:list', Api.cameras)
   const [defaults, setDefaults] = useState<UploadDefaults>({ camera_id: '', store_id: '' })
   const [uploading, setUploading] = useState<string | null>(null)
   const [error, setError] = useState<Error | null>(null)
@@ -112,8 +109,6 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
     setDefaults(next)
     saveDefaults(cleanDefaults(next))
   }
-  const camBad = !!defaults.camera_id && !ID_RE.test(defaults.camera_id.trim())
-  const storeBad = !!defaults.store_id && !STORE_RE.test(defaults.store_id.trim())
   const noModel = health.data && !health.data.model
   const exts = (health.data?.limits?.video_extensions ?? ['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.webm']).map((e) => e.slice(1).toUpperCase()).join(', ')
 
@@ -135,16 +130,9 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
           {noModel && <p className="rounded-md bg-crit-bg px-3 py-2 text-[12.5px] text-crit">No detection model is loaded on the server; videos cannot be analysed.</p>}
           <details className="rounded-lg border border-line px-3 py-2" open={!!(defaults.camera_id || defaults.store_id)}>
             <summary className="cursor-pointer text-[12.5px] text-fg-2">Upload defaults (optional, applied to every dropped video)</summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Camera ID" hint={camBad ? 'Letters, digits, - and _ only (max 40).' : 'A camera with a saved ROI is analysed inside that ROI.'}>
-                <Input value={defaults.camera_id} maxLength={40} list="auto-cams" placeholder="none" onChange={(e) => update({ camera_id: e.target.value })} />
-                <datalist id="auto-cams">{cams.data?.cameras.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</datalist>
-              </Field>
-              <Field label="Store ID" hint={storeBad ? 'Letters, digits, spaces, . - _ only (max 64).' : 'Recorded in the report; left blank when not given.'}>
-                <Input value={defaults.store_id} maxLength={64} placeholder="none" onChange={(e) => update({ store_id: e.target.value })} />
-              </Field>
+            <div className="mt-3">
+              <StoreCameraSelect columns={2} value={defaults} onChange={(v) => update(v)} />
             </div>
-            <p className="mt-2 text-[12px] text-fg-3">Without a camera that has a saved ROI, the result is ROI_NOT_CONFIGURED (never reported as clean) and you can draw and approve the monitored ground area on the screenshots afterwards.</p>
           </details>
         </div>
       </Panel>
@@ -153,15 +141,14 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
           {[
             'The video is checked and uploaded; the analysis is created at the same time.',
             'Four screenshots are taken at 10 %, 35 %, 65 % and 90 % of the video. An unreadable frame is replaced by the nearest readable one (recorded).',
-            'The approved ROI saved for the camera is applied. Without one, the result is ROI_NOT_CONFIGURED and you draw and approve the ROI on a screenshot.',
-            'The litter model analyses the four screenshots. The same object seen in several screenshots is counted once.',
+            'The litter model analyses the whole of each screenshot. The same object seen in several screenshots is counted once.',
             'Annotated screenshots, a summary and a CSV report appear here automatically.',
           ].map((t, i) => (
             <li key={i} className="flex gap-3"><span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-line-strong text-[11px] font-semibold text-fg">{i + 1}</span>{t}</li>
           ))}
         </ol>
-        <p className="mt-3 text-[12px] text-fg-3">Four representative screenshots are analysed, not every frame. For every frame, use Full video (tracking).</p>
-        <Button size="sm" variant="ghost" icon={SlidersHorizontal} className="mt-3" onClick={onAdvanced}>Review settings and ROI before analysis</Button>
+        <p className="mt-3 text-[12px] text-fg-3">Four representative screenshots are analysed, not every frame. For every frame and unique litter events, use Full video (tracking).</p>
+        <Button size="sm" variant="ghost" icon={SlidersHorizontal} className="mt-3" onClick={onAdvanced}>Review settings before analysis</Button>
       </Panel>
     </div>
   )
@@ -177,12 +164,7 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
   const current = stepIndex(l, stopped ? stageLifecycle(job.stage) : undefined)
   const ready = resultsReady(job)
   const s = job.summary
-  const roi = roiLabel(job.roi_policy, job.camera_id)
   const overall = overallLabel(s?.overall_analysis_status)
-  const roiApproved = !!job.roi_policy?.approved
-  const calibratable = canCalibrate(job)
-  const [editRoi, setEditRoi] = useState(false)
-  const showCalibration = calibratable && (!roiApproved || editRoi)
   const cancel = async () => {
     setCancelling(true)
     try { await Api.sampledCancel(job.id); invalidate(`sampled:job:${job.id}`) } catch (e) { toast({ tone: 'crit', title: 'Could not cancel', body: (e as Error).message }) } finally { setCancelling(false) }
@@ -203,29 +185,42 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
           <LifecycleSteps current={current} stopped={stopped} />
           {job.error && (
             <p className="flex gap-2 rounded-md bg-crit-bg px-3 py-2 text-[12.5px] text-crit"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              <span>{job.error}{l === 'FAILED' ? ' This video has not been reported as clean.' : ''}</span></p>
+              <span>{job.error}{l === 'FAILED' ? ' FAILED: nothing about litter can be concluded from this video.' : ''}</span></p>
           )}
-          {job.roi_policy && (
-            <div className={cx('flex flex-wrap items-start gap-2 rounded-md px-3 py-2 text-[12.5px]', roi.tone === 'ok' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn')}>
-              <Layers className="mt-0.5 size-3.5 shrink-0" aria-hidden /><span className="min-w-0 flex-1"><b className="font-medium">ROI: {roi.text}.</b> {job.roi_policy.note}</span>
-              {calibratable && roiApproved && !editRoi && <Button size="sm" icon={PenLine} onClick={() => setEditRoi(true)}>Edit ROI</Button>}
-            </div>
-          )}
+          {job.identity && <IdentityBlock identity={job.identity} />}
         </div>
       </Panel>
 
-      {showCalibration && <RoiCalibration key={job.roi_policy?.configuration_id ?? 'none'} job={job} onDone={() => setEditRoi(false)} />}
+      {(job.standard_outputs || l === 'FAILED') && (
+        <Panel title="Standard outputs" icon={FileText} subtitle={job.standard_outputs?.analysis_id ?? undefined}>
+          <div className="flex flex-col gap-3">
+            <ProcessingBanner status={job.standard_outputs?.processing_status ?? 'FAILED'} />
+            {job.standard_outputs && (
+              <>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <MetricCard label="Unique litter events" value={num(job.standard_outputs.unique_events)} tone={job.standard_outputs.unique_events ? 'crit' : undefined} />
+                  <MetricCard label="Frame observations" value={num(job.standard_outputs.frame_observations)} hint="sightings across the four screenshots" />
+                </div>
+                <Downloads items={[
+                  { label: 'Detections CSV', path: job.standard_outputs.urls.detections_csv, filename: `${job.id}_detections.csv` },
+                  { label: 'Summary CSV', path: job.standard_outputs.urls.summary_csv, filename: `${job.id}_summary.csv` },
+                  { label: 'Metadata', path: job.standard_outputs.urls.metadata, filename: `${job.id}_metadata.json` },
+                ]} />
+              </>
+            )}
+          </div>
+        </Panel>
+      )}
 
       {ready && s && (
         <Panel title="Summary" icon={Layers} subtitle={s.note}>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-            <MetricCard label={roiApproved ? 'Total detected objects' : 'Full-frame detections (unverified)'} value={num(s.total_objects_detected)}
-              tone={s.total_objects_detected ? (roiApproved ? 'crit' : 'warn') : undefined} hint={roiApproved ? 'confirmed inside the ROI, all screenshots' : 'no approved ROI: review only, not counted as litter'} />
+            <MetricCard label="Total detected objects" value={num(s.total_objects_detected)}
+              tone={s.total_objects_detected ? 'crit' : undefined} hint="high confidence, all screenshots" />
             <MetricCard label="Estimated unique objects" value={num(s.unique_objects_estimated)} hint="same object counted once" />
             <MetricCard label="High severity" value={num(s.total_high_severity)} tone={s.total_high_severity ? 'crit' : undefined} hint="per unique object" />
             <MetricCard label="Medium severity" value={num(s.total_medium_severity)} tone={s.total_medium_severity ? 'warn' : undefined} />
             <MetricCard label="Low severity" value={num(s.total_low_severity)} />
-            <MetricCard label="ROI status" value={job.roi_policy ? (roiApproved ? 'APPROVED ROI' : job.roi_policy.status === 'REVALIDATION_REQUIRED' ? 'REVALIDATION REQUIRED' : 'ROI_NOT_CONFIGURED') : '—'} tone={roi.tone === 'ok' ? 'ok' : 'warn'} />
             <MetricCard label="Analysis duration" value={typeof s.processing_duration_seconds === 'number' ? `${num(s.processing_duration_seconds, 1)} s` : '—'} />
             <MetricCard label="Result" value={overall.text} tone={overall.tone} hint={`${s.screenshots_analysed} of ${s.screenshots_planned} screenshots analysed`} />
           </div>
@@ -242,9 +237,7 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
 
       {job.frames.some((f) => f.status !== 'planned') && (
         <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}>
-          <RoiLegend className="mb-3" />
-          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)}
-            zones={f.roi ?? job.roi_policy?.zones ?? job.roi ?? []} roiApproved={roiApproved} size={frameSize(job, f.idx)} />)}</div>
+          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)} />)}</div>
         </Panel>
       )}
 
@@ -255,25 +248,19 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
             <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_json, `${job.id}_analysis_summary.json`)}>Summary JSON</Button>
           </>}>
           <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`}
-            cols={job.frames.some((f) => f.pavement) ? PAVEMENT_COLS : REPORT_COLS} />
+            cols={REPORT_COLS} />
         </Panel>
       )}
     </>
   )
 }
 
-export function AutoFrameCard({ frame, done, zones, roiApproved, size }: { frame: SampledFrame; done: boolean; zones: RoiZone[]; roiApproved?: boolean; size?: [number, number] | null }) {
+export function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean }) {
   const facts = screenshotFacts(frame)
   const o = frame.outcome ? OUTCOME[frame.outcome] : null
   const pending = !done && !frame.outcome
   const [showDiag, setShowDiag] = useState(false)
-  const pav = facts.pavement
-  const dims = frame.image_size ?? size ?? null
-  // the approved ROI over the untouched original (the annotated JPG has the same polygon drawn in by the server)
-  const overlay = (roiApproved || pav?.active) && dims && zones.some((z) => z.mode === 'include') ? <RoiOverlay zones={zones} size={dims} /> : null
-  const rc = frame.roi_counts
-  const unverified = facts.roiUnavailable ? frame.detections.filter((d) => d.status === 'confirmed').length : 0
-  const image = (src: string | null, label: string, dl: string | null, extra?: ReactNode) => (
+  const image = (src: string | null, label: string, dl: string | null) => (
     <figure className="flex min-w-0 flex-col gap-1">
       <div className="relative aspect-video overflow-hidden rounded-md bg-video">
         {src ? (
@@ -285,7 +272,6 @@ export function AutoFrameCard({ frame, done, zones, roiApproved, size }: { frame
             {pending ? 'Processing…' : 'Not available'}
           </div>
         )}
-        {src && extra}
       </div>
       <figcaption className="flex items-center justify-between text-[11.5px] text-fg-3">
         {label}
@@ -305,41 +291,17 @@ export function AutoFrameCard({ frame, done, zones, roiApproved, size }: { frame
         </div>
       </header>
       <div className="grid grid-cols-2 gap-2">
-        {image(frame.original_url, overlay ? 'Original + approved ROI' : 'Original', frame.download_original_url, overlay)}
+        {image(frame.original_url, 'Original', frame.download_original_url)}
         {image(showDiag && frame.diagnostic_url ? frame.diagnostic_url : frame.annotated_url,
           showDiag && frame.diagnostic_url ? 'Diagnostic (incl. rejected)' : 'Annotated', frame.download_annotated_url)}
       </div>
-      {pav && (
-        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
-          <Badge tone={pav.active ? 'ok' : pav.general ? 'neutral' : 'warn'}>{pav.active ? 'Camera ROI mode · pavement-validated'
-            : pav.general ? 'General image mode · not pavement-validated'
-              : `${pav.status.replace(/_/g, ' ')} · pavement-only detection unavailable`}</Badge>
-          {frame.pavement?.camera_id && <Badge>Camera {frame.pavement.camera_id}</Badge>}
-          {pav.active && <Badge tone={facts.count ? 'crit' : 'neutral'}>{facts.count} confirmed</Badge>}
-          {pav.active && <Badge tone={facts.possible ? 'warn' : 'neutral'}>{facts.possible} candidate{facts.possible === 1 ? '' : 's'} (review)</Badge>}
-          {pav.rejected > 0 && <Badge>{pav.rejected} rejected</Badge>}
-          {pav.unverified > 0 && <Badge tone="warn">{pav.unverified} unverified (no ROI)</Badge>}
-          {frame.diagnostic_url && (
-            <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-fg-3">
-              <input type="checkbox" checked={showDiag} onChange={(e) => setShowDiag(e.target.checked)} />Diagnostic view
-            </label>
-          )}
-        </div>
+      {frame.diagnostic_url && (
+        <label className="inline-flex cursor-pointer items-center gap-1.5 self-end text-[12px] text-fg-3">
+          <input type="checkbox" checked={showDiag} onChange={(e) => setShowDiag(e.target.checked)} />Diagnostic view
+        </label>
       )}
-      {rc && roiApproved && (
-        <div className="flex flex-wrap items-center gap-1.5 text-[12px]" aria-label="Detections by ROI">
-          <Badge tone="ok">APPROVED ROI</Badge>
-          <Badge title="All model detections on this screenshot (full frame)">{rc.raw} raw</Badge>
-          <Badge tone="info" title="Ground-contact point inside the approved ROI">{rc.inside_roi} inside ROI</Badge>
-          <Badge title="Excluded from pavement-litter confirmation; kept in the CSV">{rc.outside_roi} outside ROI</Badge>
-          <Badge tone={rc.review_required ? 'warn' : 'neutral'} title="Inside the ROI but below the confirmed threshold">{rc.review_required} review</Badge>
-          <Badge tone={rc.confirmed ? 'crit' : 'neutral'}>{rc.confirmed} confirmed</Badge>
-        </div>
-      )}
-      {facts.roiUnavailable && o && <p className="flex gap-1.5 text-[12px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />{o.hint}
-        {unverified > 0 ? ` ${unverified} full-frame detection${unverified === 1 ? '' : 's'} (unverified, not counted).` : ''}</p>}
       {facts.analysed && (
-        facts.count === 0 ? <EmptyState compact title="No litter detected" body={facts.possible ? `${facts.possible} possible object(s) below the confirmed threshold.` : undefined} /> : (
+        facts.count === 0 ? <EmptyState compact title="No litter detected by the model" body={facts.possible ? `${facts.possible} possible object(s) below the confirmed threshold.` : undefined} /> : (
           <div className="flex flex-col gap-1.5">
             <p className="text-[12px] text-fg-3">{facts.count} litter object{facts.count === 1 ? '' : 's'} detected{facts.possible ? ` · ${facts.possible} possible` : ''}</p>
             <ul className="flex flex-wrap gap-1.5">

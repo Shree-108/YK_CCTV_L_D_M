@@ -54,7 +54,8 @@ def test_detect_image_finds_verified_litter_as_separate_boxes(engine, litter_ima
     for d in confirmed:
         x1, y1, x2, y2 = d["bbox"]
         assert (x2 - x1) * (y2 - y1) < 0.1 * w * h                # no giant box covering several items
-        assert set(d) >= {"class", "confidence", "bbox", "status"}
+        assert set(d) >= {"class", "confidence", "bbox", "status", "detection_status"}
+        assert d["detection_status"] == "DETECTED"
         assert d["class"] in V3_CLASSES
     assert res["count"] == len(confirmed)
 
@@ -138,7 +139,10 @@ def test_every_v3_class_has_explicit_metadata():
                 "plastic_piece": ("plastic", "soft_packaging")}
     for c, (bin_, group) in expected.items():
         assert meta.priority(c) == "medium" and meta.bin(c) == bin_ and meta._group_of[c] == group
-    assert set(meta.groups) == {"soft_packaging", "cups_containers", "bottles_cans", "paper_like", "small_items"}
+    # 2026-11-19: the seven-class LDM schema added plastic_packet, food_waste (own 'organic' group) and glass
+    assert set(meta.groups) == {"soft_packaging", "cups_containers", "bottles_cans", "paper_like", "small_items",
+                                "organic"}
+    assert meta._group_of["food_waste"] == "organic" and meta.bin("food_waste") == "organic"
     assert set(meta.report_groups) == {"chips_packet", "wrapper", "plastic_packaging"}           # unchanged
 
 
@@ -153,7 +157,7 @@ def test_severity_rules_configurable(tmp_path):
 def test_video_confirms_static_litter_once_and_outputs_files(engine, litter_image, make_video, tmp_path):
     video = make_video([litter_image], repeat=15, fps=5.0)        # 3 s static scene
     db, am = _alert_mgr(tmp_path)
-    res = detect_video(engine, video, tmp_path / "out", DetectionSettings(), None, db, am, "CAM01", "job1")
+    res = detect_video(engine, video, tmp_path / "out", DetectionSettings(), db, am, "CAM01", "job1")
     st = res["stats"]
     gt = len(fixture_boxes(litter_image))
     assert 1 <= st["unique_confirmed_objects"] <= gt + 5           # roughly one object per real item, not per frame
@@ -164,6 +168,10 @@ def test_video_confirms_static_litter_once_and_outputs_files(engine, litter_imag
     assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 15
     cap.release()
     assert len(db.list_alerts()[0]) == st["new_alerts"]
+    # one litter event per confirmed track; its later sightings are observations, not new events
+    lit = res["litter"]
+    assert lit["unique_events"] == st["unique_confirmed_objects"]
+    assert lit["frame_observations"] >= lit["unique_events"]
 
 
 @needs_v3
@@ -173,7 +181,7 @@ def test_clean_frames_create_no_alerts(engine, make_video, tmp_path):
     frames = [cv2.imread(p) for p in CLEAN_FRAMES[:5]]
     video = make_video(frames, repeat=5)
     db, am = _alert_mgr(tmp_path)
-    res = detect_video(engine, video, tmp_path / "neg", DetectionSettings(), None, db, am, "CAM01", "jobn")
+    res = detect_video(engine, video, tmp_path / "neg", DetectionSettings(), db, am, "CAM01", "jobn")
     print("clean-video stats:", res["stats"]["detections_by_status"], "alerts:", res["stats"]["new_alerts"])
     assert res["stats"]["new_alerts"] == 0
 
@@ -183,7 +191,7 @@ def test_featureless_video_creates_no_alerts(engine, make_video, tmp_path):
     flat = np.full((720, 1280, 3), 128, np.uint8)
     video = make_video([flat], repeat=15)
     db, am = _alert_mgr(tmp_path)
-    res = detect_video(engine, video, tmp_path / "flat", DetectionSettings(), None, db, am, "CAM01", "jobf")
+    res = detect_video(engine, video, tmp_path / "flat", DetectionSettings(), db, am, "CAM01", "jobf")
     assert res["stats"]["new_alerts"] == 0
 
 
@@ -222,8 +230,8 @@ def test_camera_reconnects_and_keeps_processing(engine, litter_image, tmp_path):
     FlakyCapture.opens = 0
     events = []
     db = Database(tmp_path / "c.db")
-    cam = {"id": "CAM01", "name": "Test", "source": "rtsp://user:secret@10.0.0.1/stream", "roi": []}
-    w = CameraWorker(cam, lambda c: StreamPipeline(engine, DetectionSettings(), None, None, db, "CAM01"),
+    cam = {"id": "CAM01", "name": "Test", "source": "rtsp://user:secret@10.0.0.1/stream"}
+    w = CameraWorker(cam, lambda c: StreamPipeline(engine, DetectionSettings(), None, db, "CAM01"),
                      process_fps=20, on_event=lambda lvl, cid, msg: events.append(msg),
                      capture_factory=lambda src: FlakyCapture(litter_image), max_backoff=0.05)
     w.start()
@@ -243,7 +251,7 @@ def test_camera_failure_isolated(engine, litter_image, tmp_path):
     """A permanently broken camera must not affect a healthy one."""
     FlakyCapture.opens = 10  # healthy factory opens immediately
     db = Database(tmp_path / "d.db")
-    mk = lambda cid: (lambda c: StreamPipeline(engine, DetectionSettings(), None, None, db, cid))  # noqa: E731
+    mk = lambda cid: (lambda c: StreamPipeline(engine, DetectionSettings(), None, db, cid))  # noqa: E731
 
     class Dead:
         def isOpened(self): return False
@@ -294,7 +302,7 @@ def test_api_health_and_models(client):
 
 @needs_v3
 def test_api_end_to_end_image_to_alert(client, litter_image):
-    """Image -> YOLO -> detections -> confirmation -> alert -> DB -> API."""
+    """Image -> YOLO -> detections -> confirmation -> alert -> DB -> API (full frame; no ROI, camera not registered)."""
     r = client.post("/api/detect/image", files={"file": ("scene.jpg", _jpg(litter_image), "image/jpeg")},
                     data={"camera_id": "CAM01"})
     assert r.status_code == 200, r.text
@@ -331,8 +339,9 @@ def test_api_video_job(client, make_video, litter_image):
         time.sleep(0.5)
     assert job["status"] == "done", job.get("error")
     assert job["result"]["stats"]["unique_confirmed_objects"] >= 1
-    for kind in ("video", "detections", "events", "stats"):
-        assert client.get(job["files"][kind]).status_code == 200
+    for kind in ("video", "detections", "events", "stats", "detections_csv", "summary_csv", "metadata"):
+        assert client.get(job["files"][kind]).status_code == 200, kind
+    assert job["result"]["litter"]["unique_events"] >= 1
 
 
 @needs_v3
@@ -355,15 +364,16 @@ def test_api_invalid_inputs(client, cfg):
 def test_api_admin_auth_and_camera_crud(client_nomodel):
     client = client_nomodel
     cam = {"id": "CAM01", "name": "Main Entrance", "source": "env:CAM01_RTSP_URL", "location": "Front",
-           "enabled": False, "roi": [{"name": "sidewalk", "type": "sidewalk", "mode": "include",
-                                      "polygon": [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]}]}
+           "enabled": False}
     assert client.post("/api/cameras", json=cam).status_code == 401
     assert client.post("/api/cameras", json=cam, headers={"Authorization": "Bearer wrong"}).status_code == 401
     r = client.post("/api/cameras", json=cam, headers=AUTH)
-    assert r.status_code == 201 and r.json()["roi"][0]["type"] == "sidewalk"
+    assert r.status_code == 201 and r.json()["store_id"] is None
+    assert not any("roi" in k for k in r.json())                     # ROI removed: no roi / roi_status in the camera
     assert client.post("/api/cameras", json=cam, headers=AUTH).status_code == 409
-    bad_roi = {**cam, "id": "CAM09", "roi": [{"polygon": [[0, 0], [5, 0], [0, 1]]}]}
-    assert client.post("/api/cameras", json=bad_roi, headers=AUTH).status_code == 422
+    for gone in ({"roi": []}, {"roi_reference_size": [640, 360]}):    # removed fields are refused (extra forbidden)
+        assert client.post("/api/cameras", json={**cam, "id": "CAM09", **gone}, headers=AUTH).status_code == 422
+        assert client.put("/api/cameras/CAM01", json=gone, headers=AUTH).status_code == 422
     r = client.put("/api/cameras/CAM01", json={"name": "Entrance", "settings": {"tracking": {"min_confirmations": 4}}},
                    headers=AUTH)
     assert r.json()["name"] == "Entrance"
@@ -412,3 +422,17 @@ def test_database_operations(tmp_path):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errs and len(db.list_detections(limit=1000)) == 161
+
+
+@needs_v3
+def test_upload_without_a_camera_detects_litter_on_the_whole_image(client, litter_image):
+    """Owner decision 2026-11-19: ROI removed - an image (here: no camera at all) is analysed on the whole frame; the
+    existing confidence rule confirms litter and the operator's alert choice applies. No ROI field is returned."""
+    before = client.get("/api/alerts").json()["total"]
+    r = client.post("/api/detect/image", files={"file": ("scene.jpg", _jpg(litter_image), "image/jpeg")},
+                    data={"create_alerts": "true", "return_image": "false"}).json()
+    assert r["count"] > 0 and r["alerts"] and not any("roi" in k for k in r)
+    assert r["counts"]["confirmed"] == sum(d["status"] == "confirmed" for d in r["detections"])
+    status_of = {"confirmed": "DETECTED", "candidate": "UNDER_REVIEW", "weak": "UNDER_REVIEW", "rejected": "REJECTED"}
+    assert all(d["detection_status"] == status_of[d["status"]] for d in r["detections"])
+    assert client.get("/api/alerts").json()["total"] > before

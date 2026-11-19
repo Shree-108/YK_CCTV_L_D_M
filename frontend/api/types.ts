@@ -5,14 +5,39 @@ export type Severity = 'LOW' | 'MEDIUM' | 'HIGH'
 export type AlertStatus = 'new' | 'acknowledged' | 'resolved' | 'false_positive'
 export type Bbox = [number, number, number, number]
 
+/** Litter-focus vocabulary (docs/ldm_litter_focus/API_CONTRACT.md). VERIFIED / RESOLVED are set by an operator only. */
+export type DetectionStatus = 'DETECTED' | 'TRACKED' | 'UNDER_REVIEW' | 'REJECTED' | 'VERIFIED' | 'RESOLVED'
+export type ReviewStatus = 'DETECTED' | 'VERIFIED' | 'REJECTED' | 'RESOLVED'
+/** Per analysis. COMPLETED_NO_LITTER_DETECTED means the model found nothing - it is NOT "clean". */
+export type ProcessingStatus = 'RUNNING' | 'COMPLETED_LITTER_DETECTED' | 'COMPLETED_NO_LITTER_DETECTED' | 'FAILED'
+
 export interface Detection {
   class: string
   confidence: number
   bbox: Bbox
   status: DetStatus
+  detection_status?: DetectionStatus
   reason?: string
   track_id?: number
   priority?: string
+  event_id?: string
+}
+
+/** Who/where an analysis belongs to. Unknown values are the literal string "UNKNOWN" plus a warning. */
+export interface Identity {
+  store_id: string
+  store_name: string
+  camera_id: string
+  camera_name: string
+  recording_id: string
+  warnings: string[]
+}
+
+export interface Store {
+  id: string
+  name: string
+  created_at: string
+  cameras: { id: string; name: string }[]
 }
 
 export interface LiveSummary {
@@ -42,13 +67,6 @@ export interface Health {
   limits?: { max_video_mb: number; video_extensions: string[] }   // not sent to anonymous callers
 }
 
-export interface RoiZone {
-  name: string
-  type: 'sidewalk' | 'road_edge' | 'ground' | 'parking' | 'entrance' | 'custom'
-  mode: 'include' | 'exclude'
-  polygon: [number, number][]
-}
-
 export interface CameraStatus {
   state: 'stopped' | 'connecting' | 'online' | 'reconnecting' | 'error' | 'disabled'
   fps?: number
@@ -72,7 +90,8 @@ export interface Camera {
   latitude?: number | null
   longitude?: number | null
   enabled: boolean
-  roi: RoiZone[]
+  store_id?: string | null
+  store_name?: string | null
   settings: Record<string, unknown>
   notify: Record<string, unknown>
   created_at: string
@@ -128,7 +147,7 @@ export interface Capture {
   status: 'running' | 'done' | 'skipped' | 'failed' | 'interrupted' | 'invalid_frame'
   model_version: string | null
   error: string | null
-  counts: { confirmed?: number; by_class?: Record<string, number>; highest_confidence?: number | null; outside_roi_ignored?: number }
+  counts: { confirmed?: number; by_class?: Record<string, number>; highest_confidence?: number | null }
   detections: Detection[]
   alert_ids: number[]
   original_url: string | null
@@ -161,7 +180,6 @@ export interface LiveFrame {
     model_version: string
   }
   image: string | null
-  roi: RoiZone[]
   fps: number
   inference_ms: number
   last_error: string | null
@@ -233,7 +251,7 @@ export interface Settings {
   confidence: { weak_threshold: number; candidate_threshold: number; confirmed_threshold: number }
   inference: { image_size: number; iou_threshold: number; max_detections: number; device: string; half: boolean; agnostic_nms: boolean }
   tiling: { enabled: boolean; mode: 'auto' | 'always'; tile_size: number; overlap: number; auto_min_ratio: number; include_full_frame: boolean; merge_iou: number; cross_tile_ios: number }
-  filters: { class_allowlist: string[] | null; class_blocklist: string[]; min_box_area_px: number; max_box_area_frac: number; max_aspect_ratio: number; roi_enabled: boolean; roi_anchor: 'footpoint' | 'center'; roi_margin_frac: number }
+  filters: { class_allowlist: string[] | null; class_blocklist: string[]; min_box_area_px: number; max_box_area_frac: number; max_aspect_ratio: number }
   tracking: { iou_match: number; low_iou_match: number; max_missed_frames: number; temporal_window: number; min_confirmations: number; stationarity_enabled: boolean; max_center_shift_frac: number }
   severity: { high: SeverityRule[]; medium: SeverityRule[] }
   alerts: { enabled: boolean; one_alert_per_track: boolean; dedup_window_sec: number; dedup_iou: number; dedup_center_frac: number; class_match: 'exact' | 'group' | 'any'; snapshot_jpeg_quality: number; crop_padding_frac: number; alert_on_image_uploads: boolean }
@@ -257,6 +275,17 @@ export interface Analytics {
   confidence_histogram: { bin: number; n: number }[]
 }
 
+export type AnalysisFileKind = 'original' | 'annotated' | 'detections_csv' | 'summary_csv' | 'metadata'
+
+/** The saved outputs of one analysis (image analysis, or the analysis block of a video job). */
+export interface AnalysisInfo {
+  analysis_id: string | null
+  processing_status: ProcessingStatus
+  unique_events: number
+  frame_observations: number
+  urls: Partial<Record<string, string>>
+}
+
 export interface ImageDetectResult {
   detections: Detection[]
   count: number
@@ -268,13 +297,11 @@ export interface ImageDetectResult {
   tiles: number
   image_size: [number, number]
   model_version: string
-  roi_active?: boolean
-  outside_roi_ignored?: number
   highest_confidence?: number | null
   average_confidence?: number | null
+  identity?: Identity
+  analysis?: AnalysisInfo
   annotated_image?: string
-  filename: string
-  camera_id: string
 }
 
 export interface Job<R = unknown> {
@@ -302,6 +329,45 @@ export interface VideoProgress {
   new_alerts?: number
 }
 
+export interface VideoValidation {
+  duration_sec: number | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  codec: string | null
+  frames_reported: number | null
+  frames_read: number | null
+  read_failures: number
+  truncated: boolean
+  warnings: string[]
+}
+
+/** One unique litter event of a video (a DETECTED track). */
+export interface VideoLitterEvent {
+  event_id: string
+  track_id: number
+  class: string
+  detection_status: DetectionStatus
+  first_seen: string | null
+  last_seen: string | null
+  first_seen_sec: number
+  last_seen_sec: number
+  duration_sec: number
+  observation_count: number
+  max_confidence: number
+  mean_confidence: number
+  bbox: Bbox
+  evidence_url: string | null
+}
+
+export interface VideoLitter {
+  unique_events: number
+  frame_observations: number
+  tracked_objects: number
+  by_class: { class: string; events: number; observations: number }[]
+  events: VideoLitterEvent[]
+}
+
 export interface VideoResult {
   progress?: VideoProgress
   stats?: {
@@ -309,7 +375,6 @@ export interface VideoResult {
     frames_analysed: number
     sample_every_n_frames: number
     unique_confirmed_objects: number
-    litter?: LitterSummary
     confirmed_by_class: Record<string, number>
     new_alerts: number
     detections_by_status: Record<string, number>
@@ -325,23 +390,112 @@ export interface VideoResult {
   }
   events?: { event: 'confirmed' | 'lost'; track_id: number; class: string; frame_idx: number; video_time_sec: number; confidence: number; alert_id?: number }[]
   alert_ids?: number[]
+  identity?: Identity
+  video_validation?: VideoValidation
+  litter?: VideoLitter
+  analysis?: AnalysisInfo
+  /** Exactly four annotated evidence frames at random timestamps (backend/services/video_evidence.py). */
+  screenshots?: VideoScreenshot[]
+  screenshot_selection?: { seed: number; method: string; duration_sec: number; frames_read: number } | null
+  /** Six-column litter report (snapshot at completion; the download is rebuilt from the DB). */
+  report?: LitterReport | null
 }
 
-export interface LitterSummary {
-  total: number
-  roi_active: boolean
-  inside_roi: number
-  outside_roi_ignored: number
-  highest_confidence: number | null
-  average_confidence: number | null
-  classes: { class: string; count: number; max_confidence: number; avg_confidence: number; timestamps_sec: number[] }[]
-  objects: { track_id: number; class: string; first_seen_sec: number; max_confidence: number; avg_confidence: number }[]
+export type ReportStatus = 'DETECTED' | 'UNDER_REVIEW' | 'VERIFIED'
+
+export interface VideoScreenshot {
+  index: number
+  kind: string
+  file: string
+  url: string
+  frame_idx: number
+  video_time_sec: number
+  /** "YYYY-MM-DD HH:MM:SS": recording time when the recording start was given, else processing time. */
+  timestamp: string
+  timestamp_source: 'RECORDING_TIME' | 'PROCESSING_TIME'
+  analysed_frame: boolean
+  litter_detected: number
+  under_review: number
+  detections: { class: string; confidence: number; bbox: Bbox; detection_status: 'DETECTED' | 'UNDER_REVIEW'; event_id: string | null }[]
 }
 
-export interface RoiConfig {
+export interface LitterReportRow {
+  store_id: string
   camera_id: string
-  zones: RoiZone[]
-  active: boolean
+  timestamp: string
+  litter_class: string
+  confidence_score: string
+  detection_status: ReportStatus
+}
+
+export interface LitterReport {
+  columns: string[]
+  rows: LitterReportRow[]
+  counts: { rows: number; DETECTED: number; UNDER_REVIEW: number; VERIFIED: number; classes: string[] }
+  url: string
+  /** The day's consolidated CSV these rows were appended to (backend/services/daily_report.py). */
+  daily?: { date: string; rows_appended: number; total_rows: number; url: string } | null
+}
+
+// ---------------------------------------------------------------- litter events + analytics (/api/litter)
+export interface LitterEvent {
+  event_id: string
+  analysis_id: string
+  source_type: string
+  store_id: string
+  store_name: string
+  camera_id: string
+  camera_name: string
+  recording_id: string
+  track_id: number | null
+  class: string
+  max_confidence: number
+  mean_confidence: number
+  bbox: Bbox
+  first_seen: string
+  last_seen: string
+  observation_count: number
+  duration_sec: number
+  detection_status: DetectionStatus
+  review_status: ReviewStatus | null
+  model_version: string | null
+  image_url: string | null
+}
+
+export type LitterEventQuery = {
+  store_id?: string; camera_id?: string; class?: string; status?: string; start?: string; end?: string; limit?: number; offset?: number
+}
+
+/** A row of GET /api/litter/analyses (recent analyses of every source). Fields the contract does not name are optional. */
+export interface LitterAnalysis {
+  analysis_id: string
+  source_type?: string
+  created_at?: string
+  finished_at?: string | null
+  processing_status: ProcessingStatus
+  identity?: Identity
+  unique_events: number
+  frame_observations: number
+  model_version?: string | null
+  input_name?: string | null
+  job_id?: string | null
+  error?: string | null
+  urls?: Partial<Record<string, string>>
+}
+
+export type Granularity = 'hour' | 'day' | 'week'
+
+export type LitterAnalyticsQuery = { start?: string; end?: string; store_id?: string; camera_id?: string; granularity?: Granularity }
+
+export interface LitterAnalytics {
+  totals: { unique_events: number; frame_observations: number; events_today: number; avg_visible_sec: number | null; analyses: number; analyses_failed: number }
+  most_frequent_class: string | null
+  by_class: { class: string; events: number; observations: number }[]
+  by_store: { store_id: string; store_name: string; events: number; observations: number }[]
+  by_camera: { camera_id: string; camera_name: string; store_id: string; events: number; observations: number }[]
+  series: { bucket: string; events: number; observations: number; by_class: Record<string, number> }[]
+  hourly_today: { hour: number; events: number }[]
+  processing: Partial<Record<ProcessingStatus, number>>
 }
 
 export interface DatasetSummary {

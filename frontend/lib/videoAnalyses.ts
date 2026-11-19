@@ -22,7 +22,7 @@ export interface VideoAnalysisCounts {
   done: number          // completed analyses of both kinds
   fullDone: number
   sampledDone: number
-  notFinished: number   // queued, running, waiting for ROI, failed, cancelled or interrupted
+  notFinished: number   // queued, running, failed, cancelled or interrupted
 }
 
 /** ``sampledTotal`` / ``sampledDone``: totals reported by /api/sampled/reports/history (all states / state=done). */

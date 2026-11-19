@@ -1,24 +1,26 @@
 """The per-stream detection pipeline and the image/video entry points.
 
-FRAME -> YOLO (optional tiles) -> merge/NMS -> filters (conf tier, class, size, ROI)
-      -> tracker (ByteTrack-style) -> temporal confirmation -> alert manager
+FRAME -> YOLO on the FULL frame (optional overlapping tiles for small objects) -> merge/NMS
+      -> filters (confidence tier, class, size, aspect) -> tracker (ByteTrack-style) -> temporal confirmation
+      -> litter events / alert manager
 
-Pavement-only mode (settings.pavement.enabled, OFF by default; backend/detection/pavement.py) chooses an analysis
-mode per frame. CAMERA_ROI_MODE (registered camera + approved ROI) replaces the ROI step of the filters with the
-pavement gate (approved-ROI membership, exclusion zones, significant-size rule) before confirmation, so nothing
-outside the approved pavement, or too small, can be confirmed or alerted. GENERAL_IMAGE_MODE (no camera) keeps the
-existing behaviour. A named camera without an approved ROI (ROI_NOT_CONFIGURED / ROI_FRAME_MISMATCH) confirms nothing.
-Inference always runs on the full frame unless the EXPERIMENTAL filters.roi_crop_inference is switched on (off by
-default); the ROI is a post-detection filter.
+There is no region of interest (owner decision 2026-11-19: ROI removed from the application). Every detection the
+model returns above ``confidence.weak_threshold`` is kept, tagged with a status and shown; nothing is discarded for
+where it is in the picture.
+
+Terms used in results (backend/services/litter_reports.py):
+  observation   one detection in one processed frame
+  tracked object one tracker track (the same object across frames)
+  litter event  one DETECTED object: a still image's detection above ``confirmed_threshold``, or a video track that
+                passed temporal confirmation. Repeated observations of that object never create new events.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
 import time
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -30,10 +32,10 @@ from backend.alerts.manager import AlertManager, ClassMetadata, ConfirmedEvent
 from backend.core.settings import DetectionSettings
 from backend.database.db import Database, utcnow
 from backend.detection.engine import YoloEngine
-from backend.detection import pavement
-from backend.detection.filters import ROISet, apply_filters, confirm_single_image
+from backend.detection.filters import apply_filters, confirm_single_image
 from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection, InferenceInfo
-from backend.services.visualization import annotate, annotate_litter, annotate_pavement
+from backend.services.litter_reports import DETECTED, TRACKED, detection_status, iso, local_now
+from backend.services.visualization import annotate, annotate_litter
 from backend.tracking.tracker import LitterTracker
 
 log = logging.getLogger(__name__)
@@ -47,7 +49,6 @@ class FrameResult:
     inference_ms: float
     tiled: bool
     events: list[dict[str, Any]] = field(default_factory=list)
-    pavement_status: Optional[str] = None      # set only in pavement-only mode
 
 
 def summarize(dets: list[Detection], tracker: LitterTracker, new_alerts: int) -> dict[str, int]:
@@ -60,78 +61,24 @@ def summarize(dets: list[Detection], tracker: LitterTracker, new_alerts: int) ->
             "active_tracks": len(visible), "tracks_in_memory": len(tracker.tracks), "new_alerts": new_alerts}
 
 
-def roi_approved_default(roi: Optional[ROISet]) -> bool:
-    """Every ROI that reaches the pipeline was drawn and saved by a person (camera record, PUT /api/roi/{camera},
-    or an operator-confirmed sampled job); automatic proposals never get here unconfirmed. Callers that know an ROI
-    was NOT approved by a person (an auto-accepted segmenter proposal) pass roi_approved=False explicitly."""
-    return roi is not None and bool(roi.includes)
+def _copy(dets: list[Detection]) -> list[Detection]:
+    return [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in dets]
 
 
-def filter_detections(dets: list[Detection], shape: tuple[int, ...], s: DetectionSettings, roi: Optional[ROISet],
-                      roi_approved: Optional[bool] = None, camera_id: Optional[str] = None,
-                      camera_registered: Optional[bool] = None) -> Optional[tuple[str, str]]:
-    """The existing filters. In pavement-only mode the analysis mode is decided first: GENERAL_IMAGE_MODE runs the
-    existing filters unchanged (and only records measurements); the other modes skip the filters' own ROI check and
-    let the pavement gate decide. Boxes are never modified. Returns (mode, note), or None when the mode is off.
-    ``camera_registered`` None counts as not registered (a named camera must be registered to be validated)."""
-    if not s.pavement.enabled:
-        apply_filters(dets, shape, s, roi)
-        return None
-    use = roi if s.filters.roi_enabled else None
-    approved = roi_approved_default(use) if roi_approved is None else (roi_approved and use is not None)
-    mode, note = pavement.decide_mode(camera_id, bool(camera_registered), use, approved, shape, s.pavement)
-    if mode == pavement.GENERAL_IMAGE_MODE:
-        apply_filters(dets, shape, s, roi)
-        pavement.tag_general(dets, shape, s.pavement)
-        return mode, note
-    apply_filters(dets, shape, s, None)
-    pavement.gate(dets, shape, use, mode, s.pavement)
-    return mode, note
-
-
-def roi_window(shape: tuple[int, ...], s: DetectionSettings, roi: Optional[ROISet]) -> Optional[tuple[int, int, int, int]]:
-    """Pixel rectangle the model should look at, or None for the whole frame. Only used when the ROI
-    covers clearly less than the frame; the ROI filter still decides what is inside the polygon."""
-    f = s.filters
-    if not (f.roi_enabled and f.roi_crop_inference and roi is not None):
-        return None
-    h, w = shape[:2]
-    box = roi.crop_box(w, h, f.roi_crop_pad_frac)
-    if box is None or (box[2] - box[0]) < 32 or (box[3] - box[1]) < 32:
-        return None
-    if (box[2] - box[0]) * (box[3] - box[1]) > 0.9 * w * h:
-        return None
-    return box
-
-
-def detect_in_roi(engine: YoloEngine, frames: list[np.ndarray], s: DetectionSettings, roi: Optional[ROISet],
-                  force_tiling: Optional[bool] = None) -> list[tuple[list[Detection], Any]]:
-    """engine.detect_many() on the ROI crop only (fewer pixels, and small litter gets more model
-    resolution); boxes are mapped back to full-frame coordinates."""
-    if not frames:
-        return []
-    box = roi_window(frames[0].shape, s, roi)
-    if box is None:
-        return engine.detect_many(frames, s, force_tiling)
-    x1, y1, x2, y2 = box
-    out = engine.detect_many([np.ascontiguousarray(f[y1:y2, x1:x2]) for f in frames], s, force_tiling)
-    for dets, _ in out:
-        for d in dets:
-            d.bbox = [d.bbox[0] + x1, d.bbox[1] + y1, d.bbox[2] + x1, d.bbox[3] + y1]
-    return out
+EventSink = Callable[[str, Any, "StreamPipeline", Optional[np.ndarray], list[Detection]], None]
 
 
 class StreamPipeline:
-    """Stateful pipeline for one stream (live camera or one video job)."""
+    """Stateful pipeline for one stream (live camera or one video job). ``event_sink(kind, track, pipeline, frame,
+    dets)`` is called for every tracker event ("confirmed" / "lost"); live cameras use it to record litter events."""
 
-    def __init__(self, engine: YoloEngine, settings: DetectionSettings, roi: Optional[ROISet],
-                 alerts: Optional[AlertManager], db: Optional[Database], camera_id: str,
-                 source_type: str = "live", job_id: Optional[str] = None, location: str = "",
-                 roi_approved: Optional[bool] = None, camera_registered: Optional[bool] = None) -> None:
-        self.engine, self.settings, self.roi = engine, settings, roi
-        self.roi_approved, self.camera_registered = roi_approved, camera_registered
+    def __init__(self, engine: YoloEngine, settings: DetectionSettings, alerts: Optional[AlertManager],
+                 db: Optional[Database], camera_id: str, source_type: str = "live", job_id: Optional[str] = None,
+                 location: str = "", event_sink: Optional[EventSink] = None) -> None:
+        self.engine, self.settings = engine, settings
         self.alerts, self.db = alerts, db
         self.camera_id, self.source_type, self.job_id, self.location = camera_id, source_type, job_id, location
+        self.event_sink = event_sink
         self.session_id = uuid.uuid4().hex[:12]
         self.tracker = LitterTracker(settings)
         self._first_seen: dict[int, str] = {}
@@ -141,9 +88,8 @@ class StreamPipeline:
         self.frames_reused = 0
         self._last_log = 0.0
 
-    def update_settings(self, settings: DetectionSettings, roi: Optional[ROISet],
-                        roi_approved: Optional[bool] = None) -> None:
-        self.settings, self.roi, self.roi_approved = settings, roi, roi_approved
+    def update_settings(self, settings: DetectionSettings) -> None:
+        self.settings = settings
         self.tracker.update_settings(settings)
 
     def _raw_detect(self, frame: np.ndarray, s: DetectionSettings, video_time: Optional[float],
@@ -156,10 +102,9 @@ class StreamPipeline:
                 and video_time is not None and self._last_infer_t is not None
                 and video_time - self._last_infer_t < v.max_reuse_sec
                 and float(np.mean(np.abs(thumb - self._last_thumb))) < v.static_diff_threshold):
-            dets = [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in self._last_raw]
-            return dets, InferenceInfo(), True
-        dets, info = detect_in_roi(self.engine, [frame], s, self.roi, force_tiling)[0]
-        self._last_raw = [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in dets]
+            return _copy(self._last_raw), InferenceInfo(), True
+        dets, info = self.engine.detect_many([frame], s, force_tiling)[0]
+        self._last_raw = _copy(dets)
         self._last_thumb, self._last_infer_t = thumb, video_time
         return dets, info, False
 
@@ -183,18 +128,14 @@ class StreamPipeline:
         if precomputed is not None:
             dets, info = precomputed
             reused = False
-            self._last_raw = [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in dets]
+            self._last_raw = _copy(dets)
         elif reuse_previous and self._last_raw is not None:
-            dets = [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in self._last_raw]
-            info, reused = InferenceInfo(), True
+            dets, info, reused = _copy(self._last_raw), InferenceInfo(), True
         else:
             dets, info, reused = self._raw_detect(frame, s, video_time, force_tiling, allow_reuse)
         self.frames_reused += int(reused)
-        pav = filter_detections(dets, frame.shape, s, self.roi, self.roi_approved, self.camera_id,
-                                self.camera_registered)
+        apply_filters(dets, frame.shape, s)
         track_events = self.tracker.update(dets, frame_idx, frame.shape)
-        if pav:
-            pavement.finalize(dets)
         now = utcnow()
         for d in dets:
             if d.track_id is not None:
@@ -207,16 +148,21 @@ class StreamPipeline:
             t = ev.track
             events.append({"event": ev.kind, "track_id": t.track_id, "class": t.cls_name, "frame_idx": frame_idx,
                            "video_time_sec": video_time, "confidence": round(t.mean_hit_conf, 4)})
+            if self.event_sink is not None:
+                try:
+                    self.event_sink(ev.kind, t, self, frame, dets)
+                except Exception:  # noqa: BLE001 - recording an event must never stop detection
+                    log.exception("event sink failed for %s track %s", self.camera_id, t.track_id)
             if ev.kind == "confirmed" and self.alerts is not None:
                 if annotated_cache is None:
-                    annotated_cache = annotate_fn(frame, dets) if annotate_fn else annotate(frame, dets, self.roi)
+                    annotated_cache = annotate_fn(frame, dets) if annotate_fn else annotate(frame, dets)
                 alert = self.alerts.on_confirmed(ConfirmedEvent(
                     camera_id=self.camera_id, session_id=self.session_id, track_id=t.track_id, cls_name=t.cls_name,
                     confidence=t.mean_hit_conf, bbox=[round(v, 1) for v in t.bbox], frame=frame,
                     annotated=annotated_cache, video_time_sec=video_time,
                     first_seen_ts=self._first_seen.get(t.track_id, now), hits=t.total_hits,
-                    active_objects=sum(1 for x in self.tracker.visible_tracks() if x.confirmed), location=self.location, job_id=self.job_id,
-                    source_type=self.source_type, model_version=self.engine.version,
+                    active_objects=sum(1 for x in self.tracker.visible_tracks() if x.confirmed), location=self.location,
+                    job_id=self.job_id, source_type=self.source_type, model_version=self.engine.version,
                     live_track_ids=frozenset(x.track_id for x in self.tracker.active_tracks)), s)
                 if alert:
                     new_alerts.append(alert)
@@ -226,8 +172,7 @@ class StreamPipeline:
 
         self._log(dets, frame_idx, video_time)
         summary = summarize(dets, self.tracker, len(new_alerts))
-        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events,
-                           pav[0] if pav else None)
+        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events)
 
     def _log(self, dets: list[Detection], frame_idx: int, video_time: Optional[float]) -> None:
         if self.db is None or not dets:
@@ -246,46 +191,6 @@ class StreamPipeline:
             "model_version": self.engine.version, "session_id": self.session_id} for d in dets])
 
 
-def roi_is_active(roi: Optional[ROISet], s: DetectionSettings) -> bool:
-    return bool(s.filters.roi_enabled and roi is not None and roi.includes)
-
-
-def litter_summary(events: list[dict[str, Any]], frames: list[dict[str, Any]], roi: Optional[ROISet],
-                   s: DetectionSettings) -> dict[str, Any]:
-    """Plain-language results for a video: one entry per confirmed litter object (its class, its
-    best/average confidence over the frames it was confirmed in, when it was first confirmed) plus
-    per-class totals. Every confirmed object passed the ROI filter, so all of them are inside the ROI."""
-    first = {e["track_id"]: e for e in events if e["event"] == "confirmed"}
-    confs: dict[int, list[float]] = {}
-    for f in frames:
-        for d in f["detections"]:
-            if d["status"] == CONFIRMED and d.get("track_id") in first:
-                confs.setdefault(d["track_id"], []).append(d["confidence"])
-    objects = []
-    for tid, e in sorted(first.items(), key=lambda kv: kv[1]["video_time_sec"] or 0):
-        c = confs.get(tid) or [e["confidence"]]
-        objects.append({"track_id": tid, "class": e["class"], "first_seen_sec": e["video_time_sec"],
-                        "max_confidence": round(max(c), 4), "avg_confidence": round(float(np.mean(c)), 4)})
-    by_class: dict[str, dict[str, Any]] = {}
-    for o in objects:
-        b = by_class.setdefault(o["class"], {"class": o["class"], "count": 0, "max_confidence": 0.0, "_sum": 0.0,
-                                             "timestamps_sec": []})
-        b["count"] += 1
-        b["max_confidence"] = max(b["max_confidence"], o["max_confidence"])
-        b["_sum"] += o["avg_confidence"]
-        b["timestamps_sec"].append(o["first_seen_sec"])
-    classes = []
-    for b in sorted(by_class.values(), key=lambda b: -b["count"]):
-        b["avg_confidence"] = round(b.pop("_sum") / b["count"], 4)
-        classes.append(b)
-    ignored = sum(1 for f in frames for d in f["detections"] if d.get("reason") == "outside_roi")
-    return {"total": len(objects), "roi_active": roi_is_active(roi, s), "inside_roi": len(objects),
-            "outside_roi_ignored": ignored,
-            "highest_confidence": max((o["max_confidence"] for o in objects), default=None),
-            "average_confidence": round(float(np.mean([o["avg_confidence"] for o in objects])), 4) if objects else None,
-            "classes": classes, "objects": objects}
-
-
 def open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> tuple[cv2.VideoWriter, str]:
     """H.264 (browser-playable) when the OpenCV build supports it, else MPEG-4 part 2."""
     for codec in ("avc1", "mp4v"):
@@ -296,44 +201,36 @@ def open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> tuple[cv
     raise RuntimeError("no usable video codec for writing MP4")
 
 
+def _with_status(d: Detection, meta: Optional[ClassMetadata]) -> dict[str, Any]:
+    out = d.to_dict(meta.priority(d.cls_name) if meta else None)
+    out["detection_status"] = detection_status(d.status)
+    return out
+
+
 # ---------------------------------------------------------------------- images
 def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSettings,
-                 roi: Optional[ROISet] = None, meta: Optional[ClassMetadata] = None,
-                 db: Optional[Database] = None, alerts: Optional[AlertManager] = None,
-                 camera_id: str = "upload", filename: str = "", job_id: Optional[str] = None, *,
-                 source_type: str = "image", frame_idx: int = 0, video_time_sec: Optional[float] = None,
-                 session_id: Optional[str] = None, create_alerts: Optional[bool] = None,
-                 location: str = "", roi_approved: Optional[bool] = None,
-                 want_diagnostic: bool = False, camera_registered: Optional[bool] = None,
-                 approved_roi_style: bool = False) -> dict[str, Any]:
-    """Detect litter in one image. A still image has no temporal evidence, so
-    'confirmed' here means: passed every filter AND confidence >= confirmed_threshold.
+                 meta: Optional[ClassMetadata] = None, db: Optional[Database] = None,
+                 alerts: Optional[AlertManager] = None, camera_id: str = "upload", filename: str = "",
+                 job_id: Optional[str] = None, *, source_type: str = "image", frame_idx: int = 0,
+                 video_time_sec: Optional[float] = None, session_id: Optional[str] = None,
+                 create_alerts: Optional[bool] = None, location: str = "",
+                 header: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Detect litter in one image (full frame). A still image has no temporal evidence, so DETECTED here means:
+    passed every filter AND confidence >= confirmed_threshold; other kept detections are UNDER_REVIEW.
     ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
     scheduled screenshots of one fixed camera share one so persisting litter updates its alert.
 
-    Keyword-only extras (defaults = the original image-upload behaviour): ``source_type``/``frame_idx``/
-    ``video_time_sec`` are recorded on the detection rows; for any source other than "image" the ``job_id`` is
-    recorded too (sampled video screenshots link every row to their job). ``session_id`` fixes the alert session,
-    ``create_alerts`` overrides ``alerts.alert_on_image_uploads``.
-
-    Pavement-only mode adds ``result["pavement"]`` (status, per-outcome counts, rules) and an ``outcome`` per
-    detection; with ``want_diagnostic`` also ``result["diagnostic"]`` (image incl. rejected boxes; caller pops it)."""
-    dets, info = detect_in_roi(engine, [image], settings, roi)[0]
-    pav = filter_detections(dets, image.shape, settings, roi, roi_approved, camera_id, camera_registered)
+    Keyword-only extras (defaults = the image-upload behaviour): ``source_type``/``frame_idx``/``video_time_sec`` are
+    recorded on the detection rows; for any source other than "image" the ``job_id`` is recorded too (sampled video
+    screenshots link every row to their job). ``session_id`` fixes the alert session, ``create_alerts`` overrides
+    ``alerts.alert_on_image_uploads``. ``header``: extra HUD lines on the annotated image."""
+    dets, info = engine.detect_many([image], settings)[0]
+    apply_filters(dets, image.shape, settings)
     confirm_single_image(dets, settings)
-    if pav:
-        pavement.finalize(dets)
     # give each individual object an index so the UI/alerts can reference it
     for i, d in enumerate(sorted(dets, key=lambda d: -d.confidence), start=1):
         d.track_id = i
-    cam_label = None if camera_id == "upload" else camera_id
-    if pav and pav[0] == pavement.GENERAL_IMAGE_MODE:     # the existing view, labelled as not pavement-validated
-        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings),
-                                    extra=["GENERAL IMAGE MODE - not pavement-validated"], approved=approved_roi_style)
-    elif pav:
-        annotated = annotate_pavement(image, dets, roi, pav[0], cam_label)
-    else:
-        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings), approved=approved_roi_style)
+    annotated = annotate_litter(image, dets, header)
     alerts_out: list[dict[str, Any]] = []
     if db is not None:
         ts = utcnow()
@@ -361,20 +258,12 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
     counts = Counter(d.status for d in dets)
     by_class = Counter(d.cls_name for d in dets if d.status == CONFIRMED)
     confirmed_confs = [d.confidence for d in dets if d.status == CONFIRMED]
-    out: dict[str, Any] = {}
-    if pav:
-        out["pavement"] = pavement.report(pav[0], pav[1], dets, settings.pavement, cam_label)
-        if want_diagnostic and settings.pavement.diagnostic_images:
-            out["diagnostic"] = annotate_pavement(image, dets, roi, pav[0], cam_label, diagnostic=True)
-    return out | {
-        "detections": [d.to_dict(meta.priority(d.cls_name) if meta else None)
-                       for d in sorted(dets, key=lambda d: -d.confidence)],
+    return {
+        "detections": [_with_status(d, meta) for d in sorted(dets, key=lambda d: -d.confidence)],
         "count": counts[CONFIRMED],
         "counts": {"confirmed": counts[CONFIRMED], "candidate": counts[CANDIDATE], "weak": counts[WEAK],
                    "rejected": counts[REJECTED], "raw": len(dets)},
         "by_class": dict(by_class),
-        "roi_active": roi_is_active(roi, settings),
-        "outside_roi_ignored": sum(1 for d in dets if d.reason == "outside_roi"),
         "highest_confidence": round(max(confirmed_confs), 4) if confirmed_confs else None,
         "average_confidence": round(float(np.mean(confirmed_confs)), 4) if confirmed_confs else None,
         "alerts": alerts_out,
@@ -387,77 +276,144 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
 
 
 # ---------------------------------------------------------------------- videos
+def video_litter(frames: list[dict[str, Any]], confirmations: dict[int, int]) -> dict[str, Any]:
+    """Observations, tracked objects and litter events of an analysed video.
+
+    ``frames``: detections.json content (per processed frame: frame_idx, video_time_sec, processed_at, detections).
+    ``confirmations``: track_id -> frame_idx at which the tracker confirmed it (one litter event per such track).
+
+    Every detection becomes one observation. For a track that became an event, the observation in the confirmation
+    frame is DETECTED and every other observation of that track (before or after) is TRACKED, so
+    ``observation_count`` == the event's rows in the detection CSV == its share of ``total_frame_observations``.
+    Detections of other tracks are UNDER_REVIEW, filtered ones REJECTED."""
+    per_track: dict[int, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
+    observations: list[dict[str, Any]] = []
+    for f in frames:
+        for d in f["detections"]:
+            tid = d.get("track_id")
+            if d["status"] != REJECTED and tid is not None:
+                per_track[tid].append((f, d))
+            ev = tid is not None and tid in confirmations and d["status"] != REJECTED
+            status = ((DETECTED if f["frame_idx"] == confirmations[tid] and d["status"] == CONFIRMED else TRACKED)
+                      if ev else detection_status(d["status"]))
+            observations.append({"frame_number": f["frame_idx"], "frame_timestamp": f["video_time_sec"],
+                                 "processed_at": f.get("processed_at"), "track_id": tid, "class": d["class"],
+                                 "confidence": d["confidence"], "status": d["status"], "reason": d.get("reason"),
+                                 "detection_status": status, "bbox": d["bbox"], "event_track": ev})
+    tracks: dict[int, dict[str, Any]] = {}
+    for tid, obs in per_track.items():
+        confs = [d["confidence"] for _, d in obs]
+        first, last = obs[0][0], obs[-1][0]
+        at_conf = next((d for f, d in obs if f["frame_idx"] == confirmations.get(tid)), obs[-1][1])
+        cls = (at_conf["class"] if tid in confirmations
+               else Counter(d["class"] for _, d in obs).most_common(1)[0][0])
+        tracks[tid] = {"track_id": tid, "class": cls, "is_event": tid in confirmations,
+                       "first_seen_sec": first["video_time_sec"], "last_seen_sec": last["video_time_sec"],
+                       "first_processed_at": first.get("processed_at"), "last_processed_at": last.get("processed_at"),
+                       "duration_sec": round(last["video_time_sec"] - first["video_time_sec"], 3),
+                       "observation_count": len(obs), "max_confidence": round(max(confs), 4),
+                       "mean_confidence": round(float(np.mean(confs)), 4), "bbox": at_conf["bbox"],
+                       "confirmed_frame": confirmations.get(tid)}
+    events = sorted((t for t in tracks.values() if t["is_event"]), key=lambda t: (t["first_seen_sec"], t["track_id"]))
+    by_class: dict[str, dict[str, Any]] = {}
+    for t in events:
+        b = by_class.setdefault(t["class"], {"class": t["class"], "events": 0, "observations": 0})
+        b["events"] += 1
+        b["observations"] += t["observation_count"]
+    return {"unique_events": len(events), "frame_observations": sum(t["observation_count"] for t in events),
+            "tracked_objects": len(tracks), "under_review_objects": len(tracks) - len(events),
+            "by_class": sorted(by_class.values(), key=lambda b: (-b["events"], b["class"])),
+            "events": events, "tracks": tracks, "observations": observations}
+
+
+def _fourcc(cap: cv2.VideoCapture) -> str:
+    v = int(cap.get(cv2.CAP_PROP_FOURCC) or 0)
+    s = "".join(chr((v >> 8 * i) & 0xFF) for i in range(4))
+    return s if v and s.isprintable() and s.strip() else "unknown"
+
+
 def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path, settings: DetectionSettings,
-                 roi: Optional[ROISet] = None, db: Optional[Database] = None,
-                 alerts: Optional[AlertManager] = None, camera_id: str = "upload", job_id: Optional[str] = None,
-                 progress: Optional[Callable[[float, dict[str, Any]], None]] = None,
-                 roi_approved: Optional[bool] = None, camera_registered: Optional[bool] = None) -> dict[str, Any]:
-    """Process a video file: annotated MP4 + detections.json + events.json + stats.json (+ alert snapshots)."""
+                 db: Optional[Database] = None, alerts: Optional[AlertManager] = None, camera_id: str = "upload",
+                 job_id: Optional[str] = None, progress: Optional[Callable[[float, dict[str, Any]], None]] = None,
+                 evidence_dir: Optional[Path] = None, header: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Process a video file on the full frame: annotated MP4 + detections.json + events.json + stats.json
+    (+ alert snapshots, + one evidence JPEG per litter event in ``evidence_dir`` as track_<id>.jpg).
+    Returns stats, tracker events, alerts, files, ``validation`` and ``litter`` (video_litter())."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if evidence_dir is not None:
+        Path(evidence_dir).mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise ValueError("Could not open video (corrupt file or unsupported codec)")
     try:
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-        if not (0 < fps <= 240):
-            fps = 25.0
+        fps_raw = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        fps = fps_raw if 0 < fps_raw <= 240 else 25.0
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        validation: dict[str, Any] = {"width": w, "height": h, "fps": round(fps, 3), "codec": _fourcc(cap),
+                                      "frames_reported": total, "fps_reported": round(fps_raw, 3), "warnings": []}
+        if fps != fps_raw:
+            validation["warnings"].append(f"The file reports an invalid frame rate ({fps_raw}); 25 fps was assumed, "
+                                          "so video timestamps may be wrong.")
+        if w <= 0 or h <= 0:
+            raise ValueError("The video reports no picture size (damaged file or unsupported codec)")
         max_frames = int(settings.video.max_video_seconds * fps)
         step = max(1, int(round(fps / settings.video.sample_fps)))
-        pipe = StreamPipeline(engine, settings, roi, alerts, db, camera_id, "video", job_id, roi_approved=roi_approved,
-                              camera_registered=camera_registered)
-        pav_on = settings.pavement.enabled
-        pav_counts: Counter = Counter()
-        pav_status: Optional[str] = None
-        cam_label = None if camera_id == "upload" else camera_id
+        pipe = StreamPipeline(engine, settings, alerts, db, camera_id, "video", job_id)
         writer, codec = open_video_writer(out_dir / "annotated.mp4",
                                           fps if settings.video.annotate_all_frames else fps / step, (w, h))
         frames_json: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
         new_alerts: list[dict[str, Any]] = []
-        peak = Counter()
+        confirmations: dict[int, int] = {}
+        peak: Counter = Counter()
         inf_ms: list[float] = []
         last: Optional[FrameResult] = None
+        size_changes = 0
         idx, t0 = 0, time.perf_counter()
         tiled = None if settings.video.tiling else False
         batch = max(1, settings.video.batch_size) if engine.device.startswith("cuda") and not settings.video.tiling else 1
         pending: list[tuple[int, float, np.ndarray, bool]] = []   # (idx, video_time, frame, is_sample)
-        roi_on = roi_is_active(roi, settings)
 
         def flush() -> None:
-            nonlocal last, pav_status
+            nonlocal last
             samples = [p for p in pending if p[3]]
             reuse = {p[0]: pipe.plan_reuse(p[2], p[1]) for p in samples}
             need = [p for p in samples if not reuse[p[0]]]
-            results = dict(zip([p[0] for p in need], detect_in_roi(engine, [p[2] for p in need], settings, roi, tiled)))
+            results = dict(zip([p[0] for p in need], engine.detect_many([p[2] for p in need], settings, tiled)))
             for i, vt, frame, is_sample in pending:
                 if is_sample:
                     last = pipe.process(frame, i, vt, precomputed=results.get(i), reuse_previous=reuse[i])
                     if last.inference_ms:
                         inf_ms.append(last.inference_ms)
                     frames_json.append({"frame_idx": i, "video_time_sec": round(vt, 3),
+                                        "processed_at": iso(local_now()),
                                         "detections": [d.to_dict() for d in last.detections], "summary": last.summary})
-                    if pav_on:
-                        frames_json[-1]["pavement_status"] = pav_status = last.pavement_status
-                        pav_counts.update(pavement.counts(last.detections))
+                    for e in last.events:
+                        if e["event"] == "confirmed":
+                            confirmations[e["track_id"]] = i
+                            if evidence_dir is not None:
+                                img = annotate_litter(frame, last.detections,
+                                                      (*header, f"Video time {vt:.1f} s  frame {i}"),
+                                                      label_rejected=False)
+                                cv2.imwrite(str(Path(evidence_dir) / f"track_{e['track_id']}.jpg"), img,
+                                            [cv2.IMWRITE_JPEG_QUALITY, 88])
                     events.extend(last.events)
                     new_alerts.extend(last.new_alerts)
                     for k, v in last.summary.items():
                         peak[k] = max(peak[k], v)
                 if last is not None and (is_sample or settings.video.annotate_all_frames):
-                    general = last.pavement_status == pavement.GENERAL_IMAGE_MODE
-                    writer.write(annotate_pavement(frame, last.detections, roi, last.pavement_status or "", cam_label)
-                                 if pav_on and not general else
-                                 annotate_litter(frame, last.detections, roi, roi_active=roi_on,
-                                                 extra=["GENERAL MODE - not pavement-validated"] if general else ()))
+                    writer.write(annotate_litter(frame, last.detections, header, label_rejected=False))
             pending.clear()
 
         while idx < max_frames:
             ok, frame = cap.read()
             if not ok:
                 break
+            if frame.shape[1] != w or frame.shape[0] != h:     # a stream that changes resolution mid-file
+                size_changes += 1
+                frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
             is_sample = idx % step == 0
             if is_sample or (settings.video.annotate_all_frames and last is not None) or pending:
                 pending.append((idx, idx / fps, frame, is_sample))
@@ -472,8 +428,7 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
                                 "processing_fps": round(len(frames_json) / el, 2) if el else None,
                                 "eta_sec": round(el / frac - el, 1) if frac > 0.01 else None,
                                 "detections": sum(len(f["detections"]) for f in frames_json),
-                                "confirmed_objects": len({e["track_id"] for e in events if e["event"] == "confirmed"}),
-                                "new_alerts": len(new_alerts)})
+                                "confirmed_objects": len(confirmations), "new_alerts": len(new_alerts)})
             idx += 1
         if pending:
             flush()
@@ -481,17 +436,32 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
     finally:
         cap.release()
 
+    if idx == 0:
+        raise ValueError("No frame could be decoded from the video (damaged file or unsupported codec)")
+    validation.update(frames_read=idx, duration_sec=round(idx / fps, 2),
+                      truncated=bool(total and idx < max_frames and idx < total - max(2, int(0.01 * total))),
+                      limited_to_sec=settings.video.max_video_seconds if idx >= max_frames else None,
+                      resized_frames=size_changes)
+    if validation["truncated"]:
+        validation["warnings"].append(f"Only {idx} of the {total} frames the file reports could be decoded: the video "
+                                      "is damaged or truncated. The rest was NOT analysed.")
+    if validation["limited_to_sec"]:
+        validation["warnings"].append(f"Only the first {settings.video.max_video_seconds:.0f} s were analysed "
+                                      "(video.max_video_seconds).")
+    if size_changes:
+        validation["warnings"].append(f"{size_changes} frame(s) had a different resolution and were resized.")
+
     wall = time.perf_counter() - t0
-    confirmed_ids = sorted({e["track_id"] for e in events if e["event"] == "confirmed"})
     all_dets = [d for f in frames_json for d in f["detections"]]
-    litter = litter_summary(events, frames_json, roi, settings)
+    litter = video_litter(frames_json, confirmations)
     stats = {
         "video": {"fps": fps, "frames": idx, "width": w, "height": h, "duration_sec": round(idx / fps, 2),
                   "output_codec": codec},
         "frames_analysed": len(frames_json), "sample_every_n_frames": step,
-        "unique_confirmed_objects": len(confirmed_ids),
-        "litter": litter,
-        "confirmed_by_class": dict(Counter(e["class"] for e in events if e["event"] == "confirmed")),
+        "sample_interval_sec": round(step / fps, 3),
+        "unique_confirmed_objects": litter["unique_events"],
+        "frame_observations": litter["frame_observations"],
+        "confirmed_by_class": {b["class"]: b["events"] for b in litter["by_class"]},
         "new_alerts": len(new_alerts),
         "detections_by_status": dict(Counter(d["status"] for d in all_dets)),
         "rejection_reasons": dict(Counter(d.get("reason") for d in all_dets if d["status"] == REJECTED)),
@@ -503,16 +473,14 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
         "wall_time_sec": round(wall, 1),
         "model_version": engine.version,
         "settings": {"confidence": settings.confidence.model_dump(), "tracking": settings.tracking.model_dump(),
-                     "tiling": settings.tiling.model_dump()},
+                     "tiling": settings.tiling.model_dump(), "video_tiling": settings.video.tiling,
+                     "inference": settings.inference.model_dump()},
     }
-    if pav_on:   # detection-level totals over analysed frames (a static object counts once per analysed frame)
-        stats["pavement"] = {"status": pav_status, "detection_outcomes_over_frames": dict(pav_counts),
-                             "settings": settings.pavement.model_dump()}
     (out_dir / "detections.json").write_text(json.dumps(frames_json), encoding="utf-8")
     (out_dir / "events.json").write_text(json.dumps(events, indent=1), encoding="utf-8")
     (out_dir / "stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
     if progress:
         progress(1.0, {"frames_read": idx, "frames_total": total, "frames_analysed": len(frames_json)})
-    return {"stats": stats, "events": events, "alerts": new_alerts,
+    return {"stats": stats, "events": events, "alerts": new_alerts, "validation": validation, "litter": litter,
             "files": {k: str(out_dir / f) for k, f in [("video", "annotated.mp4"), ("detections", "detections.json"),
                                                        ("events", "events.json"), ("stats", "stats.json")]}}

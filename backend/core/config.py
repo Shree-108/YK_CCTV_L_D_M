@@ -55,11 +55,6 @@ class AppConfig:
     # Client names treated as local by the local-only safeguard in addition to loopback IPs. Tests only
     # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
     local_extra_hosts: tuple[str, ...] = ()
-    # four-screenshot analysis: scene-segmentation model that proposes the outdoor ROI ("off" disables it;
-    # the operator then always draws/confirms the ROI). Weights: models/roi_segmenter/upernet-convnext-tiny (MIT).
-    roi_segmenter: str = field(default_factory=lambda: os.getenv("LM_ROI_SEGMENTER", "auto").strip().lower())
-    roi_segmenter_dir: Path = field(default_factory=lambda: _env_path(
-        "LM_ROI_SEGMENTER_DIR", PROJECT_ROOT / "models" / "roi_segmenter" / "upernet-convnext-tiny"))
     # Login / sessions (API security plan Step 2). OFF by default; when on, routes need a role (Step 4, api/authz.py).
     auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "off").strip().lower())
     auth_db_path: Path = field(default_factory=lambda: _env_path("LM_AUTH_DB_PATH", PROJECT_ROOT / "storage" / "auth.db"))
@@ -105,7 +100,7 @@ class AppConfig:
 
     @property
     def sampled_dir(self) -> Path:
-        """Per-job outputs of the four-screenshot analysis: frames/, annotated/, roi/, report CSV."""
+        """Per-job outputs of the four-screenshot analysis: frames/, annotated/, reports/."""
         return self.storage_dir / "sampled"
 
     @property

@@ -9,8 +9,8 @@ test('header and rows, including the header-only report', () => {
 })
 
 test('quoted fields keep commas, quotes and line breaks', () => {
-  const { rows } = parseCsv('remark,n\n"No litter, inside ""the"" ROI",1\n"two\nlines",2')
-  assert.equal(rows[0].remark, 'No litter, inside "the" ROI')
+  const { rows } = parseCsv('remark,n\n"No litter, near ""the"" door",1\n"two\nlines",2')
+  assert.equal(rows[0].remark, 'No litter, near "the" door')
   assert.equal(rows[1].remark, 'two\nlines')
   assert.equal(rows[1].n, '2')
 })

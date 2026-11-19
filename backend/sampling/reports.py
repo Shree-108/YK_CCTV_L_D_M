@@ -18,7 +18,7 @@ from backend.sampling.repo import SampledRepo, _decode
 
 ANALYSED = ("LITTER_DETECTED", "NO_LITTER")
 FAILED_STATES = ("failed", "interrupted")
-ACTIVE_STATES = ("queued", "running", "awaiting_roi")
+ACTIVE_STATES = ("queued", "running", "awaiting_roi")     # awaiting_roi: jobs stored before ROI was removed
 
 
 def _local(ts: Optional[str]) -> Optional[dt.datetime]:
@@ -40,26 +40,20 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
     base = f"/api/sampled/jobs/{job['id']}/frames/{f['idx']}"
     clock = clock_time(_start(job), f.get("video_time_sec"))
     res = f.get("result") or {}
-    proposal = ((job.get("proposal") or {}).get("proposal") or {})
     return {
         "idx": f["idx"], "frame_idx": f["frame_idx"], "video_time_sec": f.get("video_time_sec"),
         "video_timestamp": hhmmss(f.get("video_time_sec"), millis=True),
         "recording_timestamp": clock.isoformat(timespec="seconds") if clock else None,
-        "status": f["status"], "outcome": f.get("outcome"), "roi_status": f.get("roi_status"), "roi": f.get("roi"),
+        "status": f["status"], "outcome": f.get("outcome"),
         "detection_count": f.get("detection_count", 0), "error": f.get("error"),
         "original_url": f"{base}/original.jpg" if f.get("original_path") else None,
         "annotated_url": f"{base}/annotated.jpg" if f.get("annotated_path") else None,
-        "proposal_url": f"{base}/proposal.jpg" if proposal.get("available") and f.get("original_path") else None,
         "detections": res.get("detections", []), "counts": res.get("counts"), "by_class": res.get("by_class", {}),
         "alert_ids": res.get("alert_ids", []), "inference_ms": res.get("inference_ms"),
-        "image_size": res.get("image_size"), "outside_roi_ignored": res.get("outside_roi_ignored"),
-        "roi_counts": res.get("roi_counts"),
+        "image_size": res.get("image_size"),
         "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
         "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
         "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,
-        # pavement-only mode
-        "pavement": res.get("pavement"),
-        "diagnostic_url": f"{base}/diagnostic.jpg" if res.get("diagnostic_path") else None,
     }
 
 
@@ -73,7 +67,7 @@ def lifecycle(job: dict[str, Any]) -> str:
     if state in ("failed", "interrupted"):
         return "FAILED"
     if state == "awaiting_roi":
-        return "AWAITING_ROI"                     # operator workflow only; automatic jobs never pause
+        return "AWAITING_LEGACY_STEP"             # jobs stored before ROI was removed: cancel and re-run
     if state == "queued":
         return "QUEUED"
     if stage == "sampling":
@@ -82,7 +76,7 @@ def lifecycle(job: dict[str, Any]) -> str:
         return "RUNNING_DETECTION"
     if stage == "generating_csv":
         return "GENERATING_REPORT"
-    return "PROCESSING"                           # received, validating, identifying_roi
+    return "PROCESSING"                           # received, validating
 
 
 def report_urls(job: dict[str, Any]) -> Optional[dict[str, str]]:
@@ -109,8 +103,11 @@ def public_job(job: dict[str, Any], media: Optional[dict[str, Any]], frames: lis
     j["lifecycle"] = lifecycle(job)
     j["reports"] = report_urls(job)
     counts = job.get("counts") or {}
-    j["roi_policy"] = counts.get("roi_policy")
     j["summary"] = counts.get("summary")
+    j["standard_outputs"] = counts.get("standard_outputs")
+    j["identity"] = counts.get("identity")
+    for k in ("roi", "roi_mode", "roi_source", "roi_status", "roi_confidence", "proposal", "auto_accept"):
+        j.pop(k, None)                            # history columns of the removed ROI feature
     return j
 
 
@@ -223,7 +220,6 @@ class Reports:
                 "camera_id": j.get("camera_id"), "recording_start": j.get("recording_start"),
                 "created_at": j["created_at"], "finished_at": j.get("finished_at"), "state": j["state"],
                 "stage": j["stage"], "error": error(j.get("error")), "duration_sec": j.get("duration_sec"),
-                "roi_status": j.get("roi_status"), "roi_source": j.get("roi_source"),
                 "screenshots_extracted": sum(f["status"] == "saved" for f in frames),
                 "screenshots_analysed": sum(f.get("outcome") in ANALYSED for f in frames),
                 "litter": sum((f.get("detection_count") or 0) for f in frames if f.get("outcome") in ANALYSED),
@@ -259,9 +255,10 @@ class Reports:
     def detections(self, *, store: str = "", camera: str = "", cls: str = "", start: str = "", end: str = "",
                    limit: int = 100, offset: int = 0) -> dict[str, Any]:
         """Confirmed litter detections from the four-screenshot analyses, with evidence links."""
-        # screenshots without an approved ROI (ROI_NOT_CONFIGURED / ROI_FRAME_MISMATCH) are review material only
+        # historical outcome values (2026-11-17..19, a removed feature) marked screenshots as review material only
         where, p = ["d.source_type='sample'", "d.status='confirmed'",
-                    "IFNULL(f.outcome,'') NOT IN ('ROI_NOT_CONFIGURED','ROI_FRAME_MISMATCH')"], []
+                    "IFNULL(f.outcome,'') NOT IN ('ROI_NOT_CONFIGURED','ROI_FRAME_MISMATCH','NEEDS_REVIEW',"
+                    "'ROI_INVALID','PROPOSED')"], []
         if store:
             where.append("j.store_id=?"); p.append(store)
         if camera:

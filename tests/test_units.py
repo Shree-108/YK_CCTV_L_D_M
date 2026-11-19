@@ -1,10 +1,10 @@
-"""Unit tests that don't need the model: tiling, filters/ROI, confidence tiers, tracker, settings."""
+"""Unit tests that don't need the model: tiling, filters, confidence tiers, tracker, settings."""
 import numpy as np
 import pytest
 from pydantic import ValidationError
 
 from backend.core.settings import DetectionSettings, merged_settings
-from backend.detection.filters import ROISet, apply_filters, confidence_tier, confirm_single_image
+from backend.detection.filters import apply_filters, confidence_tier, confirm_single_image
 from backend.detection.tiling import merge_detections, tile_grid
 from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection
 from backend.tracking.tracker import LitterTracker
@@ -53,7 +53,7 @@ def test_confidence_tiers():
 def test_low_confidence_image_detection_is_never_confirmed():
     s = DetectionSettings()
     dets = [D([10, 10, 40, 40], 0.25), D([50, 50, 80, 80], 0.50), D([90, 90, 120, 120], 0.91)]
-    confirm_single_image(apply_filters(dets, (200, 200, 3), s, None), s)
+    confirm_single_image(apply_filters(dets, (200, 200, 3), s), s)
     assert [d.status for d in dets] == [REJECTED, CANDIDATE, CONFIRMED]
 
 
@@ -64,46 +64,39 @@ def test_threshold_order_validated():
         merged_settings({"tracking": {"temporal_window": 3, "min_confirmations": 4}})
 
 
-# ------------------------------------------------------------------ ROI + size filters
-GROUND = [{"name": "sidewalk", "type": "sidewalk", "mode": "include",
-           "polygon": [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]}]
-
-
-def test_roi_footpoint_and_exclude():
+# ------------------------------------------------------------------ size/class filters (no spatial filter)
+def test_apply_filters_never_rejects_by_position():
+    """ROI was removed: a detection anywhere in the frame (corners, top 'sky' area, edges) is never rejected
+    because of WHERE it is - only confidence/class/size/aspect may reject it."""
     s = DetectionSettings()
-    roi = ROISet.from_json(GROUND + [{"name": "bin", "mode": "exclude", "type": "custom",
-                                      "polygon": [[0.8, 0.8], [1, 0.8], [1, 1], [0.8, 1]]}])
-    dets = [D([10, 10, 30, 30]),          # sky: outside
-            D([10, 60, 30, 90]),          # on the ground
-            D([10, 20, 30, 55]),          # tall object whose FOOT is on the ground -> kept
-            D([85, 85, 95, 95])]          # inside exclude zone
-    apply_filters(dets, (100, 100, 3), s, roi)
-    assert [d.reason for d in dets] == ["outside_roi", None, None, "outside_roi"]
+    boxes = [[0, 0, 20, 20], [80, 0, 100, 20], [0, 80, 20, 100], [80, 80, 100, 100], [40, 40, 60, 60],
+             [0, 45, 15, 60], [85, 40, 100, 55]]
+    dets = apply_filters([D(b) for b in boxes], (100, 100, 3), s)
+    assert all(d.status == CANDIDATE and d.reason is None for d in dets)
+    assert not hasattr(s.filters, "roi_enabled")
 
 
-def test_roi_margin_prevents_over_strict_rejection():
-    s = DetectionSettings()
-    dets = [D([10, 40, 20, 49])]  # footpoint 1% above the zone edge
-    apply_filters(dets, (100, 100, 3), s, ROISet.from_json(GROUND))
-    assert dets[0].status == CANDIDATE
-
-
-def test_no_roi_configured_allows_whole_frame():
-    s = DetectionSettings()
-    dets = apply_filters([D([1, 1, 20, 20])], (100, 100, 3), s, ROISet.from_json([]))
-    assert dets[0].status == CANDIDATE
+def test_settings_strip_legacy_roi_and_pavement_keys():
+    """Stored settings from before ROI removal still load: legacy keys are dropped, never validated or used."""
+    legacy = {"pavement": {"mode": "on", "min_area": 10},
+              "filters": {"roi_enabled": True, "roi_anchor": "footpoint", "roi_margin_frac": 0.02,
+                          "roi_crop_inference": True, "roi_crop_pad_frac": 0.1, "min_box_area_px": 77}}
+    s = merged_settings(legacy, {"pavement": {"mode": "off"}, "filters": {"roi_enabled": False}})
+    dumped = s.model_dump()
+    assert "pavement" not in dumped
+    assert not any(k.startswith("roi") for k in dumped["filters"])
+    assert s.filters.min_box_area_px == 77            # real keys next to legacy ones still apply
+    assert "pavement" not in repr(dumped) and "roi_" not in repr(dumped)
+    with pytest.raises(ValidationError):              # anything else unknown is still rejected (extra=forbid)
+        merged_settings({"filters": {"not_a_setting": 1}})
 
 
 def test_size_and_class_filters():
     s = merged_settings({"filters": {"class_blocklist": ["cardboard"]}})
     dets = [D([0, 0, 3, 3]), D([0, 0, 90, 90]), D([10, 10, 30, 30], name="cardboard")]
-    apply_filters(dets, (100, 100, 3), s, None)
+    apply_filters(dets, (100, 100, 3), s)
     assert [d.reason for d in dets] == ["too_small", "too_large", "class_blocked"]
 
-
-def test_invalid_roi_rejected():
-    with pytest.raises(ValidationError):
-        ROISet.from_json([{"polygon": [[0, 0], [2, 0], [0, 1]]}])
 
 
 # ------------------------------------------------------------------ tracker + temporal confirmation

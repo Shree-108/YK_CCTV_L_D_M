@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Bbox, RoiZone } from '../../api/types'
+import { useMemo, useRef, type ReactNode } from 'react'
+import type { Bbox } from '../../api/types'
 import { cx } from '../../lib/format'
 
 export interface OverlayBox {
@@ -25,8 +25,8 @@ export const STATUS_COLOR: Record<string, string> = {
  * Image + SVG overlay in the image's own pixel space (viewBox), so boxes stay
  * aligned at any display size. Labels avoid overlapping by stacking.
  */
-export function ImageOverlay({ src, width, height, boxes = [], roi, showLabels = true, className, children, fit = 'contain', onImageClick, alt }: {
-  src: string | null; width: number; height: number; boxes?: OverlayBox[]; roi?: RoiZone[] | null; showLabels?: boolean
+export function ImageOverlay({ src, width, height, boxes = [], showLabels = true, className, children, fit = 'contain', onImageClick, alt }: {
+  src: string | null; width: number; height: number; boxes?: OverlayBox[]; showLabels?: boolean
   className?: string; children?: ReactNode; fit?: 'contain' | 'cover'; onImageClick?: (x: number, y: number) => void; alt: string
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -69,20 +69,12 @@ export function ImageOverlay({ src, width, height, boxes = [], roi, showLabels =
             pt.x = e.clientX
             pt.y = e.clientY
             const p = pt.matrixTransform(svgRef.current.getScreenCTM()!.inverse())
-            // clicks right on the frame edge are clamped in, so a polygon can reach the image border
+            // clicks right on the frame edge are clamped in
             const tol = Math.max(width, height) * 0.01
             if (p.x >= -tol && p.y >= -tol && p.x <= width + tol && p.y <= height + tol) {
               onImageClick(Math.min(1, Math.max(0, p.x / width)), Math.min(1, Math.max(0, p.y / height)))
             }
           }}>
-          {roi?.map((z, i) => (
-            <polygon key={i} points={z.polygon.map(([x, y]) => `${x * width},${y * height}`).join(' ')}
-              fill={z.mode === 'include' ? 'rgba(0,220,255,0.12)' : 'rgba(240,82,74,0.12)'}
-              stroke={z.mode === 'include' ? '#00dcff' : 'var(--crit)'} strokeWidth={Math.max(2, width / 320)} strokeLinejoin="round"
-              strokeDasharray={z.mode === 'include' ? undefined : '6 4'}>
-              <title>{`${z.name} (${z.type}, ${z.mode})`}</title>
-            </polygon>
-          ))}
           {showLabels && labels.map((l, i) => l && (
             <g key={i}>
               <rect x={l.x} y={l.y} width={l.w} height={l.h} fill={boxes[i].color} opacity={0.92} rx={2} />
@@ -107,51 +99,4 @@ export function ImageOverlay({ src, width, height, boxes = [], roi, showLabels =
 /** Keeps a media container at the source aspect ratio. */
 export function AspectBox({ width, height, className, children }: { width: number; height: number; className?: string; children: ReactNode }) {
   return <div className={cx('relative w-full', className)} style={{ aspectRatio: `${width || 16} / ${height || 9}` }}>{children}</div>
-}
-
-/** ROI polygon editor: click to add points; zones are normalized [0,1]. */
-export function RoiEditor({ src, width, height, zones, onChange }: { src: string | null; width: number; height: number; zones: RoiZone[]; onChange: (z: RoiZone[]) => void }) {
-  const [draft, setDraft] = useState<[number, number][]>([])
-  const [mode, setMode] = useState<RoiZone['mode']>('include')
-  const [type, setType] = useState<RoiZone['type']>('sidewalk')
-  const previewZones: RoiZone[] = [...zones, ...(draft.length ? [{ name: 'draft', type, mode, polygon: draft }] : [])]
-  return (
-    <div className="flex flex-col gap-2">
-      <AspectBox width={width} height={height} className="overflow-hidden rounded-md border border-line">
-        <ImageOverlay src={src} width={width} height={height} roi={previewZones} className="absolute inset-0"
-          alt="Camera frame for ROI drawing" onImageClick={(x, y) => setDraft((d) => [...d, [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]])}>
-          <svg viewBox={`0 0 ${width} ${height}`} className="pointer-events-none absolute inset-0 size-full">
-            {draft.map(([x, y], i) => <circle key={i} cx={x * width} cy={y * height} r={Math.max(3, width / 250)} fill="var(--warn)" />)}
-          </svg>
-        </ImageOverlay>
-      </AspectBox>
-      <div className="flex flex-wrap items-center gap-2 text-[12px]">
-        <select aria-label="Zone type" value={type} onChange={(e) => setType(e.target.value as RoiZone['type'])} className="h-7 rounded-md border border-line bg-panel-2 px-2 text-fg">
-          {['sidewalk', 'road_edge', 'ground', 'parking', 'entrance', 'custom'].map((t) => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
-        </select>
-        <select aria-label="Zone mode" value={mode} onChange={(e) => setMode(e.target.value as RoiZone['mode'])} className="h-7 rounded-md border border-line bg-panel-2 px-2 text-fg">
-          <option value="include">include (monitor)</option><option value="exclude">exclude (ignore)</option>
-        </select>
-        <span className="text-fg-3">{draft.length} points — click on the frame to add</span>
-        <div className="ml-auto flex gap-1.5">
-          <button className="h-7 rounded-md border border-line px-2 text-fg-2 hover:bg-hover disabled:opacity-40" disabled={!draft.length} onClick={() => setDraft((d) => d.slice(0, -1))}>Undo point</button>
-          <button className="h-7 rounded-md border border-line px-2 text-fg-2 hover:bg-hover disabled:opacity-40" disabled={!draft.length} onClick={() => setDraft([])}>Clear</button>
-          <button className="h-7 rounded-md bg-info px-2 font-medium text-on-accent disabled:opacity-40" disabled={draft.length < 3}
-            onClick={() => { onChange([...zones, { name: `${type}-${zones.length + 1}`, type, mode, polygon: draft }]); setDraft([]) }}>Add zone</button>
-        </div>
-      </div>
-      {zones.length > 0 && (
-        <ul className="flex flex-col gap-1">
-          {zones.map((z, i) => (
-            <li key={i} className="flex items-center gap-2 rounded-md border border-line bg-panel-2 px-2 py-1 text-[12px]">
-              <span className={cx('size-2 rounded-sm', z.mode === 'include' ? 'bg-info' : 'bg-crit')} aria-hidden />
-              <span className="text-fg">{z.name}</span><span className="text-fg-3">{z.type} · {z.mode} · {z.polygon.length} pts</span>
-              <button className="ml-auto text-fg-3 hover:text-crit" onClick={() => onChange(zones.filter((_, j) => j !== i))}>Remove</button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="text-[11px] text-fg-3">The bottom-centre (foot point) of each detection is tested against the zones. With no include zone the whole frame is monitored; exclude zones always win.</p>
-    </div>
-  )
 }

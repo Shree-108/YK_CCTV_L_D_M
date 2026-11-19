@@ -10,6 +10,7 @@ import { Field, Input, PageHeader, Panel, Select } from '../../components/ui/pri
 import { BarList, Columns, Donut, Legend, LineChart, SERIES, StackBar } from '../../components/ui/charts'
 import { KpiCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
+import { LitterAnalyticsSection } from './LitterAnalyticsSection'
 
 function daysBetween(a: string, b: string): string[] {
   const out: string[] = []
@@ -33,7 +34,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="Analytics" description="Trends and distributions computed from the alert, detection and confirmed-object tables. Hour-of-day uses UTC timestamps as stored." />
+      <PageHeader title="Analytics" description="Litter events by period, store, camera and class, followed by alert and raw-detection statistics. The date range applies to both." />
       <Panel title="Filters" icon={Filter}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Field label="From"><Input type="date" value={f.start} max={f.end} onChange={(e) => setF({ ...f, start: e.target.value })} /></Field>
@@ -46,6 +47,8 @@ export default function AnalyticsPage() {
             <option value="">All models</option>{models.data?.models.map((m) => <option key={m.version}>{m.version}</option>)}</Select></Field>
         </div>
       </Panel>
+      <LitterAnalyticsSection start={dayStartIso(f.start)} end={dayEndIso(f.end)} />
+      <h2 className="mt-2 text-[13px] font-semibold uppercase tracking-[0.08em] text-fg-3">Alerts and raw detections</h2>
       {a.error && !a.data ? <Panel><ErrorState error={a.error} onRetry={a.refetch} /></Panel> : !a.data ? <Panel><LoadingState rows={6} /></Panel> :
         a.data.alerts_total === 0 && a.data.detections_by_status.length === 0 ? (
           <Panel><EmptyState icon={BarChart3} title="No data in this period"

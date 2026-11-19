@@ -1,0 +1,67 @@
+# E0 baseline comparison - PROPOSED configuration (nothing here is wired into production).
+# All settings are applied IN MEMORY by an offline evaluation script (engine + settings objects). The settings table,
+# camera records, weights, thresholds, NMS, severity and deduplication are NOT modified.
+status: PROPOSED - awaiting owner approval
+model:
+  version: v3_store_cctv                       # unchanged weights: models/litter_yolo/v3_store_cctv/best.pt
+  trained_at: 2026-09-30                        # every test recording must be later than this, or provably unseen
+production_settings_used_unchanged:
+  confidence: {weak_threshold: 0.30, candidate_threshold: 0.45, confirmed_threshold: 0.60}
+  inference:  {image_size: 640, iou_threshold: 0.50, max_detections: 300, agnostic_nms: false}
+  tiling:     {enabled: true, mode: auto, tile_size: 1024, overlap: 0.20, auto_min_ratio: 1.25,
+               include_full_frame: true, merge_iou: 0.50, cross_tile_ios: 0.75}
+  video:      {sample_fps: 2.0, tiling: false, skip_static_frames: true, max_reuse_sec: 5.0}
+
+configs:
+  C1_screenshot_tiled:
+    what: current zero-click screenshot path (backend/sampling/runner.py -> detect_image, force_tiling=None)
+    behaviour_on_2560x1440: "auto-tiles: 6 tiles of 1024 px + 1 full-frame pass = 7 passes"
+    behaviour_with_roi_crop: "crop 1942x906 -> 3 tiles + 1 full = 4 passes"
+  C2_full_video_untiled:
+    what: current full-video path (backend/services/pipeline.py:353 forces tiling off unless video.tiling)
+    behaviour_on_2560x1440: "1 pass at 640 px (frame downscaled 4x: an 11x4 px object becomes ~3x1 px)"
+  C3_full_video_tiled_experimental:
+    what: full-video path with video.tiling=true, applied as an in-memory override only
+    variant_a: "production tile parameters (identical to C1 per frame; differs only in pipeline context: static-frame reuse, ROI crop, tracking)"
+    variant_b_optional_needs_approval: {tile_size: 1280, overlap: 0.15, note: "speed variant: 2 tiles + full on the ROI crop; merge_iou / cross_tile_ios unchanged"}
+
+roi_conditions:
+  R0: no ROI (model view; matches backend/services/evaluation.py, which scores raw detections)
+  R1: proposed CAM_A ROI applied offline (foot point, margin 0.02, crop inference on) - ONLY after the owner approves the boundary
+
+levels:
+  A_frame_level:
+    data: the same independently labelled test frames for every config
+    compare: [C1, C2, C3b]          # C3a == C1 per frame; run once as a sanity check that outputs are identical
+    metrics:
+      precision_recall: "at candidate_threshold 0.45 (and weak 0.30), class-aware, IoU>=0.5"
+      map50_map50_95: "101-point AP, evaluation-only confidence floor 0.01 (backend/services/evaluation.py)"
+      small_object_recall: "GT area < 32x32 px at native resolution; also report < 16x16 px"
+      clean_false_positives: "FP per clean frame and per 1,000 clean frames, full frame and inside ROI"
+      time_per_frame: "wall ms per frame, median and p95, warm model (drop first 3), CPU, same machine"
+      duplicates_after_merge: "extra predictions per GT (IoU>=0.5 or IoS>=0.75 to an already-matched prediction of the same object) + residual output pairs with IoS>=0.75"
+  B_clip_level:
+    data: labelled clips with litter instances (appear/disappear time) + clean clips
+    compare: [C1 4-screenshot job, C2 full video, C3 full video]
+    metrics: [object recall, false alerts per clip-hour on clean clips, wall time per clip, model runs per clip]
+
+resource_estimate:            # this PC: 4 CPU cores, no CUDA (torch 2.14.1+cpu)
+  measured_anchors:
+    tiled_2560x1440_7_passes_s: 8.3      # storage/eval/baseline_v3_20261112/frames.csv, n=3 frames
+    untiled_video_pass_s: 0.18-0.21      # storage/videos/*/stats.json mean_inference_ms
+    untiled_single_image_s: 0.39         # baseline frames.csv, 640x368 and 1280x720 frames
+  estimated:
+    tiled_roi_crop_4_passes_s: "~4.7 (scaled from 7-pass measurement; to be measured in E0)"
+  level_A_for_350_frames:     # 150 litter + 100 clean + 100 hard-negative
+    C1_R0: "~48 min"
+    C1_R1: "~27 min"
+    C2:    "~2.5 min"
+    C3b:   "~21 min (if approved)"
+  level_B_for_10_clips_of_5_min:
+    C1_screenshot_jobs: "~10 min"
+    C2: "~20 min"
+    C3_R0: "~9 h (about 400 model runs per clip after static reuse, x 8.3 s)"
+    C3_R1: "~5 h"
+    note: "C3 should run overnight or on a GPU machine; reuse ratio taken from earlier runs (20-66 % of frames reused) - uncertain"
+  storage: "~350 MB extracted frames (git-ignored under storage/), <50 MB predictions"
+  human_effort: "~9 h first-pass annotation of 350 frames + ~4 h second review of the test set"

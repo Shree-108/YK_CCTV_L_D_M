@@ -4,7 +4,7 @@ Columns follow the existing LDM detection export where they overlap (class, conf
 pixels, status, frame_idx, job_id, model_version) and add the video/store/screenshot context.
 
 Granularity: one row per confirmed litter detection; a screenshot without a confirmed detection (no litter,
-uncertain ROI, unreadable, failed) still gets exactly one row, so all four screenshots are always traceable.
+unreadable, failed) still gets exactly one row, so all four screenshots are always traceable.
 Unknown store, camera or recording date stay blank - nothing is invented.
 """
 from __future__ import annotations
@@ -20,19 +20,16 @@ from backend.sampling.plan import clock_time, hhmmss, parse_recording_start
 
 FIELDS = ["video_name", "store_id", "camera_id", "recording_date", "video_timestamp", "recording_timestamp",
           "screenshot", "frame_idx", "class", "confidence", "x1", "y1", "x2", "y2", "status", "detection_count",
-          "outcome", "roi_status", "remark", "evidence_image", "job_id", "model_version"]
+          "outcome", "remark", "evidence_image", "job_id", "model_version"]
 
-OUTCOMES = ("LITTER_DETECTED", "NO_LITTER", "ROI_UNCERTAIN", "UNREADABLE", "FAILED")
+OUTCOMES = ("LITTER_DETECTED", "NO_LITTER", "UNREADABLE", "FAILED")
 
 
-def remark(outcome: Optional[str], n: int, roi_source: Optional[str], error: Optional[str]) -> str:
-    where = "the whole frame (no ROI)" if roi_source == "whole_frame" else "the outdoor ROI"
+def remark(outcome: Optional[str], n: int, error: Optional[str]) -> str:
     if outcome == "LITTER_DETECTED":
-        return f"{n} litter object{'s' if n != 1 else ''} detected inside {where}."
+        return f"{n} litter object{'s' if n != 1 else ''} detected in the screenshot."
     if outcome == "NO_LITTER":
-        return f"No litter detected inside {where}."
-    if outcome == "ROI_UNCERTAIN":
-        return "Not analysed: the outdoor area could not be confirmed for this screenshot."
+        return "No litter detected by the model in this screenshot (not a verified clean result)."
     if outcome == "UNREADABLE":
         return f"Not analysed: the screenshot is unreadable ({error or 'no picture'})."
     if outcome == "FAILED":
@@ -56,9 +53,6 @@ def rows_for_job(job: dict[str, Any], media: dict[str, Any], frames: Iterable[di
     except ValueError:
         start = None
     out: list[dict[str, Any]] = []
-    # an automatic job without an approved ROI analysed the whole frame: never call that "the outdoor ROI"
-    roi_source = ("whole_frame" if job.get("roi_status") in ("not_configured", "disabled_in_settings")
-                  else job.get("roi_source"))
     for f in sorted(frames, key=lambda x: x["idx"]):
         t = f.get("video_time_sec")
         clock = clock_time(start, t)
@@ -70,8 +64,7 @@ def rows_for_job(job: dict[str, Any], media: dict[str, Any], frames: Iterable[di
             "video_timestamp": hhmmss(t, millis=True), "recording_timestamp": clock.isoformat(timespec="milliseconds") if clock else "",
             "screenshot": Path(f["original_path"]).name if f.get("original_path") else "",
             "frame_idx": f.get("frame_idx"), "detection_count": len(confirmed), "outcome": f.get("outcome") or "",
-            "roi_status": f.get("roi_status") or job.get("roi_status") or "",
-            "remark": remark(f.get("outcome"), len(confirmed), roi_source, f.get("error")),
+            "remark": remark(f.get("outcome"), len(confirmed), f.get("error")),
             "evidence_image": _rel(f.get("annotated_path") or f.get("original_path"), storage_dir),
             "job_id": job["id"], "model_version": res.get("model_version") or job.get("model_version") or "",
         }

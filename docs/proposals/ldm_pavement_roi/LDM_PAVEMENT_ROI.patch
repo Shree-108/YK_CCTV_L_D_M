@@ -1,0 +1,2182 @@
+diff --git a/backend/api/routes.py b/backend/api/routes.py
+index cc4fd31..317382b 100644
+--- a/backend/api/routes.py
++++ b/backend/api/routes.py
+@@ -545,7 +545,7 @@ async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = F
+         roi = state.roi_for(cam, camera_id) if use_roi else None
+         res = await asyncio.to_thread(detect_image, engine, img, s, roi, state.meta, state.db,
+                                       state.alerts if create_alerts else None, camera_id,
+-                                      safe_display_name(file.filename))
++                                      safe_display_name(file.filename), camera_registered=cam is not None)
+     finally:
+         path.unlink(missing_ok=True)
+     annotated = res.pop("annotated")
+diff --git a/backend/api/routes_sampled.py b/backend/api/routes_sampled.py
+index 15025b0..500f31b 100644
+--- a/backend/api/routes_sampled.py
++++ b/backend/api/routes_sampled.py
+@@ -249,6 +249,8 @@ def frame_image(job_id: str, idx: int, kind: str, download: bool = False,
+     root = Path(job["output_dir"]).resolve()
+     if kind == "proposal":
+         p = root / "roi" / f"proposal_s{idx}.jpg"
++    elif kind == "diagnostic" and (f.get("result") or {}).get("diagnostic_path"):   # pavement-only mode
++        p = Path(f["result"]["diagnostic_path"])
+     elif kind in FRAME_KINDS and f.get(FRAME_KINDS[kind]):
+         p = Path(f[FRAME_KINDS[kind]])
+     else:
+diff --git a/backend/cameras/manager.py b/backend/cameras/manager.py
+index 7241467..f36d230 100644
+--- a/backend/cameras/manager.py
++++ b/backend/cameras/manager.py
+@@ -232,10 +232,14 @@ class CameraWorker:
+                 if len(self._times) > 1:
+                     st.fps = round((len(self._times) - 1) / max(self._times[-1] - self._times[0], 1e-6), 2)
+                 from backend.services.pipeline import roi_is_active
+-                img = annotate_litter(frame, res.detections, self.pipeline.roi,
+-                                      roi_active=roi_is_active(self.pipeline.roi, self.pipeline.settings),
+-                                      extra=[f"LIVE  {self.cam.get('name', self.id)}",
+-                                             f"FPS {st.fps:.1f}  |  {st.inference_ms:.0f} ms"])
++                if res.pavement_status:                  # pavement-only mode: approved ROI + outcomes
++                    from backend.services.visualization import annotate_pavement
++                    img = annotate_pavement(frame, res.detections, self.pipeline.roi, res.pavement_status, self.id)
++                else:
++                    img = annotate_litter(frame, res.detections, self.pipeline.roi,
++                                          roi_active=roi_is_active(self.pipeline.roi, self.pipeline.settings),
++                                          extra=[f"LIVE  {self.cam.get('name', self.id)}",
++                                                 f"FPS {st.fps:.1f}  |  {st.inference_ms:.0f} ms"])
+                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                 ok_raw, raw = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                 if ok and ok_raw:
+diff --git a/backend/cameras/scheduler.py b/backend/cameras/scheduler.py
+index f61207c..48c17d6 100644
+--- a/backend/cameras/scheduler.py
++++ b/backend/cameras/scheduler.py
+@@ -302,8 +302,10 @@ class CaptureScheduler:
+                 settings = settings.model_copy(update={"alerts": settings.alerts.model_copy(update={
+                     "dedup_window_sec": window, "alert_on_image_uploads": True})})
+                 roi = st.roi_for(cam, cam_id) if cfg["task"] == "litter" else None
++                if cfg["task"] != "litter":            # pavement-only mode is for litter; other models are unaffected
++                    settings = settings.model_copy(update={"pavement": settings.pavement.model_copy(update={"enabled": False})})
+                 res = detect_image(engine, frame, settings, roi, st.meta, st.db, st.alerts, cam_id, f"capture {cap_id}",
+-                                   job_id=f"schedule:{cam_id}")
++                                   job_id=f"schedule:{cam_id}", camera_registered=True)
+                 cv2.imwrite(str(out / "annotated.jpg"), res.pop("annotated"), [cv2.IMWRITE_JPEG_QUALITY, 90])
+                 fields.update(status="done", model_version=res["model_version"], annotated_path=str(out / "annotated.jpg"),
+                               counts={**res["counts"], "by_class": res["by_class"],
+diff --git a/backend/core/settings.py b/backend/core/settings.py
+index 23da70c..9e4be87 100644
+--- a/backend/core/settings.py
++++ b/backend/core/settings.py
+@@ -58,10 +58,42 @@ class FilterSettings(_M):
+     roi_enabled: bool = True
+     roi_anchor: Literal["footpoint", "center"] = "footpoint"
+     roi_margin_frac: float = Field(0.02, ge=0, le=0.2)  # tolerance so the ROI edge doesn't drop real litter
+-    roi_crop_inference: bool = True                     # run the model only on the ROI's bounding rectangle
++    # EXPERIMENTAL, OFF by default: run the model only on the ROI's bounding rectangle. It changed recall sharply on
++    # real footage (raw detections indoor 15 -> 0, EZVIZ 61 -> 1); full-frame inference + ROI post-filter is the
++    # baseline. Enable per camera only after an independent recall evaluation.
++    roi_crop_inference: bool = False
+     roi_crop_pad_frac: float = Field(0.08, ge=0, le=0.5)  # padding around it (objects standing on the edge)
+ 
+ 
++class SizeLimit(_M):
++    """Minimum box size, NORMALISED to the original frame so it survives stream-resolution changes.
++    ``min_side_frac``: shorter box side / shorter frame side. ``min_area_frac``: box area / frame area."""
++    min_side_frac: float = Field(0.012, ge=0, le=1)
++    min_area_frac: float = Field(0.00015, ge=0, le=1)
++
++
++class PavementSettings(_M):
++    """Pavement-only mode (backend/detection/pavement.py). OFF by default: with ``enabled=false`` detection output is
++    exactly the pre-existing behaviour. Turn it on globally or per camera (cameras.settings_json) only after the
++    camera's ROI has been approved."""
++    enabled: bool = False
++    # ROI membership. footpoint: the bottom-centre (ground contact) must be inside the pavement polygon or within
++    # edge_tolerance_frac of it. footpoint_or_overlap: additionally accept a box with >= min_include_overlap of its
++    # area inside the polygon (litter whose foot point is hidden just behind the boundary).
++    membership: Literal["footpoint", "footpoint_or_overlap"] = "footpoint_or_overlap"
++    edge_tolerance_frac: float = Field(0.01, ge=0, le=0.1)      # of the frame's shorter side, in pixels
++    min_include_overlap: float = Field(0.5, gt=0, le=1)
++    # Exclusion zones are applied AFTER membership: foot point inside, or >= max_exclusion_overlap of the box inside
++    max_exclusion_overlap: float = Field(0.5, gt=0, le=1)
++    size: SizeLimit = SizeLimit()
++    class_size: dict[str, SizeLimit] = {}                      # per-class overrides (none proposed yet)
++    # Frame size the ROI was drawn on. When set, a frame with a different aspect ratio (another camera or stream)
++    # gets ROI_FRAME_MISMATCH and no confirmed litter instead of a wrongly placed polygon.
++    roi_reference_size: Optional[tuple[int, int]] = None
++    aspect_tolerance: float = Field(0.02, ge=0, le=0.5)
++    diagnostic_images: bool = True                             # sampled jobs also save <name>_diagnostic.jpg
++
++
+ class TrackingSettings(_M):
+     iou_match: float = Field(0.30, gt=0, lt=1)
+     low_iou_match: float = Field(0.50, gt=0, lt=1)
+@@ -123,6 +155,7 @@ class DetectionSettings(_M):
+     inference: InferenceSettings = InferenceSettings()
+     tiling: TileSettings = TileSettings()
+     filters: FilterSettings = FilterSettings()
++    pavement: PavementSettings = PavementSettings()
+     tracking: TrackingSettings = TrackingSettings()
+     severity: SeveritySettings = SeveritySettings()
+     alerts: AlertSettings = AlertSettings()
+diff --git a/backend/detection/pavement.py b/backend/detection/pavement.py
+new file mode 100644
+index 0000000..cb4d8fe
+--- /dev/null
++++ b/backend/detection/pavement.py
+@@ -0,0 +1,294 @@
++"""Pavement-only mode: camera-specific ROI enforcement and the significant-litter size filter.
++
++The ROI is camera CONFIGURATION (an approved polygon saved for one camera), never a model prediction. This module
++only reads the polygon it is given; it never creates, guesses, copies or approves one.
++
++Analysis mode (decide_mode), per frame:
++
++  GENERAL_IMAGE_MODE  no camera association (manual upload, camera_id "upload"/empty). The EXISTING image analysis
++                      runs unchanged (filters, confirmation, alerts); outcomes are GENERAL_* and are never presented
++                      as pavement-validated. Size is measured and recorded but does not change anything.
++  CAMERA_ROI_MODE     a REGISTERED camera with an approved include polygon and a matching frame shape: the pavement
++                      gate below decides.
++  ROI_NOT_CONFIGURED  a camera is named but is not registered, or has no approved include polygon: nothing can be
++                      confirmed (no confirmed pavement alert). Detections are kept as UNVERIFIED_ROI_NOT_CONFIGURED.
++  ROI_FRAME_MISMATCH  the frame's aspect ratio differs from roi_reference_size: as ROI_NOT_CONFIGURED.
++
++Membership is decided AFTER inference on the full frame: the gate never changes a box's coordinates. (ROI-crop
++inference is a separate, experimental setting - filters.roi_crop_inference - and is OFF by default.)
++
++Order, per detection in CAMERA_ROI_MODE (after the existing confidence/class/size/aspect filters, unchanged):
++
++  1. Frame check   (above).
++  2. Membership    ground-contact point = bottom-centre of the box, in ORIGINAL-frame pixels. Inside the pavement
++                   polygon, or within ``edge_tolerance_frac`` of the frame's shorter side of it -> member. With
++                   ``footpoint_or_overlap`` a box with >= ``min_include_overlap`` of its area inside also counts, so
++                   litter whose bottom edge is hidden just behind the boundary is kept. A box that merely crosses
++                   the boundary is NOT rejected for that reason alone.
++  3. Exclusions    applied after membership: foot point inside an exclusion polygon, or >= ``max_exclusion_overlap``
++                   of the box inside it -> REJECTED_OUTSIDE_ROI (reason ``exclusion_zone:<name>``). No tolerance.
++  4. Size          normalised to the original frame: shorter box side / shorter frame side >= ``min_side_frac`` AND
++                   box area / frame area >= ``min_area_frac`` (per-class overrides possible). Below -> candidate.
++  5. Confidence    unchanged thresholds. Still images: confirmed_threshold; video/live: the tracker's temporal
++                   confirmation. Only a member, outside every exclusion, of significant size, that the existing rule
++                   confirms becomes CONFIRMED_LITTER.
++
++Outcomes (Detection.outcome):
++  CONFIRMED_LITTER               valid class, sufficient confidence, inside the approved ROI, significant size.
++  SMALL_OR_WEAK_CANDIDATE        inside the ROI but below the size or confidence rule. Kept for review, no alert.
++  REJECTED_OUTSIDE_ROI           foot point outside the pavement polygon, or inside an exclusion zone.
++  REJECTED_FILTER                rejected by the pre-existing class/size/aspect filters (unchanged; reason kept).
++  UNVERIFIED_ROI_NOT_CONFIGURED  the camera has no approved ROI: pavement membership cannot be decided.
++
++Nothing is deleted: every raw detection keeps its box, confidence, outcome, reason and measurements.
++
++How "never confirmed" is enforced: detections that may not be confirmed are demoted to status ``weak`` (outside the
++ROI: ``rejected``) BEFORE confirmation. ``confirm_single_image`` and the tracker only confirm ``candidate``
++detections, and alerts are only created for confirmed ones, so no alert path can be reached.
++"""
++from __future__ import annotations
++
++from collections import Counter
++from dataclasses import dataclass
++from typing import Any, Optional, Sequence
++
++import cv2
++import numpy as np
++
++from backend.core.settings import PavementSettings, SizeLimit
++from backend.detection.filters import ROISet
++from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection
++
++# detection outcomes
++CONFIRMED_LITTER = "CONFIRMED_LITTER"
++SMALL_OR_WEAK_CANDIDATE = "SMALL_OR_WEAK_CANDIDATE"
++REJECTED_OUTSIDE_ROI = "REJECTED_OUTSIDE_ROI"
++REJECTED_FILTER = "REJECTED_FILTER"
++UNVERIFIED = "UNVERIFIED_ROI_NOT_CONFIGURED"
++GENERAL_CONFIRMED = "GENERAL_CONFIRMED"           # general image mode: existing rule, NOT pavement-validated
++GENERAL_CANDIDATE = "GENERAL_CANDIDATE"
++OUTCOMES = (CONFIRMED_LITTER, SMALL_OR_WEAK_CANDIDATE, REJECTED_OUTSIDE_ROI, REJECTED_FILTER, UNVERIFIED,
++            GENERAL_CONFIRMED, GENERAL_CANDIDATE)
++CONFIRMED_OUTCOMES = (CONFIRMED_LITTER, GENERAL_CONFIRMED)
++CANDIDATE_OUTCOMES = (SMALL_OR_WEAK_CANDIDATE, GENERAL_CANDIDATE)
++
++# analysis mode (frame level)
++CAMERA_ROI_MODE = "CAMERA_ROI_MODE"
++GENERAL_IMAGE_MODE = "GENERAL_IMAGE_MODE"
++ROI_NOT_CONFIGURED = "ROI_NOT_CONFIGURED"
++ROI_FRAME_MISMATCH = "ROI_FRAME_MISMATCH"
++ROI_ACTIVE = CAMERA_ROI_MODE                       # alias used by callers
++NO_CAMERA_IDS = ("", "upload")
++
++# membership verdicts (geometry["membership"])
++INSIDE, EDGE, OVERLAP, OUTSIDE, EXCLUDED = "INSIDE", "EDGE_TOLERANCE", "AREA_OVERLAP", "OUTSIDE", "EXCLUDED"
++
++GRID = 8   # 8x8 sample points per box for the area-overlap measurement
++
++
++@dataclass
++class PixelZone:
++    name: str
++    mode: str
++    contour: np.ndarray            # (N,1,2) float32, pixels of THIS frame
++
++    def signed(self, x: float, y: float) -> float:
++        """Signed distance in pixels (>0 inside)."""
++        return float(cv2.pointPolygonTest(self.contour, (float(x), float(y)), True))
++
++
++def pixel_zones(roi: Optional[ROISet], w: int, h: int) -> tuple[list[PixelZone], list[PixelZone]]:
++    """(includes, excludes) scaled from normalised polygon coordinates to this frame's pixels. The frame passed in
++    must be the ORIGINAL camera frame: detections are mapped back to it before this runs (engine tiles / ROI crop)."""
++    if roi is None:
++        return [], []
++    zs = [PixelZone(z.name, z.mode, (np.asarray(z.polygon, dtype=np.float32) * np.float32([w, h])).reshape(-1, 1, 2))
++          for z in roi.zones]
++    return [z for z in zs if z.mode == "include"], [z for z in zs if z.mode == "exclude"]
++
++
++def decide_mode(camera_id: Optional[str], registered: bool, roi: Optional[ROISet], approved: bool,
++                shape: Sequence[int], p: PavementSettings) -> tuple[str, str]:
++    """(mode, note). Only the ROI given for THIS camera is considered; an unknown camera never borrows another's."""
++    if (camera_id or "") in NO_CAMERA_IDS:
++        return GENERAL_IMAGE_MODE, ("General image analysis (no camera association): existing behaviour, not "
++                                    "validated against a pavement ROI.")
++    if not registered:
++        return ROI_NOT_CONFIGURED, (f"Camera {camera_id} is not registered: pavement-only detection is unavailable. "
++                                    "Detections are kept for review and none is confirmed.")
++    return frame_status(roi, approved, shape, p)
++
++
++def frame_status(roi: Optional[ROISet], approved: bool, shape: Sequence[int], p: PavementSettings) -> tuple[str, str]:
++    h, w = shape[:2]
++    if roi is None or not roi.includes or not approved:
++        return ROI_NOT_CONFIGURED, ("No approved pavement ROI for this camera: pavement-only detection is unavailable. "
++                                    "Detections are kept for review and none is confirmed.")
++    if p.roi_reference_size:
++        rw, rh = p.roi_reference_size
++        if rw > 0 and rh > 0 and abs((w / h) / (rw / rh) - 1) > p.aspect_tolerance:
++            return ROI_FRAME_MISMATCH, (f"The ROI was drawn on a {rw}x{rh} frame but this frame is {w}x{h} (different "
++                                        "aspect ratio): it may belong to another camera or stream. Nothing is confirmed.")
++    return ROI_ACTIVE, ""
++
++
++def inside_fraction(zones: Sequence[PixelZone], bbox: Sequence[float], n: int = GRID) -> float:
++    """Share of the box area inside any of ``zones`` (n x n cell-centre samples)."""
++    if not zones:
++        return 0.0
++    x1, y1, x2, y2 = bbox
++    bw, bh = x2 - x1, y2 - y1
++    if bw <= 0 or bh <= 0:
++        return 0.0
++    hit = 0
++    for i in range(n):
++        y = y1 + (i + 0.5) * bh / n
++        for j in range(n):
++            x = x1 + (j + 0.5) * bw / n
++            if any(z.signed(x, y) >= 0 for z in zones):
++                hit += 1
++    return hit / (n * n)
++
++
++def membership(bbox: Sequence[float], w: int, h: int, includes: Sequence[PixelZone], excludes: Sequence[PixelZone],
++               p: PavementSettings) -> tuple[str, Optional[str], dict[str, Any]]:
++    """(verdict, zone name, measurements). Verdict: INSIDE | EDGE_TOLERANCE | AREA_OVERLAP | OUTSIDE | EXCLUDED."""
++    x1, y1, x2, y2 = bbox
++    fx, fy = (x1 + x2) / 2, y2
++    tol = p.edge_tolerance_frac * min(w, h)
++    best, zone = -float("inf"), None
++    for z in includes:
++        d = z.signed(fx, fy)
++        if d > best:
++            best, zone = d, z.name
++    info: dict[str, Any] = {"foot_point": [round(fx, 1), round(fy, 1)], "foot_distance_px": round(best, 1)}
++    if best >= 0:
++        verdict = INSIDE
++    elif best >= -tol:
++        verdict = EDGE
++    else:
++        verdict = OUTSIDE
++        if p.membership == "footpoint_or_overlap":
++            frac = inside_fraction(includes, bbox)
++            info["include_overlap"] = round(frac, 3)
++            if frac >= p.min_include_overlap:
++                verdict = OVERLAP
++    if verdict == OUTSIDE:
++        return verdict, None, info
++    for z in excludes:                                   # exclusions AFTER membership, no tolerance
++        if z.signed(fx, fy) >= 0:
++            info["exclusion_hit"] = "foot_point"
++            return EXCLUDED, z.name, info
++        frac = inside_fraction([z], bbox)
++        if frac >= p.max_exclusion_overlap:
++            info["exclusion_hit"], info["exclusion_overlap"] = "area", round(frac, 3)
++            return EXCLUDED, z.name, info
++    return verdict, zone, info
++
++
++def size_limit(cls_name: str, p: PavementSettings) -> SizeLimit:
++    return p.class_size.get(cls_name) or p.size
++
++
++def size_metrics(bbox: Sequence[float], w: int, h: int) -> dict[str, float]:
++    bw, bh = max(0.0, bbox[2] - bbox[0]), max(0.0, bbox[3] - bbox[1])
++    return {"box_w_px": round(bw, 1), "box_h_px": round(bh, 1),
++            "min_side_frac": round(min(bw, bh) / min(w, h), 5), "area_frac": round(bw * bh / (w * h), 7)}
++
++
++def significant(cls_name: str, m: dict[str, float], p: PavementSettings) -> bool:
++    lim = size_limit(cls_name, p)
++    return m["min_side_frac"] >= lim.min_side_frac and m["area_frac"] >= lim.min_area_frac
++
++
++def tag_general(dets: list[Detection], shape: Sequence[int], p: PavementSettings) -> None:
++    """GENERAL_IMAGE_MODE: record measurements and a provisional outcome; statuses are NOT changed (the existing
++    filters and confirmation decide, exactly as before)."""
++    h, w = shape[:2]
++    for d in dets:
++        geo: dict[str, Any] = size_metrics(d.bbox, w, h)
++        geo["size_ok"] = significant(d.cls_name, geo, p)
++        geo["membership"] = "NOT_EVALUATED"
++        d.geometry = geo
++        if d.status == REJECTED:
++            d.outcome, d.outcome_reason = REJECTED_FILTER, d.reason
++        else:
++            d.outcome, d.outcome_reason = GENERAL_CANDIDATE, "general_mode_not_pavement_validated"
++
++
++def gate(dets: list[Detection], shape: Sequence[int], roi: Optional[ROISet], status: str,
++         p: PavementSettings) -> tuple[str, str]:
++    """Tag every detection with its pavement outcome and demote what may not be confirmed. Run AFTER
++    ``apply_filters`` (called WITHOUT the ROI) and BEFORE confirmation. ``status`` comes from decide_mode (never
++    GENERAL_IMAGE_MODE here). Boxes are never modified. Returns (status, note)."""
++    h, w = shape[:2]
++    note = ""
++    includes, excludes = pixel_zones(roi, w, h) if status == ROI_ACTIVE else ([], [])
++    for d in dets:
++        geo: dict[str, Any] = size_metrics(d.bbox, w, h)
++        big = significant(d.cls_name, geo, p)
++        geo["size_ok"] = big
++        if status != ROI_ACTIVE:
++            geo["membership"] = "NOT_EVALUATED"
++            d.geometry = geo
++            if d.status == REJECTED:
++                d.outcome, d.outcome_reason = REJECTED_FILTER, d.reason
++            else:
++                d.status = WEAK                                    # can never be confirmed
++                d.outcome, d.outcome_reason = UNVERIFIED, status.lower()
++            continue
++        verdict, zone, info = membership(d.bbox, w, h, includes, excludes, p)
++        geo.update(info, membership=verdict, zone=zone)
++        d.geometry = geo
++        if verdict in (OUTSIDE, EXCLUDED):
++            reason = f"exclusion_zone:{zone}" if verdict == EXCLUDED else "outside_pavement_roi"
++            if d.status != REJECTED:
++                d.reject("outside_roi")                            # same reason string the reports already count
++            d.outcome, d.outcome_reason = REJECTED_OUTSIDE_ROI, reason
++            continue
++        if d.status == REJECTED:
++            d.outcome, d.outcome_reason = REJECTED_FILTER, d.reason
++            continue
++        geo["accepted_because"] = f"membership={verdict}" + (f";zone={zone}" if zone else "")
++        why = []
++        if not big:
++            why.append("below_min_size")
++        if d.status == WEAK:
++            why.append("low_confidence")
++        if why:
++            d.status = WEAK                                        # retained for review, never confirmed
++        d.outcome, d.outcome_reason = SMALL_OR_WEAK_CANDIDATE, "+".join(why) or "awaiting_confirmation"
++    return status, note
++
++
++def finalize(dets: Sequence[Detection]) -> None:
++    """After confirmation (still image: confirm_single_image; video: tracker): a member that was confirmed becomes
++    CONFIRMED_LITTER. Only detections the gate left as candidates can have been confirmed."""
++    for d in dets:
++        if d.outcome == SMALL_OR_WEAK_CANDIDATE and d.status == CONFIRMED:
++            d.outcome = CONFIRMED_LITTER
++            d.outcome_reason = (f"accepted:{(d.geometry or {}).get('membership', '')}+significant_size+"
++                                "confirmed_by_existing_rule")
++        elif d.outcome == SMALL_OR_WEAK_CANDIDATE and d.status == CANDIDATE and d.outcome_reason == "awaiting_confirmation":
++            d.outcome_reason = "below_confirmation_rule"
++        elif d.outcome == GENERAL_CANDIDATE and d.status == CONFIRMED:
++            d.outcome = GENERAL_CONFIRMED
++
++
++def counts(dets: Sequence[Detection]) -> dict[str, int]:
++    c = Counter(d.outcome for d in dets if d.outcome)
++    return {k.lower(): c[k] for k in OUTCOMES} | {"raw": len(dets)}
++
++
++def report(status: str, note: str, dets: Sequence[Detection], p: PavementSettings,
++           camera_id: Optional[str] = None) -> dict[str, Any]:
++    """The ``pavement`` block of an image/screenshot result."""
++    return {"status": status, "mode": status, "pavement_validated": status == CAMERA_ROI_MODE, "note": note,
++            "camera_id": camera_id, "counts": counts(dets),
++            "size_rule": {"min_side_frac": p.size.min_side_frac, "min_area_frac": p.size.min_area_frac,
++                          "class_overrides": {k: v.model_dump() for k, v in p.class_size.items()},
++                          "normalised_to": "original frame (shorter side / area)"},
++            "membership_rule": {"method": p.membership, "edge_tolerance_frac": p.edge_tolerance_frac,
++                                "min_include_overlap": p.min_include_overlap,
++                                "max_exclusion_overlap": p.max_exclusion_overlap,
++                                "anchor": "bottom-centre of the box (ground contact)"}}
+diff --git a/backend/detection/types.py b/backend/detection/types.py
+index bf824b8..6f1b205 100644
+--- a/backend/detection/types.py
++++ b/backend/detection/types.py
+@@ -17,6 +17,10 @@ class Detection:
+     reason: Optional[str] = None      # why rejected (roi, size, class, moving, ...)
+     track_id: Optional[int] = None
+     source: str = "full"              # "full" or "tile:<i>" (diagnostics for tiled inference)
++    # pavement-only mode (backend/detection/pavement.py); None when that mode is off
++    outcome: Optional[str] = None     # CONFIRMED_LITTER | SMALL_OR_WEAK_CANDIDATE | REJECTED_OUTSIDE_ROI | ...
++    outcome_reason: Optional[str] = None
++    geometry: Optional[dict[str, Any]] = None   # membership + normalised size measurements (audit)
+ 
+     @property
+     def area(self) -> float:
+@@ -34,6 +38,12 @@ class Detection:
+             d["track_id"] = self.track_id
+         if priority:
+             d["priority"] = priority
++        if self.outcome:
++            d["outcome"] = self.outcome
++            if self.outcome_reason:
++                d["outcome_reason"] = self.outcome_reason
++            if self.geometry:
++                d["geometry"] = self.geometry
+         return d
+ 
+ 
+diff --git a/backend/sampling/detection_report.py b/backend/sampling/detection_report.py
+index 75c0ebe..820e5c0 100644
+--- a/backend/sampling/detection_report.py
++++ b/backend/sampling/detection_report.py
+@@ -9,6 +9,11 @@ Record types in detection_report.csv (column ``record_type``):
+               confirmed threshold) and detections removed because they lie outside the ROI. Weak and otherwise
+               filtered detections (size, aspect, class) are not listed.
+ 
++Pavement-only mode (settings.pavement.enabled): every detection is listed, whatever its outcome, so nothing is
++dropped from the audit trail. ``pavement_outcome`` is one of CONFIRMED_LITTER, SMALL_OR_WEAK_CANDIDATE,
++REJECTED_OUTSIDE_ROI, REJECTED_FILTER or UNVERIFIED_ROI_NOT_CONFIGURED, with ``pavement_reason`` and the normalised
++size measurements. A screenshot of a camera without an approved ROI is PAVEMENT_ROI_NOT_CONFIGURED.
++
+ Job-wide totals are NOT repeated on every row (summing them in a spreadsheet would multiply them); they are in
+ analysis_summary.csv (one row) and analysis_summary.json. Only the per-screenshot and overall *status* texts are on
+ every row. Original model confidence (confidence_score) is kept separate from the cross-screenshot evidence
+@@ -58,6 +63,9 @@ DETECTION_FIELDS = [
+     # traceability
+     "planned_frame_number", "sampling_adjustment", "object_sightings", "object_max_confidence", "rejection_reason",
+     "model_version",
++    # pavement-only mode (empty when the mode is off)
++    "analysis_mode", "pavement_validated", "pavement_outcome", "pavement_reason", "foot_point_x", "foot_point_y",
++    "box_min_side_fraction", "box_area_fraction", "size_check",
+ ]
+ 
+ SUMMARY_FIELDS = [
+@@ -69,11 +77,20 @@ SUMMARY_FIELDS = [
+     "total_low_severity", "possible_litter_objects", "outside_roi_detections",
+     "roi_status", "roi_source", "roi_name", "roi_configuration_id", "alerts_created",
+     "overall_analysis_status", "review_required", "model_version", "note",
++    # pavement-only mode (empty when the mode is off); counts are detections over all screenshots
++    "analysis_mode", "pavement_validated", "confirmed_litter_detections", "small_or_weak_candidates",
++    "rejected_outside_roi", "rejected_other_filters", "unverified_roi_not_configured", "general_confirmed_detections",
++    "general_candidate_detections",
+ ]
+ 
+ SCREENSHOT_STATUS = {"LITTER_DETECTED": "LITTER_OBSERVED", "NO_LITTER": "NO_LITTER_OBSERVED",
+-                     "UNREADABLE": "UNREADABLE", "FAILED": "FAILED", "ROI_UNCERTAIN": "NOT_ANALYSED_ROI_UNCERTAIN"}
++                     "UNREADABLE": "UNREADABLE", "FAILED": "FAILED", "ROI_UNCERTAIN": "NOT_ANALYSED_ROI_UNCERTAIN",
++                     "ROI_NOT_CONFIGURED": "PAVEMENT_ROI_NOT_CONFIGURED",
++                     "ROI_FRAME_MISMATCH": "PAVEMENT_ROI_FRAME_MISMATCH"}
+ ANALYSED = ("LITTER_OBSERVED", "NO_LITTER_OBSERVED")
++UNVERIFIED_STATUS = ("PAVEMENT_ROI_NOT_CONFIGURED", "PAVEMENT_ROI_FRAME_MISMATCH")
++PAVEMENT_LISTED = ("CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE")     # get an object id in pavement-only mode
++GENERAL_LISTED = ("confirmed", "candidate")                         # general image mode: the existing rule
+ 
+ 
+ # ---------------------------------------------------------------------- linking
+@@ -96,7 +113,9 @@ def link_objects(frames: list[dict[str, Any]], *, iou_min: float, center_frac: f
+         size = res.get("image_size") or [0, 0]
+         diag = math.hypot(*size) or 1.0
+         used: set[str] = set()
+-        dets = sorted((d for d in res.get("detections", []) if d.get("status") in LISTED),
++        dets = sorted((d for d in res.get("detections", [])
++                       if (d.get("outcome") in PAVEMENT_LISTED if d.get("outcome") and not str(d["outcome"]).startswith(
++                           "GENERAL_") else d.get("status") in LISTED)),
+                       key=lambda d: -d["confidence"])
+         for d in dets:
+             cx, cy = (d["bbox"][0] + d["bbox"][2]) / 2, (d["bbox"][1] + d["bbox"][3]) / 2
+@@ -161,7 +180,8 @@ def overall_status(frames: list[dict[str, Any]], failed: bool = False) -> str:
+     st = [screenshot_status(f) for f in frames]
+     analysed = [s for s in st if s in ANALYSED]
+     if failed or not analysed:
+-        return "FAILED"
++        unverified = [s for s in st if s in UNVERIFIED_STATUS]
++        return unverified[0] if unverified and not failed else "FAILED"
+     litter = "LITTER_OBSERVED" in analysed
+     if len(analysed) < len(st):
+         return "INCOMPLETE_LITTER_OBSERVED" if litter else "INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS"
+@@ -209,14 +229,33 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
+                      "final_classification": sstat,
+                      "review_required": "TRUE" if sstat not in ANALYSED or (confirmed and not roi_verified) else "FALSE",
+                      "stationary_confirmation_status": "NOT_APPLICABLE", "duplicate_detection_status": "NOT_APPLICABLE"})
+-        listed = [d for d in res.get("detections", [])
+-                  if d.get("status") in LISTED or (d.get("status") == "rejected" and d.get("reason") == "outside_roi")]
++        pav = res.get("pavement")
++        if pav:                     # pavement-only mode: every detection is audit evidence, nothing is left out
++            listed = list(res.get("detections", []))
++        else:
++            listed = [d for d in res.get("detections", [])
++                      if d.get("status") in LISTED or (d.get("status") == "rejected" and d.get("reason") == "outside_roi")]
++        if pav:
++            rows[-1]["analysis_mode"] = pav.get("status", "")
++            rows[-1]["pavement_validated"] = "TRUE" if pav.get("status") == "CAMERA_ROI_MODE" else "FALSE"
+         for d in sorted(listed, key=lambda d: -d["confidence"]):
+             x1, y1, x2, y2 = (float(v) for v in d["bbox"])
+             bw, bh = max(0.0, x2 - x1), max(0.0, y2 - y1)
+             o = objects.get(d.get("object_id") or "")
+             status = d.get("status", "")
+-            if status == "rejected":
++            outcome = d.get("outcome")
++            geo = d.get("geometry") or {}
++            if outcome:
++                final = outcome
++                membership = {"INSIDE": "INSIDE", "EDGE_TOLERANCE": "INSIDE_EDGE_TOLERANCE",
++                              "AREA_OVERLAP": "INSIDE_AREA_OVERLAP", "OUTSIDE": "OUTSIDE",
++                              "EXCLUDED": "EXCLUSION_ZONE"}.get(geo.get("membership", ""), "NOT_EVALUATED")
++                review = "FALSE" if outcome in ("REJECTED_OUTSIDE_ROI", "REJECTED_FILTER") or (
++                    outcome == "CONFIRMED_LITTER" and roi_verified) else "TRUE"
++                if outcome.startswith("GENERAL_"):          # existing rule, existing review logic, not ROI-validated
++                    membership = "NOT_EVALUATED_GENERAL_MODE"
++                    review = "TRUE" if status != "confirmed" or not roi_verified else "FALSE"
++            elif status == "rejected":
+                 membership, final, review = "OUTSIDE", "EXCLUDED_OUTSIDE_ROI", "FALSE"
+             else:
+                 membership = "INSIDE" if roi_applied and has_include else "NOT_APPLICABLE"
+@@ -243,12 +282,27 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
+                 "final_classification": final, "review_required": review,
+                 "object_sightings": n_seen or "", "object_max_confidence": round(o["max_confidence"], 4) if o else "",
+                 "rejection_reason": d.get("reason") or "",
++                **({"analysis_mode": pav.get("status", ""),
++                    "pavement_validated": "TRUE" if outcome in ("CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE",
++                                                                "REJECTED_OUTSIDE_ROI") else "FALSE",
++                    "pavement_outcome": outcome or "",
++                    "pavement_reason": d.get("outcome_reason") or "",
++                    "foot_point_x": (geo.get("foot_point") or ["", ""])[0],
++                    "foot_point_y": (geo.get("foot_point") or ["", ""])[1],
++                    "box_min_side_fraction": geo.get("min_side_frac", ""), "box_area_fraction": geo.get("area_frac", ""),
++                    "size_check": ("" if "size_ok" not in geo else "SIGNIFICANT" if geo["size_ok"] else "BELOW_MIN_SIZE")}
++                   if pav else {}),
+             })
+ 
+     confirmed_objects = [o for o in objects.values() if o["confirmed_sightings"]]
+     sev = {s: sum(1 for o in confirmed_objects if o["severity"] == s) for s in SEVERITIES}
+     statuses = [screenshot_status(f) for f in frames]
+     all_dets = [d for f in frames for d in (f.get("result") or {}).get("detections", [])]
++    pav_status = next(((f.get("result") or {}).get("pavement", {}).get("status") for f in frames
++                       if (f.get("result") or {}).get("pavement")), None)
++    oc = {o: sum(1 for d in all_dets if d.get("outcome") == o) for o in (
++        "CONFIRMED_LITTER", "SMALL_OR_WEAK_CANDIDATE", "REJECTED_OUTSIDE_ROI", "REJECTED_FILTER",
++        "UNVERIFIED_ROI_NOT_CONFIGURED", "GENERAL_CONFIRMED", "GENERAL_CANDIDATE")}
+     summary = {
+         **job_cols,
+         "analysis_mode": job.get("mode") or "manual", "sampling_strategy": job.get("sampling") or "",
+@@ -271,6 +325,21 @@ def build(job: dict[str, Any], media: dict[str, Any], frames: list[dict[str, Any
+             ((f.get("result") or {}).get("model_version") for f in frames if (f.get("result") or {}).get("model_version")), ""),
+         "note": REPRESENTATIVE_NOTE + (" " + roi["note"] if roi.get("note") else ""),
+     }
++    if pav_status:
++        summary.update({
++            "analysis_mode": pav_status, "pavement_validated": "TRUE" if pav_status == "CAMERA_ROI_MODE" else "FALSE",
++            "confirmed_litter_detections": oc["CONFIRMED_LITTER"],
++            "small_or_weak_candidates": oc["SMALL_OR_WEAK_CANDIDATE"], "rejected_outside_roi": oc["REJECTED_OUTSIDE_ROI"],
++            "rejected_other_filters": oc["REJECTED_FILTER"],
++            "unverified_roi_not_configured": oc["UNVERIFIED_ROI_NOT_CONFIGURED"],
++            "general_confirmed_detections": oc["GENERAL_CONFIRMED"],
++            "general_candidate_detections": oc["GENERAL_CANDIDATE"]})
++        if pav_status == "GENERAL_IMAGE_MODE":
++            summary["note"] += " General image mode: results are not validated against a camera pavement ROI."
++        elif pav_status != "CAMERA_ROI_MODE":
++            summary["review_required"] = "TRUE"
++            summary["note"] += (" Pavement-only detection is unavailable for this camera (" + pav_status +
++                                "): nothing was confirmed; detections are listed for review only.")
+     return rows, summary
+ 
+ 
+@@ -284,8 +353,15 @@ def to_csv(rows: Iterable[dict[str, Any]], fields: list[str]) -> str:
+ 
+ def summary_json(summary: dict[str, Any], objects: dict[str, dict[str, Any]], frames: list[dict[str, Any]],
+                  roi: dict[str, Any]) -> str:
++    pav = next(((f.get("result") or {}).get("pavement") for f in frames if (f.get("result") or {}).get("pavement")), None)
+     return json.dumps({
+         "summary": summary,
++        **({"pavement": {"status": pav["status"], "analysis_mode": pav["status"],
++                         "pavement_validated": pav["status"] == "CAMERA_ROI_MODE", "note": pav.get("note"),
++                         "camera_id": pav.get("camera_id"),
++                         "size_rule": pav.get("size_rule"), "membership_rule": pav.get("membership_rule"),
++                         "per_screenshot": [{"number": f["idx"], **((f.get("result") or {}).get("pavement") or {}).get(
++                             "counts", {})} for f in frames]}} if pav else {}),
+         "severity_counted_per": "estimated unique object (highest severity of its confirmed sightings)",
+         "roi": {k: roi.get(k) for k in ("status", "source", "name", "configuration_id", "approved", "note", "zones")},
+         "screenshots": [{"number": f["idx"], "frame_number": f.get("frame_idx"),
+@@ -293,6 +369,8 @@ def summary_json(summary: dict[str, Any], objects: dict[str, dict[str, Any]], fr
+                          "timestamp_seconds": f.get("video_time_sec"), "status": screenshot_status(f),
+                          "sampling_adjustment": f.get("sampling_note"), "error": f.get("error"),
+                          "screenshot_filename": _name(f.get("original_path")),
+-                         "annotated_screenshot_filename": _name(f.get("annotated_path"))} for f in frames],
++                         "annotated_screenshot_filename": _name(f.get("annotated_path")),
++                         **({"diagnostic_screenshot_filename": _name((f.get("result") or {}).get("diagnostic_path"))}
++                            if (f.get("result") or {}).get("diagnostic_path") else {})} for f in frames],
+         "objects": list(objects.values()),
+     }, indent=2)
+diff --git a/backend/sampling/reports.py b/backend/sampling/reports.py
+index 7a90e2c..cb1257e 100644
+--- a/backend/sampling/reports.py
++++ b/backend/sampling/reports.py
+@@ -56,6 +56,9 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
+         "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
+         "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
+         "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,
++        # pavement-only mode
++        "pavement": res.get("pavement"),
++        "diagnostic_url": f"{base}/diagnostic.jpg" if res.get("diagnostic_path") else None,
+     }
+ 
+ 
+diff --git a/backend/sampling/runner.py b/backend/sampling/runner.py
+index 441ed91..9da436e 100644
+--- a/backend/sampling/runner.py
++++ b/backend/sampling/runner.py
+@@ -19,6 +19,12 @@ Modes:
+           being analysed returns the running job instead of starting a second one.
+ Every completed job also gets reports/detection_report.csv, reports/analysis_summary.csv and
+ reports/analysis_summary.json (backend/sampling/detection_report.py), written before the job is marked done.
++
++Pavement-only mode (settings.pavement.enabled; off by default) changes no stage. Each screenshot result then carries
++a ``pavement`` block with the analysis mode. A job without a camera runs in GENERAL_IMAGE_MODE (existing behaviour,
++not pavement-validated); a named camera that is not registered or has no approved ROI gets outcome
++ROI_NOT_CONFIGURED (never NO_LITTER, never confirmed litter); annotated/<name>_diagnostic.jpg also shows rejected
++detections.
+ """
+ from __future__ import annotations
+ 
+@@ -35,6 +41,7 @@ import cv2
+ 
+ from backend.alerts.manager import compute_severity
+ from backend.database.db import utcnow
++from backend.detection import pavement
+ from backend.detection.filters import ROISet, ROIZone
+ from backend.sampling import SAMPLE_COUNT, auto_roi, detection_report, report
+ from backend.sampling.extract import Extracted, Stopped, extract
+@@ -57,6 +64,17 @@ STORE_RE = re.compile(r"^[A-Za-z0-9._ \-]{1,64}$")
+ REPORT_FILES = ("detection_report.csv", "analysis_summary.csv", "analysis_summary.json")
+ 
+ 
++def roi_approved_for(job: dict[str, Any]) -> bool:
++    """Was the ROI applied to this job approved by a person? A registered/saved camera ROI (automatic policy) or an
++    operator confirmation counts; the whole frame, or a segmenter proposal accepted automatically (manual mode with
++    auto_accept), does not."""
++    if job.get("roi_source") == "whole_frame":
++        return False
++    if job.get("auto_accept") and job.get("roi_source") == "auto":
++        return False
++    return bool(roi_info(job).get("approved"))
++
++
+ def _include_names(zones: list[dict]) -> str:
+     return ";".join(z.get("name", "") for z in zones if z.get("mode") == "include")
+ 
+@@ -406,10 +424,12 @@ class SampledRunner:
+         out = Path(job["output_dir"])
+         (out / "annotated").mkdir(exist_ok=True)
+         whole = job.get("roi_source") == "whole_frame"
++        approved = roi_approved_for(job)
+         location = " · ".join(x for x in (job.get("store_id"), job.get("camera_id")) if x)
+         totals = {"screenshots_planned": job["sample_count"], "screenshots_extracted": 0, "screenshots_analysed": 0,
+                   "litter": 0, "by_class": {}, "alerts": 0, "outcomes": {}}
+         annotated_frames: list[tuple[int, Any, Path]] = []
++        diagnostic_frames: list[tuple[Path, Any]] = []
+         for f in self.repo.frames(job_id):
+             if job_id in self._cancel:
+                 raise Stopped()
+@@ -431,8 +451,10 @@ class SampledRunner:
+                                    job.get("camera_id") or "upload", Path(f["original_path"]).name, job_id,
+                                    source_type="sample", frame_idx=f["frame_idx"], video_time_sec=f["video_time_sec"],
+                                    session_id=f"{job_id}:s{f['idx']}", create_alerts=bool(job["create_alerts"]),
+-                                   location=location)
++                                   location=location, roi_approved=approved, want_diagnostic=True,
++                                   camera_registered=cam is not None)
+                 annotated = res.pop("annotated")
++                diagnostic = res.pop("diagnostic", None)
+                 alerts = res.pop("alerts")
+                 res["alert_ids"] = [a["id"] for a in alerts]
+                 n = res["counts"]["confirmed"]
+@@ -443,8 +465,19 @@ class SampledRunner:
+                         if d.get("track_id") in alert_of:
+                             d["alert_id"] = alert_of[d["track_id"]]
+                 outcome = "LITTER_DETECTED" if n else "NO_LITTER"
++                pav = res.get("pavement")
++                if pav and pav["status"] in (pavement.ROI_NOT_CONFIGURED, pavement.ROI_FRAME_MISMATCH):
++                    outcome = pav["status"]          # never "NO_LITTER", never confirmed litter
++                if pav:
++                    totals.setdefault("pavement", {})
++                    for k, v in pav["counts"].items():
++                        totals["pavement"][k] = totals["pavement"].get(k, 0) + v
++                if diagnostic is not None:
++                    res["diagnostic_path"] = str(out / "annotated" / f"{Path(f['original_path']).stem}_diagnostic.jpg")
+                 self.repo.update_frame(job_id, f["idx"], outcome=outcome, detection_count=n, result=res, error=None)
+                 annotated_frames.append((f["idx"], annotated, Path(f["original_path"])))
++                if diagnostic is not None:
++                    diagnostic_frames.append((Path(res["diagnostic_path"]), diagnostic))
+                 totals["screenshots_analysed"] += 1
+                 totals["litter"] += n
+                 totals["alerts"] += len(alerts)
+@@ -459,6 +492,8 @@ class SampledRunner:
+             p = out / "annotated" / f"{orig.stem}_annotated.jpg"
+             if cv2.imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 90]):
+                 self.repo.update_frame(job_id, idx, annotated_path=str(p))
++        for p, img in diagnostic_frames:                 # pavement-only mode: incl. rejected detections
++            cv2.imwrite(str(p), img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+ 
+         self._stage(job_id, "generating_csv")
+         frames = self.repo.frames(job_id)
+diff --git a/backend/services/pipeline.py b/backend/services/pipeline.py
+index 295f3e6..b6f1dcc 100644
+--- a/backend/services/pipeline.py
++++ b/backend/services/pipeline.py
+@@ -2,6 +2,14 @@
+ 
+ FRAME -> YOLO (optional tiles) -> merge/NMS -> filters (conf tier, class, size, ROI)
+       -> tracker (ByteTrack-style) -> temporal confirmation -> alert manager
++
++Pavement-only mode (settings.pavement.enabled, OFF by default; backend/detection/pavement.py) chooses an analysis
++mode per frame. CAMERA_ROI_MODE (registered camera + approved ROI) replaces the ROI step of the filters with the
++pavement gate (approved-ROI membership, exclusion zones, significant-size rule) before confirmation, so nothing
++outside the approved pavement, or too small, can be confirmed or alerted. GENERAL_IMAGE_MODE (no camera) keeps the
++existing behaviour. A named camera without an approved ROI (ROI_NOT_CONFIGURED / ROI_FRAME_MISMATCH) confirms nothing.
++Inference always runs on the full frame unless the EXPERIMENTAL filters.roi_crop_inference is switched on (off by
++default); the ROI is a post-detection filter.
+ """
+ from __future__ import annotations
+ 
+@@ -22,9 +30,10 @@ from backend.alerts.manager import AlertManager, ClassMetadata, ConfirmedEvent
+ from backend.core.settings import DetectionSettings
+ from backend.database.db import Database, utcnow
+ from backend.detection.engine import YoloEngine
++from backend.detection import pavement
+ from backend.detection.filters import ROISet, apply_filters, confirm_single_image
+ from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection, InferenceInfo
+-from backend.services.visualization import annotate, annotate_litter
++from backend.services.visualization import annotate, annotate_litter, annotate_pavement
+ from backend.tracking.tracker import LitterTracker
+ 
+ log = logging.getLogger(__name__)
+@@ -38,6 +47,7 @@ class FrameResult:
+     inference_ms: float
+     tiled: bool
+     events: list[dict[str, Any]] = field(default_factory=list)
++    pavement_status: Optional[str] = None      # set only in pavement-only mode
+ 
+ 
+ def summarize(dets: list[Detection], tracker: LitterTracker, new_alerts: int) -> dict[str, int]:
+@@ -50,6 +60,35 @@ def summarize(dets: list[Detection], tracker: LitterTracker, new_alerts: int) ->
+             "active_tracks": len(visible), "tracks_in_memory": len(tracker.tracks), "new_alerts": new_alerts}
+ 
+ 
++def roi_approved_default(roi: Optional[ROISet]) -> bool:
++    """Every ROI that reaches the pipeline was drawn and saved by a person (camera record, PUT /api/roi/{camera},
++    or an operator-confirmed sampled job); automatic proposals never get here unconfirmed. Callers that know an ROI
++    was NOT approved by a person (an auto-accepted segmenter proposal) pass roi_approved=False explicitly."""
++    return roi is not None and bool(roi.includes)
++
++
++def filter_detections(dets: list[Detection], shape: tuple[int, ...], s: DetectionSettings, roi: Optional[ROISet],
++                      roi_approved: Optional[bool] = None, camera_id: Optional[str] = None,
++                      camera_registered: Optional[bool] = None) -> Optional[tuple[str, str]]:
++    """The existing filters. In pavement-only mode the analysis mode is decided first: GENERAL_IMAGE_MODE runs the
++    existing filters unchanged (and only records measurements); the other modes skip the filters' own ROI check and
++    let the pavement gate decide. Boxes are never modified. Returns (mode, note), or None when the mode is off.
++    ``camera_registered`` None counts as not registered (a named camera must be registered to be validated)."""
++    if not s.pavement.enabled:
++        apply_filters(dets, shape, s, roi)
++        return None
++    use = roi if s.filters.roi_enabled else None
++    approved = roi_approved_default(use) if roi_approved is None else (roi_approved and use is not None)
++    mode, note = pavement.decide_mode(camera_id, bool(camera_registered), use, approved, shape, s.pavement)
++    if mode == pavement.GENERAL_IMAGE_MODE:
++        apply_filters(dets, shape, s, roi)
++        pavement.tag_general(dets, shape, s.pavement)
++        return mode, note
++    apply_filters(dets, shape, s, None)
++    pavement.gate(dets, shape, use, mode, s.pavement)
++    return mode, note
++
++
+ def roi_window(shape: tuple[int, ...], s: DetectionSettings, roi: Optional[ROISet]) -> Optional[tuple[int, int, int, int]]:
+     """Pixel rectangle the model should look at, or None for the whole frame. Only used when the ROI
+     covers clearly less than the frame; the ROI filter still decides what is inside the polygon."""
+@@ -87,8 +126,10 @@ class StreamPipeline:
+ 
+     def __init__(self, engine: YoloEngine, settings: DetectionSettings, roi: Optional[ROISet],
+                  alerts: Optional[AlertManager], db: Optional[Database], camera_id: str,
+-                 source_type: str = "live", job_id: Optional[str] = None, location: str = "") -> None:
++                 source_type: str = "live", job_id: Optional[str] = None, location: str = "",
++                 roi_approved: Optional[bool] = None, camera_registered: Optional[bool] = None) -> None:
+         self.engine, self.settings, self.roi = engine, settings, roi
++        self.roi_approved, self.camera_registered = roi_approved, camera_registered
+         self.alerts, self.db = alerts, db
+         self.camera_id, self.source_type, self.job_id, self.location = camera_id, source_type, job_id, location
+         self.session_id = uuid.uuid4().hex[:12]
+@@ -100,8 +141,9 @@ class StreamPipeline:
+         self.frames_reused = 0
+         self._last_log = 0.0
+ 
+-    def update_settings(self, settings: DetectionSettings, roi: Optional[ROISet]) -> None:
+-        self.settings, self.roi = settings, roi
++    def update_settings(self, settings: DetectionSettings, roi: Optional[ROISet],
++                        roi_approved: Optional[bool] = None) -> None:
++        self.settings, self.roi, self.roi_approved = settings, roi, roi_approved
+         self.tracker.update_settings(settings)
+ 
+     def _raw_detect(self, frame: np.ndarray, s: DetectionSettings, video_time: Optional[float],
+@@ -148,8 +190,11 @@ class StreamPipeline:
+         else:
+             dets, info, reused = self._raw_detect(frame, s, video_time, force_tiling, allow_reuse)
+         self.frames_reused += int(reused)
+-        apply_filters(dets, frame.shape, s, self.roi)
++        pav = filter_detections(dets, frame.shape, s, self.roi, self.roi_approved, self.camera_id,
++                                self.camera_registered)
+         track_events = self.tracker.update(dets, frame_idx, frame.shape)
++        if pav:
++            pavement.finalize(dets)
+         now = utcnow()
+         for d in dets:
+             if d.track_id is not None:
+@@ -181,7 +226,8 @@ class StreamPipeline:
+ 
+         self._log(dets, frame_idx, video_time)
+         summary = summarize(dets, self.tracker, len(new_alerts))
+-        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events)
++        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events,
++                           pav[0] if pav else None)
+ 
+     def _log(self, dets: list[Detection], frame_idx: int, video_time: Optional[float]) -> None:
+         if self.db is None or not dets:
+@@ -257,7 +303,8 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
+                  camera_id: str = "upload", filename: str = "", job_id: Optional[str] = None, *,
+                  source_type: str = "image", frame_idx: int = 0, video_time_sec: Optional[float] = None,
+                  session_id: Optional[str] = None, create_alerts: Optional[bool] = None,
+-                 location: str = "") -> dict[str, Any]:
++                 location: str = "", roi_approved: Optional[bool] = None,
++                 want_diagnostic: bool = False, camera_registered: Optional[bool] = None) -> dict[str, Any]:
+     """Detect litter in one image. A still image has no temporal evidence, so
+     'confirmed' here means: passed every filter AND confidence >= confirmed_threshold.
+     ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
+@@ -266,14 +313,26 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
+     Keyword-only extras (defaults = the original image-upload behaviour): ``source_type``/``frame_idx``/
+     ``video_time_sec`` are recorded on the detection rows; for any source other than "image" the ``job_id`` is
+     recorded too (sampled video screenshots link every row to their job). ``session_id`` fixes the alert session,
+-    ``create_alerts`` overrides ``alerts.alert_on_image_uploads``."""
++    ``create_alerts`` overrides ``alerts.alert_on_image_uploads``.
++
++    Pavement-only mode adds ``result["pavement"]`` (status, per-outcome counts, rules) and an ``outcome`` per
++    detection; with ``want_diagnostic`` also ``result["diagnostic"]`` (image incl. rejected boxes; caller pops it)."""
+     dets, info = detect_in_roi(engine, [image], settings, roi)[0]
+-    apply_filters(dets, image.shape, settings, roi)
++    pav = filter_detections(dets, image.shape, settings, roi, roi_approved, camera_id, camera_registered)
+     confirm_single_image(dets, settings)
++    if pav:
++        pavement.finalize(dets)
+     # give each individual object an index so the UI/alerts can reference it
+     for i, d in enumerate(sorted(dets, key=lambda d: -d.confidence), start=1):
+         d.track_id = i
+-    annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings))
++    cam_label = None if camera_id == "upload" else camera_id
++    if pav and pav[0] == pavement.GENERAL_IMAGE_MODE:     # the existing view, labelled as not pavement-validated
++        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings),
++                                    extra=["GENERAL IMAGE MODE - not pavement-validated"])
++    elif pav:
++        annotated = annotate_pavement(image, dets, roi, pav[0], cam_label)
++    else:
++        annotated = annotate_litter(image, dets, roi, roi_active=roi_is_active(roi, settings))
+     alerts_out: list[dict[str, Any]] = []
+     if db is not None:
+         ts = utcnow()
+@@ -301,7 +360,12 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
+     counts = Counter(d.status for d in dets)
+     by_class = Counter(d.cls_name for d in dets if d.status == CONFIRMED)
+     confirmed_confs = [d.confidence for d in dets if d.status == CONFIRMED]
+-    return {
++    out: dict[str, Any] = {}
++    if pav:
++        out["pavement"] = pavement.report(pav[0], pav[1], dets, settings.pavement, cam_label)
++        if want_diagnostic and settings.pavement.diagnostic_images:
++            out["diagnostic"] = annotate_pavement(image, dets, roi, pav[0], cam_label, diagnostic=True)
++    return out | {
+         "detections": [d.to_dict(meta.priority(d.cls_name) if meta else None)
+                        for d in sorted(dets, key=lambda d: -d.confidence)],
+         "count": counts[CONFIRMED],
+@@ -325,7 +389,8 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
+ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path, settings: DetectionSettings,
+                  roi: Optional[ROISet] = None, db: Optional[Database] = None,
+                  alerts: Optional[AlertManager] = None, camera_id: str = "upload", job_id: Optional[str] = None,
+-                 progress: Optional[Callable[[float, dict[str, Any]], None]] = None) -> dict[str, Any]:
++                 progress: Optional[Callable[[float, dict[str, Any]], None]] = None,
++                 roi_approved: Optional[bool] = None, camera_registered: Optional[bool] = None) -> dict[str, Any]:
+     """Process a video file: annotated MP4 + detections.json + events.json + stats.json (+ alert snapshots)."""
+     out_dir = Path(out_dir)
+     out_dir.mkdir(parents=True, exist_ok=True)
+@@ -340,7 +405,12 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
+         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+         max_frames = int(settings.video.max_video_seconds * fps)
+         step = max(1, int(round(fps / settings.video.sample_fps)))
+-        pipe = StreamPipeline(engine, settings, roi, alerts, db, camera_id, "video", job_id)
++        pipe = StreamPipeline(engine, settings, roi, alerts, db, camera_id, "video", job_id, roi_approved=roi_approved,
++                              camera_registered=camera_registered)
++        pav_on = settings.pavement.enabled
++        pav_counts: Counter = Counter()
++        pav_status: Optional[str] = None
++        cam_label = None if camera_id == "upload" else camera_id
+         writer, codec = open_video_writer(out_dir / "annotated.mp4",
+                                           fps if settings.video.annotate_all_frames else fps / step, (w, h))
+         frames_json: list[dict[str, Any]] = []
+@@ -356,7 +426,7 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
+         roi_on = roi_is_active(roi, settings)
+ 
+         def flush() -> None:
+-            nonlocal last
++            nonlocal last, pav_status
+             samples = [p for p in pending if p[3]]
+             reuse = {p[0]: pipe.plan_reuse(p[2], p[1]) for p in samples}
+             need = [p for p in samples if not reuse[p[0]]]
+@@ -368,12 +438,19 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
+                         inf_ms.append(last.inference_ms)
+                     frames_json.append({"frame_idx": i, "video_time_sec": round(vt, 3),
+                                         "detections": [d.to_dict() for d in last.detections], "summary": last.summary})
++                    if pav_on:
++                        frames_json[-1]["pavement_status"] = pav_status = last.pavement_status
++                        pav_counts.update(pavement.counts(last.detections))
+                     events.extend(last.events)
+                     new_alerts.extend(last.new_alerts)
+                     for k, v in last.summary.items():
+                         peak[k] = max(peak[k], v)
+                 if last is not None and (is_sample or settings.video.annotate_all_frames):
+-                    writer.write(annotate_litter(frame, last.detections, roi, roi_active=roi_on))
++                    general = last.pavement_status == pavement.GENERAL_IMAGE_MODE
++                    writer.write(annotate_pavement(frame, last.detections, roi, last.pavement_status or "", cam_label)
++                                 if pav_on and not general else
++                                 annotate_litter(frame, last.detections, roi, roi_active=roi_on,
++                                                 extra=["GENERAL MODE - not pavement-validated"] if general else ()))
+             pending.clear()
+ 
+         while idx < max_frames:
+@@ -427,6 +504,9 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
+         "settings": {"confidence": settings.confidence.model_dump(), "tracking": settings.tracking.model_dump(),
+                      "tiling": settings.tiling.model_dump()},
+     }
++    if pav_on:   # detection-level totals over analysed frames (a static object counts once per analysed frame)
++        stats["pavement"] = {"status": pav_status, "detection_outcomes_over_frames": dict(pav_counts),
++                             "settings": settings.pavement.model_dump()}
+     (out_dir / "detections.json").write_text(json.dumps(frames_json), encoding="utf-8")
+     (out_dir / "events.json").write_text(json.dumps(events, indent=1), encoding="utf-8")
+     (out_dir / "stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
+diff --git a/backend/services/state.py b/backend/services/state.py
+index 4afd1e1..cac286b 100644
+--- a/backend/services/state.py
++++ b/backend/services/state.py
+@@ -202,7 +202,7 @@ class AppState:
+     # ------------------------------------------------------------------ cameras
+     def _make_pipeline(self, cam: dict[str, Any]) -> StreamPipeline:
+         return StreamPipeline(self.require_engine(), self.settings(cam), self.roi_for(cam), self.alerts, self.db,
+-                              cam["id"], "live", None, cam.get("location", ""))
++                              cam["id"], "live", None, cam.get("location", ""), camera_registered=True)
+ 
+     def _live_fps(self, cam: dict[str, Any]) -> float:
+         return self.settings(cam).video.live_process_fps
+@@ -233,7 +233,7 @@ class AppState:
+             try:
+                 res = detect_video(self.get_engine(model_version), path, out_dir, self.settings_with(cam, overrides),
+                                    self.roi_for(cam, camera_id) if use_roi else None,
+-                                   self.db, self.alerts, camera_id, job_id,
++                                   self.db, self.alerts, camera_id, job_id, camera_registered=cam is not None,
+                                    progress=lambda p, info: self.db.update_job(job_id, progress=round(p, 3),
+                                                                                result={"progress": info}))
+                 self.db.update_job(job_id, status="done", finished_at=utcnow(), progress=1.0,
+diff --git a/backend/services/visualization.py b/backend/services/visualization.py
+index 65951b6..0e397ad 100644
+--- a/backend/services/visualization.py
++++ b/backend/services/visualization.py
+@@ -179,3 +179,125 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], roi: Optional[
+     for i, (text, color) in enumerate(lines):
+         cv2.putText(img, text, (20, 10 + 4 + lh * (i + 1) - 8), FONT, hs, color, 1, cv2.LINE_AA)
+     return img
++
++
++# ------------------------------------------------------------------ pavement-only view
++PAVEMENT_GREEN = (60, 200, 60)      # approved pavement ROI
++EXCLUSION_RED = (40, 40, 220)       # exclusion zones (hatched)
++CONFIRMED_BOX = (0, 90, 255)        # confirmed litter: solid, labelled
++CANDIDATE_BOX = (0, 215, 255)       # small/weak candidate: dashed amber, labelled "CANDIDATE"
++REJECTED_BOX = (150, 150, 150)      # diagnostic view only: dotted grey with the reason
++
++
++def _dashed_rect(img: np.ndarray, p1: tuple[int, int], p2: tuple[int, int], color: tuple[int, int, int],
++                 thick: int, dash: int) -> None:
++    (x1, y1), (x2, y2) = p1, p2
++    for a, b, fixed, horiz in ((x1, x2, y1, True), (x1, x2, y2, True), (y1, y2, x1, False), (y1, y2, x2, False)):
++        for s in range(a, b, dash * 2):
++            e = min(s + dash, b)
++            cv2.line(img, (s, fixed) if horiz else (fixed, s), (e, fixed) if horiz else (fixed, e), color, thick, cv2.LINE_AA)
++
++
++def _hatch(img: np.ndarray, pts: np.ndarray, color: tuple[int, int, int], step: int) -> None:
++    """Diagonal hatching clipped to a polygon."""
++    mask = np.zeros(img.shape[:2], np.uint8)
++    cv2.fillPoly(mask, [pts], 255)
++    x, y, w, h = cv2.boundingRect(pts)
++    lines = np.zeros_like(mask)
++    for k in range(-h, w, step):
++        cv2.line(lines, (x + k, y + h), (x + k + h, y), 255, 1)
++    img[(mask > 0) & (lines > 0)] = color
++
++
++def _tag(img: np.ndarray, text: str, x: int, y: int, color: tuple[int, int, int], fs: float,
++         placed: list[tuple[int, int, int, int]]) -> None:
++    h, w = img.shape[:2]
++    (tw, th), base = cv2.getTextSize(text, FONT, fs, 1)
++    lh = th + base + 6
++    for cx, cy in ((x, y - lh), (x, y), (x, y + lh), (x, y - 2 * lh)):
++        cx, cy = int(np.clip(cx, 0, max(0, w - tw - 8))), int(np.clip(cy, 0, max(0, h - lh)))
++        r = (cx, cy, cx + tw + 8, cy + lh)
++        if not _overlaps(r, placed):
++            placed.append(r)
++            cv2.rectangle(img, r[:2], r[2:], color, -1)
++            dark = sum(color) > 450
++            cv2.putText(img, text, (r[0] + 4, r[3] - base - 3), FONT, fs, (20, 20, 20) if dark else (255, 255, 255),
++                        1, cv2.LINE_AA)
++            return
++
++
++def draw_pavement_roi(img: np.ndarray, roi: Optional[ROISet], s: float) -> None:
++    """Green outline = approved pavement ROI; red outline with hatching = exclusion zone. Only the camera's saved
++    polygon is drawn; nothing is inferred."""
++    if roi is None or not roi.zones:
++        return
++    h, w = img.shape[:2]
++    thick = max(2, int(round(2 * s)))
++    for z in roi.excludes:
++        pts = (np.asarray(z.polygon) * [w, h]).astype(np.int32)
++        _hatch(img, pts, EXCLUSION_RED, max(10, int(18 * s)))
++        cv2.polylines(img, [pts], True, EXCLUSION_RED, thick, cv2.LINE_AA)
++    for z in roi.includes:
++        pts = (np.asarray(z.polygon) * [w, h]).astype(np.int32)
++        cv2.polylines(img, [pts], True, PAVEMENT_GREEN, thick + 1, cv2.LINE_AA)
++
++
++def annotate_pavement(frame: np.ndarray, dets: Sequence[Detection], roi: Optional[ROISet], status: str,
++                      camera_id: Optional[str] = None, diagnostic: bool = False) -> np.ndarray:
++    """Pavement-only operator view. Confirmed litter: solid box + ``Food Wrapper 78%``. Small/weak candidates:
++    dashed amber box + ``CANDIDATE``. ``diagnostic=True`` also draws rejected detections (dotted grey + reason).
++    The HUD names the camera and the ROI status; without an approved ROI it says pavement-only detection is
++    unavailable and draws no polygon."""
++    from backend.detection import pavement as pv
++
++    img = frame.copy()
++    h, w = img.shape[:2]
++    s = float(np.clip(w / 900, 0.6, 1.4))
++    thick = max(2, int(round(2 * s)))
++    fs = 0.5 * s
++    active = status == pv.ROI_ACTIVE
++    if active:
++        draw_pavement_roi(img, roi, s)
++    placed: list[tuple[int, int, int, int]] = []
++    by = {o: [d for d in dets if d.outcome == o] for o in pv.OUTCOMES}
++    by[pv.CONFIRMED_LITTER] = by[pv.CONFIRMED_LITTER] + by[pv.GENERAL_CONFIRMED]
++    by[pv.SMALL_OR_WEAK_CANDIDATE] = by[pv.SMALL_OR_WEAK_CANDIDATE] + by[pv.GENERAL_CANDIDATE]
++    if diagnostic:
++        for d in by[pv.REJECTED_OUTSIDE_ROI] + by[pv.REJECTED_FILTER] + by[pv.UNVERIFIED]:
++            x1, y1, x2, y2 = (int(round(v)) for v in d.bbox)
++            _dashed_rect(img, (x1, y1), (x2, y2), REJECTED_BOX, 1, 3)
++            _tag(img, f"{d.cls_name} {d.confidence * 100:.0f}% {(d.outcome_reason or '').replace('exclusion_zone:', 'excl:')}",
++                 x1, y1, REJECTED_BOX, fs * 0.85, placed)
++    for d in sorted(by[pv.SMALL_OR_WEAK_CANDIDATE], key=lambda d: -d.confidence):
++        x1, y1, x2, y2 = (int(round(v)) for v in d.bbox)
++        _dashed_rect(img, (x1, y1), (x2, y2), CANDIDATE_BOX, thick, max(4, int(6 * s)))
++        _tag(img, f"CANDIDATE {display_name(d.cls_name)} {d.confidence * 100:.0f}%", x1, y1, CANDIDATE_BOX, fs, placed)
++    for d in sorted(by[pv.CONFIRMED_LITTER], key=lambda d: -d.confidence):
++        x1, y1, x2, y2 = (int(round(v)) for v in d.bbox)
++        cv2.rectangle(img, (x1, y1), (x2, y2), CONFIRMED_BOX, thick + 1, cv2.LINE_AA)
++        _tag(img, f"{display_name(d.cls_name)} {d.confidence * 100:.0f}%", x1, y1, CONFIRMED_BOX, fs * 1.1, placed)
++
++    lines: list[tuple[str, tuple[int, int, int]]] = [(f"Camera: {camera_id or 'not given'}", (235, 235, 235))]
++    if active:
++        lines.append(("CAMERA_ROI_MODE - pavement ROI approved (green), exclusions hatched red", PAVEMENT_GREEN))
++    elif status == pv.GENERAL_IMAGE_MODE:
++        lines.append(("GENERAL_IMAGE_MODE - not pavement-validated", (200, 200, 200)))
++    elif status == pv.ROI_FRAME_MISMATCH:
++        lines.append(("ROI_FRAME_MISMATCH - pavement-only detection unavailable", (60, 160, 255)))
++    else:
++        lines.append(("ROI_NOT_CONFIGURED - pavement-only detection unavailable", (60, 160, 255)))
++    lines.append((f"Confirmed{' (general)' if status == pv.GENERAL_IMAGE_MODE else ' litter'}: "
++                  f"{len(by[pv.CONFIRMED_LITTER])}", (255, 255, 255)))
++    lines.append((f"Candidates (review): {len(by[pv.SMALL_OR_WEAK_CANDIDATE])}", CANDIDATE_BOX))
++    if diagnostic:
++        lines.append((f"Rejected outside ROI/exclusion: {len(by[pv.REJECTED_OUTSIDE_ROI])}  other filters: "
++                      f"{len(by[pv.REJECTED_FILTER])}  unverified: {len(by[pv.UNVERIFIED])}", REJECTED_BOX))
++        lines.append(("DIAGNOSTIC VIEW", (200, 200, 200)))
++    hs = 0.52 * s
++    sizes = [cv2.getTextSize(t, FONT, hs, 1) for t, _ in lines]
++    lh = max(th + base for (_, th), base in sizes) + 8
++    pw = max(tw for (tw, _), _ in sizes) + 20
++    _panel(img, 10, 10, pw, lh * len(lines) + 8, alpha=0.65)
++    for i, (text, color) in enumerate(lines):
++        cv2.putText(img, text, (20, 10 + 4 + lh * (i + 1) - 8), FONT, hs, color, 1, cv2.LINE_AA)
++    return img
+diff --git a/frontend/api/sampledTypes.ts b/frontend/api/sampledTypes.ts
+index 7446434..59ece09 100644
+--- a/frontend/api/sampledTypes.ts
++++ b/frontend/api/sampledTypes.ts
+@@ -3,12 +3,33 @@ import type { Detection, RoiZone } from './types'
+ import type { Lifecycle } from '../lib/autoAnalysis'
+ 
+ /** A detection of a sampled screenshot: model output plus severity, estimated object and alert (when created). */
+-export type SampledDetection = Detection & { severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number }
++export type SampledDetection = Detection & {
++  severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number
++  // pavement-only mode (backend/detection/pavement.py)
++  outcome?: PavementOutcome; outcome_reason?: string
++  geometry?: { membership?: string; zone?: string | null; size_ok?: boolean; min_side_frac?: number; area_frac?: number }
++}
++
++export type PavementOutcome = 'CONFIRMED_LITTER' | 'SMALL_OR_WEAK_CANDIDATE' | 'REJECTED_OUTSIDE_ROI' | 'REJECTED_FILTER'
++  | 'UNVERIFIED_ROI_NOT_CONFIGURED' | 'GENERAL_CONFIRMED' | 'GENERAL_CANDIDATE'
++/** Analysis mode: CAMERA_ROI_MODE is the only pavement-validated one. */
++export type PavementStatus = 'CAMERA_ROI_MODE' | 'GENERAL_IMAGE_MODE' | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
++
++/** Present on a screenshot result only when pavement-only mode is on. Counts are per outcome (lower-case keys). */
++export interface PavementResult {
++  status: PavementStatus
++  mode: PavementStatus
++  pavement_validated: boolean
++  note: string
++  camera_id: string | null
++  counts: Record<Lowercase<PavementOutcome> | 'raw', number>
++}
+ 
+ export type SampledState = 'queued' | 'running' | 'awaiting_roi' | 'done' | 'failed' | 'cancelled' | 'interrupted'
+ export type SampledStage = 'received' | 'validating' | 'sampling' | 'identifying_roi' | 'roi_confirmation' | 'analysing'
+   | 'generating_images' | 'generating_csv' | 'completed'
+ export type FrameOutcome = 'LITTER_DETECTED' | 'NO_LITTER' | 'ROI_UNCERTAIN' | 'UNREADABLE' | 'FAILED'
++  | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
+ 
+ export interface SampledMedia {
+   id: string
+@@ -58,6 +79,8 @@ export interface SampledFrame {
+   sampling_note: string | null
+   download_original_url: string | null
+   download_annotated_url: string | null
++  pavement?: PavementResult | null
++  diagnostic_url?: string | null
+ }
+ 
+ export interface RoiPolicy {
+diff --git a/frontend/features/sampled/AutoAnalysis.tsx b/frontend/features/sampled/AutoAnalysis.tsx
+index ab97806..8ff4021 100644
+--- a/frontend/features/sampled/AutoAnalysis.tsx
++++ b/frontend/features/sampled/AutoAnalysis.tsx
+@@ -3,11 +3,12 @@
+ // Zero-click video analysis: drop a video -> upload + automatic analysis (one request) -> live progress ->
+ // four screenshots (original + annotated), summary and reports. Nothing to click after the drop.
+ // Logic (validation, duplicate-drop guard, lifecycle, labels) lives in frontend/lib/autoAnalysis.ts (unit-tested).
+-import { useEffect, useRef, useState } from 'react'
++import { useEffect, useRef, useState, type ReactNode } from 'react'
+ import { AlertTriangle, Check, CircleSlash, Download, FileText, FileVideo, Info, Layers, Loader2, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
+ import { downloadAuthed, url } from '../../api/client'
+ import { Api } from '../../api/endpoints'
+ import type { SampledFrame, SampledJob, SampledStage } from '../../api/sampledTypes'
++import type { RoiZone } from '../../api/types'
+ import { invalidate, useQuery } from '../../hooks/useQuery'
+ import { cx, dateTime, duration, num, pct } from '../../lib/format'
+ import {
+@@ -29,6 +30,8 @@ const LIFECYCLE_TONE: Record<Lifecycle, Tone> = {
+ }
+ const REPORT_COLS = ['record_type', 'screenshot_number', 'screenshot_timestamp_seconds', 'litter_class', 'confidence_score',
+   'severity', 'object_track_id', 'final_classification', 'review_required']
++const PAVEMENT_COLS = ['record_type', 'screenshot_number', 'litter_class', 'confidence_score', 'pavement_outcome',
++  'pavement_reason', 'size_check', 'review_required']
+ 
+ /** Where a stopped job got to (for the progress strip of a FAILED / CANCELLED job). */
+ function stageLifecycle(stage: SampledStage): Lifecycle {
+@@ -230,7 +233,8 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
+ 
+       {job.frames.some((f) => f.status !== 'planned') && (
+         <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}>
+-          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)} />)}</div>
++          <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)}
++            zones={f.roi ?? job.roi_policy?.zones ?? job.roi ?? []} />)}</div>
+         </Panel>
+       )}
+ 
+@@ -240,18 +244,38 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
+             <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_csv, `${job.id}_analysis_summary.csv`)}>Summary CSV</Button>
+             <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_json, `${job.id}_analysis_summary.json`)}>Summary JSON</Button>
+           </>}>
+-          <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`} cols={REPORT_COLS} />
++          <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`}
++            cols={job.frames.some((f) => f.pavement) ? PAVEMENT_COLS : REPORT_COLS} />
+         </Panel>
+       )}
+     </>
+   )
+ }
+ 
+-function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean }) {
++/** The camera's saved ROI drawn over the untouched original (green = pavement, red dashed = exclusion). The SVG uses
++ * the frame's own pixel size as viewBox with "meet", which is exactly how object-contain places the picture. */
++function RoiOverlay({ zones, size }: { zones: RoiZone[]; size: [number, number] }) {
++  const [w, h] = size
++  return (
++    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="pointer-events-none absolute inset-0 size-full" aria-hidden>
++      {zones.map((z, i) => (
++        <polygon key={i} points={z.polygon.map(([x, y]) => `${x * w},${y * h}`).join(' ')}
++          fill={z.mode === 'include' ? 'rgba(60,200,60,0.12)' : 'rgba(220,40,40,0.16)'}
++          stroke={z.mode === 'include' ? 'rgb(60,200,60)' : 'rgb(220,40,40)'} strokeWidth={Math.max(2, w / 640)}
++          strokeDasharray={z.mode === 'include' ? undefined : `${w / 160} ${w / 240}`} vectorEffect="non-scaling-stroke" />
++      ))}
++    </svg>
++  )
++}
++
++function AutoFrameCard({ frame, done, zones }: { frame: SampledFrame; done: boolean; zones: RoiZone[] }) {
+   const facts = screenshotFacts(frame)
+   const o = frame.outcome ? OUTCOME[frame.outcome] : null
+   const pending = !done && !frame.outcome
+-  const image = (src: string | null, label: string, dl: string | null) => (
++  const [showDiag, setShowDiag] = useState(false)
++  const pav = facts.pavement
++  const overlay = pav?.active && frame.image_size && zones.length ? <RoiOverlay zones={zones} size={frame.image_size} /> : null
++  const image = (src: string | null, label: string, dl: string | null, extra?: ReactNode) => (
+     <figure className="flex min-w-0 flex-col gap-1">
+       <div className="relative aspect-video overflow-hidden rounded-md bg-video">
+         {src ? (
+@@ -263,6 +287,7 @@ function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean })
+             {pending ? 'Processing…' : 'Not available'}
+           </div>
+         )}
++        {src && extra}
+       </div>
+       <figcaption className="flex items-center justify-between text-[11.5px] text-fg-3">
+         {label}
+@@ -282,9 +307,28 @@ function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: boolean })
+         </div>
+       </header>
+       <div className="grid grid-cols-2 gap-2">
+-        {image(frame.original_url, 'Original', frame.download_original_url)}
+-        {image(frame.annotated_url, 'Annotated', frame.download_annotated_url)}
++        {image(frame.original_url, overlay ? 'Original + approved ROI' : 'Original', frame.download_original_url, overlay)}
++        {image(showDiag && frame.diagnostic_url ? frame.diagnostic_url : frame.annotated_url,
++          showDiag && frame.diagnostic_url ? 'Diagnostic (incl. rejected)' : 'Annotated', frame.download_annotated_url)}
+       </div>
++      {pav && (
++        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
++          <Badge tone={pav.active ? 'ok' : pav.general ? 'neutral' : 'warn'}>{pav.active ? 'Camera ROI mode · pavement-validated'
++            : pav.general ? 'General image mode · not pavement-validated'
++              : `${pav.status.replace(/_/g, ' ')} · pavement-only detection unavailable`}</Badge>
++          {frame.pavement?.camera_id && <Badge>Camera {frame.pavement.camera_id}</Badge>}
++          {pav.active && <Badge tone={facts.count ? 'crit' : 'neutral'}>{facts.count} confirmed</Badge>}
++          {pav.active && <Badge tone={facts.possible ? 'warn' : 'neutral'}>{facts.possible} candidate{facts.possible === 1 ? '' : 's'} (review)</Badge>}
++          {pav.rejected > 0 && <Badge>{pav.rejected} rejected</Badge>}
++          {pav.unverified > 0 && <Badge tone="warn">{pav.unverified} unverified (no ROI)</Badge>}
++          {frame.diagnostic_url && (
++            <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-fg-3">
++              <input type="checkbox" checked={showDiag} onChange={(e) => setShowDiag(e.target.checked)} />Diagnostic view
++            </label>
++          )}
++        </div>
++      )}
++      {facts.roiUnavailable && o && <p className="flex gap-1.5 text-[12px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />{o.hint}</p>}
+       {facts.analysed && (
+         facts.count === 0 ? <EmptyState compact title="No litter detected" body={facts.possible ? `${facts.possible} possible object(s) below the confirmed threshold.` : undefined} /> : (
+           <div className="flex flex-col gap-1.5">
+diff --git a/frontend/features/sampled/shared.tsx b/frontend/features/sampled/shared.tsx
+index b55fca2..dd3429b 100644
+--- a/frontend/features/sampled/shared.tsx
++++ b/frontend/features/sampled/shared.tsx
+@@ -18,6 +18,8 @@ export const OUTCOME: Record<FrameOutcome, { label: string; tone: Tone; hint: st
+   ROI_UNCERTAIN: { label: 'ROI uncertain', tone: 'warn', hint: 'Not analysed: the outdoor area was not confirmed for this screenshot.' },
+   UNREADABLE: { label: 'Unreadable', tone: 'neutral', hint: 'Not analysed: the decoded picture was corrupted or blank.' },
+   FAILED: { label: 'Failed', tone: 'crit', hint: 'Processing failed for this screenshot.' },
++  ROI_NOT_CONFIGURED: { label: 'ROI not configured', tone: 'warn', hint: 'No approved pavement ROI for this camera: pavement-only detection is unavailable. Detections are listed for review; none is confirmed.' },
++  ROI_FRAME_MISMATCH: { label: 'ROI frame mismatch', tone: 'warn', hint: 'The camera ROI was drawn on a frame of a different shape: it is not applied. Nothing is confirmed.' },
+ }
+ 
+ export const STATE: Record<SampledState, { label: string; tone: Tone }> = {
+diff --git a/frontend/lib/autoAnalysis.ts b/frontend/lib/autoAnalysis.ts
+index 4496d90..4e608d1 100644
+--- a/frontend/lib/autoAnalysis.ts
++++ b/frontend/lib/autoAnalysis.ts
+@@ -121,22 +121,34 @@ const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' }> =
+ 
+ export const overallLabel = (s: string | undefined | null) => (s && OVERALL[s]) || { text: s || '—', tone: 'warn' as const }
+ 
+-export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string }
++export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string; outcome?: string }
+ export interface FrameLike {
+   idx: number; frame_idx: number; video_time_sec: number | null; status: string; outcome: string | null
+   detections: DetLike[]; sampling_note?: string | null; error?: string | null
++  pavement?: { status: string; counts: Record<string, number> } | null
+ }
+ 
+ /** What one screenshot card shows: confirmed litter (class, model confidence, severity) and the count. */
+ export function screenshotFacts(f: FrameLike) {
+   const confirmed = f.detections.filter((d) => d.status === 'confirmed').sort((a, b) => b.confidence - a.confidence)
+-  const possible = f.detections.filter((d) => d.status === 'candidate').length
++  // camera ROI mode: candidates are the SMALL_OR_WEAK_CANDIDATE outcome (small or weak, inside the approved ROI);
++  // general image mode and the mode switched off keep the existing rule
++  const validated = f.pavement?.status === 'CAMERA_ROI_MODE'
++  const possible = validated ? f.detections.filter((d) => d.outcome === 'SMALL_OR_WEAK_CANDIDATE').length
++    : f.detections.filter((d) => d.status === 'candidate').length
++  const pv = f.pavement
+   return {
++    pavement: pv ? {
++      active: validated, general: pv.status === 'GENERAL_IMAGE_MODE', status: pv.status,
++      rejected: (pv.counts.rejected_outside_roi ?? 0) + (pv.counts.rejected_filter ?? 0),
++      unverified: pv.counts.unverified_roi_not_configured ?? 0,
++    } : null,
+     count: confirmed.length,
+     items: confirmed.map((d) => ({ cls: d.class, confidence: d.confidence, severity: d.severity ?? null, object: d.object_id ?? null })),
+     possible,
+     adjusted: !!f.sampling_note,
+     analysed: f.outcome === 'LITTER_DETECTED' || f.outcome === 'NO_LITTER',
++    roiUnavailable: f.outcome === 'ROI_NOT_CONFIGURED' || f.outcome === 'ROI_FRAME_MISMATCH',
+   }
+ }
+ 
+diff --git a/frontend/tests/autoAnalysis.test.mjs b/frontend/tests/autoAnalysis.test.mjs
+index 950e658..a621f4a 100644
+--- a/frontend/tests/autoAnalysis.test.mjs
++++ b/frontend/tests/autoAnalysis.test.mjs
+@@ -119,3 +119,38 @@ test('remembered upload defaults are validated', () => {
+   assert.deepEqual(cleanDefaults({ camera_id: '../x', store_id: '=cmd()' }), { camera_id: '', store_id: '' })
+   assert.deepEqual(cleanDefaults(null), { camera_id: '', store_id: '' })
+ })
++
++test('pavement-only mode: candidates are the SMALL_OR_WEAK_CANDIDATE outcome; no ROI is never "analysed clean"', () => {
++  const active = screenshotFacts({
++    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'LITTER_DETECTED', sampling_note: null,
++    pavement: { status: 'CAMERA_ROI_MODE', counts: { rejected_outside_roi: 3, rejected_filter: 1, unverified_roi_not_configured: 0 } },
++    detections: [{ class: 'food_wrapper', confidence: 0.8, status: 'confirmed', outcome: 'CONFIRMED_LITTER' },
++      { class: 'plastic_piece', confidence: 0.9, status: 'weak', outcome: 'SMALL_OR_WEAK_CANDIDATE' },
++      { class: 'paper', confidence: 0.5, status: 'candidate', outcome: 'SMALL_OR_WEAK_CANDIDATE' },
++      { class: 'cup', confidence: 0.9, status: 'rejected', outcome: 'REJECTED_OUTSIDE_ROI' }],
++  })
++  assert.equal(active.count, 1)
++  assert.equal(active.possible, 2)
++  assert.deepEqual(active.pavement, { active: true, general: false, status: 'CAMERA_ROI_MODE', rejected: 4, unverified: 0 })
++  const none = screenshotFacts({
++    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'ROI_NOT_CONFIGURED', sampling_note: null,
++    pavement: { status: 'ROI_NOT_CONFIGURED', counts: { unverified_roi_not_configured: 2 } },
++    detections: [{ class: 'food_wrapper', confidence: 0.8, status: 'weak', outcome: 'UNVERIFIED_ROI_NOT_CONFIGURED' }],
++  })
++  assert.equal(none.count, 0)
++  assert.equal(none.analysed, false)
++  assert.equal(none.roiUnavailable, true)
++  assert.equal(none.pavement.active, false)
++  const general = screenshotFacts({
++    idx: 1, frame_idx: 10, video_time_sec: 1, status: 'saved', outcome: 'LITTER_DETECTED', sampling_note: null,
++    pavement: { status: 'GENERAL_IMAGE_MODE', counts: {} },
++    detections: [{ class: 'cup', confidence: 0.8, status: 'confirmed', outcome: 'GENERAL_CONFIRMED' },
++      { class: 'paper', confidence: 0.5, status: 'candidate', outcome: 'GENERAL_CANDIDATE' },
++      { class: 'paper', confidence: 0.35, status: 'weak', outcome: 'GENERAL_CANDIDATE' }],
++  })
++  assert.equal(general.count, 1)                 // existing behaviour: confirmed still counted
++  assert.equal(general.possible, 1)              // existing rule: only status candidate
++  assert.equal(general.pavement.active, false)
++  assert.equal(general.pavement.general, true)
++  assert.equal(general.analysed, true)
++})
+diff --git a/tests/test_pavement_roi.py b/tests/test_pavement_roi.py
+new file mode 100644
+index 0000000..0a3bf81
+--- /dev/null
++++ b/tests/test_pavement_roi.py
+@@ -0,0 +1,744 @@
++"""Pavement-only mode: camera-specific ROI enforcement + significant-litter size filter (backend/detection/pavement.py).
++
++Geometry note: CAM_A_LAYOUT below is the 2026-11-16 *proposed* (NOT approved, NOT active) polygon set for the indoor
++counter-view camera, copied here as plain TEST DATA so the rules are exercised on the real scene layout. It is not a
++camera configuration and nothing in the application reads it. The REAL_* boxes are detections the production v3 model
++made on that camera's 2026-11-10 recording (job sv_20261115_232628_e603d5), in original 2560x1440 pixels.
++
++The model is replaced by a stub that "detects" magenta rectangles and returns boxes in the coordinates of the image
++it was given (exactly like Ultralytics), so the engine's tile / ROI-crop coordinate mapping is checked against known
++ground truth. These tests say nothing about detection accuracy.
++"""
++from __future__ import annotations
++
++import csv
++import io
++from pathlib import Path
++
++import cv2
++import numpy as np
++import pytest
++
++from backend.alerts.manager import AlertManager, ClassMetadata
++from backend.core.config import PROJECT_ROOT
++from backend.core.settings import DetectionSettings, PavementSettings, SizeLimit, merged_settings
++from backend.database.db import Database
++from backend.detection import pavement as pv
++from backend.detection.engine import YoloEngine
++from backend.detection.filters import ROISet
++from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection
++from backend.sampling import auto_roi, detection_report
++from backend.services.pipeline import StreamPipeline, detect_image, detect_in_roi, filter_detections
++
++W, H = 2560, 1440
++
++
++def norm(pts, w=W, h=H):
++    return [(round(x / w, 6), round(y / h, 6)) for x, y in pts]
++
++
++CAM_A_LAYOUT = [
++    {"name": "outdoor_pavement", "type": "ground", "mode": "include", "polygon": norm([
++        (648, 38), (830, 25), (878, 80), (922, 25), (926, 25), (926, 146), (1100, 147), (1280, 172), (1450, 202),
++        (1640, 229), (1820, 254), (2000, 284), (2085, 305), (2150, 342), (2180, 360), (2160, 500), (2153, 560),
++        (2143, 625), (2124, 688), (2100, 790), (1900, 752), (1900, 684), (1868, 655), (1775, 655), (1745, 684),
++        (1745, 733), (1716, 726), (1695, 772), (1285, 676), (1102, 632), (1122, 566), (785, 505), (700, 541),
++        (668, 531), (686, 432), (648, 414)])},
++    {"name": "shop_left_rack_and_storage_box", "type": "custom", "mode": "exclude", "polygon": norm([
++        (0, 0), (628, 0), (628, 432), (668, 447), (652, 553), (0, 720)])},
++    {"name": "counter_trays_devices_glass", "type": "custom", "mode": "exclude", "polygon": norm([
++        (0, 720), (652, 553), (705, 564), (785, 527), (1102, 584), (1086, 652), (1285, 710), (1700, 796), (1712, 748),
++        (1752, 756), (1752, 697), (1779, 672), (1858, 672), (1884, 697), (1884, 768), (2112, 810), (2125, 810),
++        (2560, 810), (2560, 1440), (0, 1440)])},
++    {"name": "shop_right_racks", "type": "custom", "mode": "exclude", "polygon": norm([
++        (2203, 0), (2560, 0), (2560, 810), (2125, 810), (2123, 790), (2143, 690), (2163, 630), (2178, 500),
++        (2203, 345)])},
++    {"name": "awning_and_hanging_sign", "type": "custom", "mode": "exclude", "polygon": norm([
++        (834, 0), (2203, 0), (2203, 345), (2160, 334), (2090, 296), (2000, 274), (1820, 244), (1640, 219),
++        (1450, 192), (1280, 162), (1100, 137), (938, 134), (938, 12), (908, 12), (880, 64), (852, 12)])},
++]
++
++# real v3 detections on CAM_A (2026-11-10), original pixels
++REAL_COUNTER_PIECE = [731.0, 987.0, 743.0, 991.0]        # plastic_piece 0.72 "confirmed" today: inside the counter
++REAL_BOX_LID = [607.0, 443.0, 648.0, 454.0]              # plastic_packaging 0.55: storage-box lid edge/reflection
++REAL_BOX_LID_2 = [334.0, 452.0, 353.0, 466.0]            # plastic_packaging 0.54: storage-box lid
++REAL_SIDE_GLASS = [14.0, 824.0, 33.0, 838.0]             # food_wrapper 0.56: side-glass sliver, bottom-left
++REAL_PAVEMENT_MARK = [1550.0, 416.0, 1639.0, 431.0]      # plastic_bag 0.40 (weak): faint mark on the pavers
++
++# a simple second camera ("camera B", 1920x1080): pavement = right half below the kerb, OSD clock bottom-left
++CAM_B_LAYOUT = [
++    {"name": "pavement", "type": "ground", "mode": "include",
++     "polygon": norm([(1120, 545), (1920, 525), (1920, 1080), (1112, 1080)], 1920, 1080)},
++    {"name": "osd_timestamp", "type": "custom", "mode": "exclude",
++     "polygon": norm([(60, 1020), (560, 1020), (560, 1080), (60, 1080)], 1920, 1080)},
++    {"name": "lamp_pole", "type": "custom", "mode": "exclude",
++     "polygon": norm([(1500, 300), (1540, 300), (1540, 540), (1500, 540)], 1920, 1080)},   # pole body, base excluded
++]
++
++
++def P(**kw) -> PavementSettings:
++    return PavementSettings(enabled=True, **kw)
++
++
++def S(**pav) -> DetectionSettings:
++    return merged_settings({"pavement": {"enabled": True, **pav}})
++
++
++def det(bbox, conf=0.8, cls="food_wrapper", status=CANDIDATE) -> Detection:
++    return Detection(list(bbox), 0, cls, conf, status=status)
++
++
++def run_gate(dets, roi_zones, shape=(H, W, 3), approved=True, p=None, s=None, camera="CAM_T", registered=True):
++    """Exactly what the pipeline does in pavement mode for a named camera: decide the mode, gate, confirm, finalize."""
++    s = s or DetectionSettings()
++    p = p or P()
++    roi = ROISet.from_json(roi_zones) if roi_zones is not None else None
++    status, _ = pv.decide_mode(camera, registered, roi, approved, shape, p)
++    pv.gate(dets, shape, roi, status, p)
++    # still-image confirmation exactly as detect_image does it
++    for d in dets:
++        if d.status == CANDIDATE and d.confidence >= s.confidence.confirmed_threshold:
++            d.status = CONFIRMED
++    pv.finalize(dets)
++    return status
++
++
++# ---------------------------------------------------------------------- 1, 5. inside the pavement ROI
++def test_large_wrapper_inside_pavement_roi_is_confirmed():
++    d = det([1300, 330, 1420, 400], 0.82)                         # on the pavers, 120x70 px
++    assert run_gate([d], CAM_A_LAYOUT) == pv.ROI_ACTIVE
++    assert d.outcome == pv.CONFIRMED_LITTER and d.status == CONFIRMED
++    assert d.geometry["membership"] == pv.INSIDE and d.geometry["zone"] == "outdoor_pavement"
++    assert d.geometry["size_ok"] is True
++
++
++def test_inside_roi_but_below_confirmed_confidence_is_a_candidate_not_confirmed():
++    d = det([1300, 330, 1420, 400], 0.50)                         # candidate tier, < 0.60 confirmed threshold
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.SMALL_OR_WEAK_CANDIDATE and d.status == CANDIDATE
++    assert d.outcome_reason == "below_confirmation_rule"
++
++
++def test_weak_tier_inside_roi_is_candidate_with_low_confidence_reason():
++    d = det([1300, 330, 1420, 400], 0.35, status=WEAK)
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.SMALL_OR_WEAK_CANDIDATE and d.status == WEAK and d.outcome_reason == "low_confidence"
++
++
++# ---------------------------------------------------------------------- 2. outside
++def test_detection_outside_pavement_roi_is_rejected_and_kept():
++    car = det([1300, 200, 1500, 300], 0.9)                        # camera B: on the road above the kerb
++    run_gate([car], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert car.status == REJECTED and car.reason == "outside_roi"
++    assert car.outcome == pv.REJECTED_OUTSIDE_ROI and car.outcome_reason == "outside_pavement_roi"
++    assert car.bbox == [1300, 200, 1500, 300] and car.confidence == 0.9      # nothing about the raw box is lost
++
++
++# ---------------------------------------------------------------------- 3. exclusion zones
++def test_detection_inside_exclusion_zone_is_rejected_even_when_in_pavement_tolerance():
++    d = det(REAL_COUNTER_PIECE, 0.72, "plastic_piece")
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.REJECTED_OUTSIDE_ROI
++    assert d.outcome_reason in ("exclusion_zone:counter_trays_devices_glass", "outside_pavement_roi")
++
++
++def test_exclusion_applies_after_membership_foot_point_inside_pavement_but_box_on_pole():
++    pole = det([1495, 320, 1545, 560], 0.7)                       # tall thin box: foot on pavement, body is the pole
++    run_gate([pole], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert pole.geometry["exclusion_hit"] == "area"
++    assert pole.outcome == pv.REJECTED_OUTSIDE_ROI and pole.outcome_reason == "exclusion_zone:lamp_pole"
++
++
++def test_osd_timestamp_is_never_litter():
++    clock = det([348, 1030, 399, 1068], 0.80)                     # EZVIZ: "food_wrapper 0.80" on the clock digits
++    run_gate([clock], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert clock.outcome == pv.REJECTED_OUTSIDE_ROI
++
++
++# ---------------------------------------------------------------------- 4. crossing the boundary
++def test_box_crossing_roi_boundary_with_foot_inside_is_kept():
++    d = det([1080, 480, 1200, 600], 0.8)                          # camera B: left part over the awning edge
++    run_gate([d], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert d.outcome == pv.CONFIRMED_LITTER and d.geometry["membership"] == pv.INSIDE
++
++
++def test_foot_point_just_outside_within_edge_tolerance_is_kept():
++    # camera B's left pavement edge is at x≈1119 for y=600; tolerance = 0.01 * 1080 = 10.8 px
++    d = det([1050, 540, 1174, 600], 0.8)                          # foot (1112, 600): ~7 px outside, 44 % of box inside
++    run_gate([d], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert -10.8 <= d.geometry["foot_distance_px"] < 0
++    assert d.geometry["membership"] == pv.EDGE and d.outcome == pv.CONFIRMED_LITTER
++    far = det([1030, 540, 1150, 600], 0.8)                        # foot (1090, 600): ~29 px outside, 26 % inside
++    run_gate([far], CAM_B_LAYOUT, shape=(1080, 1920, 3))
++    assert far.outcome == pv.REJECTED_OUTSIDE_ROI
++
++
++def test_foot_hidden_below_boundary_but_most_of_box_inside_is_kept_by_area_overlap():
++    roi = [{"name": "pave", "type": "ground", "mode": "include", "polygon": [(0.2, 0.2), (0.8, 0.2), (0.8, 0.6), (0.2, 0.6)]}]
++    d = det([1000, 600, 1200, 900], 0.8)                          # y 600..900, boundary at 0.6*1440 = 864
++    run_gate([d], roi)
++    assert d.geometry["membership"] == pv.OVERLAP and d.outcome == pv.CONFIRMED_LITTER
++    only_foot = det([1000, 600, 1200, 900], 0.8)
++    run_gate([only_foot], roi, p=P(membership="footpoint"))
++    assert only_foot.outcome == pv.REJECTED_OUTSIDE_ROI
++
++
++def test_box_mostly_outside_with_foot_outside_is_rejected():
++    roi = [{"name": "pave", "type": "ground", "mode": "include", "polygon": [(0.2, 0.2), (0.8, 0.2), (0.8, 0.6), (0.2, 0.6)]}]
++    d = det([1000, 820, 1200, 1100], 0.8)                         # only the top 44 px of 280 inside
++    run_gate([d], roi)
++    assert d.outcome == pv.REJECTED_OUTSIDE_ROI
++
++
++# ---------------------------------------------------------------------- 6. tiny mark
++def test_tiny_plastic_mark_inside_roi_is_small_candidate_never_confirmed():
++    d = det([1500, 330, 1510, 334], 0.90, "plastic_piece")        # 10x4 px with very high confidence
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.SMALL_OR_WEAK_CANDIDATE and d.status == WEAK
++    assert "below_min_size" in d.outcome_reason and d.geometry["size_ok"] is False
++
++
++def test_size_rule_needs_both_side_and_area():
++    thin = det([1300, 330, 1500, 335], 0.9)                       # 200x5: big area? 1000 px, side 5 px
++    run_gate([thin], CAM_A_LAYOUT)
++    assert thin.outcome == pv.SMALL_OR_WEAK_CANDIDATE             # fails min side
++    square = det([1300, 330, 1318, 348], 0.9)                     # 18x18 = 324 px < 0.00015*W*H = 553
++    run_gate([square], CAM_A_LAYOUT)
++    assert square.geometry["min_side_frac"] >= 0.012 and square.outcome == pv.SMALL_OR_WEAK_CANDIDATE
++
++
++def test_per_class_size_override():
++    p = P(class_size={"plastic_piece": SizeLimit(min_side_frac=0.002, min_area_frac=0.00001)})
++    a, b = det([1500, 330, 1510, 334], 0.9, "plastic_piece"), det([1500, 330, 1510, 334], 0.9, "paper")
++    run_gate([a, b], CAM_A_LAYOUT, p=p)
++    assert a.outcome == pv.CONFIRMED_LITTER and b.outcome == pv.SMALL_OR_WEAK_CANDIDATE
++
++
++# ---------------------------------------------------------------------- 7, 8, 9. real CAM_A false positives
++@pytest.mark.parametrize("box,cls,zone", [
++    (REAL_BOX_LID, "plastic_packaging", "shop_left_rack_and_storage_box"),       # 8. reflection on the box lid
++    (REAL_BOX_LID_2, "plastic_packaging", "shop_left_rack_and_storage_box"),
++    ([150, 120, 260, 300], "food_wrapper", "shop_left_rack_and_storage_box"),     # 7. chips packet on the rack
++    ([900, 560, 960, 640], "plastic_bottle", "counter_trays_devices_glass"),      # 7. bottle in the front tray
++    (REAL_SIDE_GLASS, "food_wrapper", "counter_trays_devices_glass"),
++    ([1400, 100, 1500, 180], "paper", "awning_and_hanging_sign"),                 # 9. white awning flap
++    ([2250, 300, 2400, 420], "plastic_packaging", "shop_right_racks"),           # 7. hanging merchandise
++])
++def test_real_cam_a_non_ground_detections_are_rejected(box, cls, zone):
++    d = det(box, 0.75, cls)
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.REJECTED_OUTSIDE_ROI, d.geometry
++    assert d.outcome_reason in (f"exclusion_zone:{zone}", "outside_pavement_roi")
++    assert d.status == REJECTED
++
++
++def test_real_pavement_mark_stays_a_weak_candidate():
++    d = det(REAL_PAVEMENT_MARK, 0.3953, "plastic_bag", status=WEAK)
++    run_gate([d], CAM_A_LAYOUT)
++    assert d.outcome == pv.SMALL_OR_WEAK_CANDIDATE and d.status == WEAK
++
++
++# ---------------------------------------------------------------------- 10. resolutions
++@pytest.mark.parametrize("w,h", [(2560, 1440), (1920, 1080), (1280, 720), (640, 360)])
++def test_same_scene_same_outcomes_at_every_resolution(w, h):
++    base = [([1300, 330, 1420, 400], 0.82), ([1500, 330, 1510, 334], 0.9), (REAL_BOX_LID, 0.55),
++            (REAL_COUNTER_PIECE, 0.72), ([1400, 100, 1500, 180], 0.7)]
++    k = w / W
++    dets = [det([v * k for v in b], c) for b, c in base]
++    run_gate(dets, CAM_A_LAYOUT, shape=(h, w, 3))
++    assert [d.outcome for d in dets] == [pv.CONFIRMED_LITTER, pv.SMALL_OR_WEAK_CANDIDATE, pv.REJECTED_OUTSIDE_ROI,
++                                         pv.REJECTED_OUTSIDE_ROI, pv.REJECTED_OUTSIDE_ROI]
++    assert dets[0].geometry["min_side_frac"] == pytest.approx(70 / 1440, abs=1e-4)
++    assert dets[0].geometry["area_frac"] == pytest.approx(120 * 70 / (W * H), rel=1e-3)
++
++
++# ---------------------------------------------------------------------- 11. engine coordinate mapping (stub model)
++MAGENTA = (255, 0, 255)
++
++
++class _A:
++    def __init__(self, a):
++        self.a = np.asarray(a)
++
++    def cpu(self):
++        return self
++
++    def numpy(self):
++        return self.a
++
++
++class _Boxes:
++    def __init__(self, xyxy, conf, cls):
++        self.xyxy, self.conf, self.cls = _A(np.asarray(xyxy, np.float32).reshape(-1, 4)), _A(conf), _A(cls)
++
++    def __len__(self):
++        return len(self.xyxy.a)
++
++
++class _Res:
++    def __init__(self, boxes):
++        self.boxes = boxes
++
++
++class StubModel:
++    """'Detects' every magenta rectangle in the image it is given; boxes in that image's own pixel coordinates.
++    Confidence is read from the rectangle's green channel (g/255) so a test can set it per object."""
++    task = "detect"
++    names = {0: "food_wrapper"}
++
++    def __init__(self):
++        self.calls: list[tuple[int, int]] = []
++
++    def predict(self, images, **kw):
++        out = []
++        for img in images if isinstance(images, list) else [images]:
++            self.calls.append(img.shape[:2])
++            # tolerant to video compression: strong blue AND red, cleaned with a small closing
++            m = ((img[:, :, 0] > 200) & (img[:, :, 2] > 200)).astype(np.uint8)
++            m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
++            n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=4)
++            xyxy, conf = [], []
++            for i in range(1, n):
++                x, y, w, h, area = stats[i]
++                if area < 12:
++                    continue
++                xyxy.append([x, y, x + w, y + h])
++                conf.append(float(np.median(img[:, :, 1][lab == i])) / 255)
++            out.append(_Res(_Boxes(xyxy, np.float32(conf), np.zeros(len(conf), int))))
++        return out
++
++
++def stub_engine(settings: DetectionSettings | None = None) -> YoloEngine:
++    e = YoloEngine.__new__(YoloEngine)
++    import threading
++    e._lock, e.settings, e.version, e.weights = threading.Lock(), settings or DetectionSettings(), "stub", "stub"
++    e.model, e.names, e.vocab, e._raw_to_cls, e.device, e.train_imgsz = StubModel(), {0: "food_wrapper"}, None, None, "cpu", 640
++    return e
++
++
++def scene(w, h, objects):
++    img = np.full((h, w, 3), 90, np.uint8)
++    for (x1, y1, x2, y2), conf in objects:
++        img[y1:y2, x1:x2] = (255, int(round(conf * 255)), 255)
++    return img
++
++
++def test_tiled_inference_maps_boxes_back_to_original_frame():
++    truth = [(1300, 330, 1420, 400), (900, 980, 1150, 1100), (2400, 1300, 2470, 1350)]   # one crosses a tile border
++    img = scene(W, H, [(b, 0.8) for b in truth])
++    eng = stub_engine()
++    dets, info = eng.detect(img, force_tiling=True)
++    assert info.tiled and info.tiles > 1 and info.raw_before_merge > len(truth)          # partial tile boxes existed
++    got = sorted(tuple(round(v) for v in d.bbox) for d in dets)
++    assert got == sorted(truth)                                                       # merged + exact full-frame coords
++    assert all(shape != (H, W) for shape in eng.model.calls[1:])                      # tiles really were crops
++
++
++def test_roi_crop_inference_maps_boxes_back_to_original_frame():
++    roi = ROISet.from_json(CAM_A_LAYOUT)
++    truth = (1300, 330, 1420, 400)
++    img = scene(W, H, [(truth, 0.8)])
++    eng = stub_engine()
++    s = merged_settings({"filters": {"roi_crop_inference": True}})          # experimental setting, explicitly on
++    (dets, _), = detect_in_roi(eng, [img], s, roi, force_tiling=False)
++    assert eng.model.calls[0] != (H, W)                                               # the model saw the crop only
++    assert [tuple(round(v) for v in d.bbox) for d in dets] == [truth]
++
++
++# ---------------------------------------------------------------------- 12. camera A ROI never used for camera B
++def test_roi_saved_for_camera_a_is_not_applied_to_camera_b(tmp_path):
++    db = Database(tmp_path / "t.db")
++    db.set_setting("roi:CAM_A", CAM_A_LAYOUT)
++    a = auto_roi.decide("CAM_A", None, db.get_setting("roi:CAM_A"))
++    b = auto_roi.decide("CAM_B", None, db.get_setting("roi:CAM_B"))
++    assert a.status == auto_roi.APPROVED and b.status == auto_roi.NOT_CONFIGURED and b.zones == []
++    # and the pavement gate, given camera B's (missing) ROI, confirms nothing
++    d = det([1300, 330, 1420, 400], 0.9)
++    assert run_gate([d], b.zones or None) == pv.ROI_NOT_CONFIGURED and d.outcome == pv.UNVERIFIED
++
++
++def test_roi_drawn_on_a_16x9_camera_is_refused_on_a_4x3_frame():
++    d = det([500, 300, 600, 380], 0.9)
++    status = run_gate([d], CAM_A_LAYOUT, shape=(960, 1280, 3), p=P(roi_reference_size=(2560, 1440)))
++    assert status == pv.ROI_FRAME_MISMATCH and d.outcome == pv.UNVERIFIED and d.status == WEAK
++    ok = det([1300 / 2, 330 / 2, 1420 / 2, 400 / 2], 0.9)                             # same camera, 1280x720 substream
++    assert run_gate([ok], CAM_A_LAYOUT, shape=(720, 1280, 3), p=P(roi_reference_size=(2560, 1440))) == pv.ROI_ACTIVE
++    assert ok.outcome == pv.CONFIRMED_LITTER
++
++
++# ---------------------------------------------------------------------- 13. missing ROI
++@pytest.mark.parametrize("zones,approved", [(None, True), ([z for z in CAM_A_LAYOUT if z["mode"] == "exclude"], True),
++                                            (CAM_A_LAYOUT, False)])
++def test_missing_or_unapproved_roi_gives_roi_not_configured_and_nothing_confirmed(zones, approved):
++    dets = [det([1300, 330, 1420, 400], 0.95), det(REAL_COUNTER_PIECE, 0.72), det([0, 0, 5, 5], 0.9, status=REJECTED)]
++    dets[2].reason = "too_small"
++    assert run_gate(dets, zones, approved=approved) == pv.ROI_NOT_CONFIGURED
++    assert [d.outcome for d in dets] == [pv.UNVERIFIED, pv.UNVERIFIED, pv.REJECTED_FILTER]
++    assert not any(d.status == CONFIRMED for d in dets)
++
++
++# ---------------------------------------------------------------------- 14. no confirmed alert from rejected
++@pytest.fixture
++def alert_env(tmp_path):
++    db = Database(tmp_path / "a.db")
++    meta = ClassMetadata(PROJECT_ROOT / "backend" / "core" / "class_metadata.json")
++    return db, AlertManager(db, tmp_path / "alerts", meta), meta
++
++
++def n_alerts(db) -> int:
++    with db.connect() as c:
++        return c.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
++
++
++def test_image_only_significant_in_roi_litter_creates_an_alert(alert_env):
++    db, alerts, meta = alert_env
++    objs = [((1300, 330, 1420, 400), 0.85),            # significant, on the pavement -> the only alert
++            ((1500, 330, 1510, 334), 0.95),            # tiny mark on the pavement
++            ((607, 443, 648, 454), 0.90),              # storage-box lid
++            ((900, 560, 960, 640), 0.90),              # bottle in the front counter tray
++            ((1400, 100, 1500, 180), 0.90)]            # awning flap
++    img = scene(W, H, objs)
++    res = detect_image(stub_engine(), img, S(), ROISet.from_json(CAM_A_LAYOUT), meta, db, alerts, "CAM_A",
++                       create_alerts=True, want_diagnostic=True, camera_registered=True)
++    assert res["pavement"]["status"] == pv.ROI_ACTIVE
++    assert res["count"] == 1 and len(res["alerts"]) == 1 and n_alerts(db) == 1
++    c = res["pavement"]["counts"]
++    assert (c["confirmed_litter"], c["small_or_weak_candidate"], c["rejected_outside_roi"]) == (1, 1, 3)
++    assert isinstance(res.pop("diagnostic"), np.ndarray) and isinstance(res.pop("annotated"), np.ndarray)
++    with db.connect() as cn:                                               # every raw detection logged with its status
++        assert cn.execute("SELECT COUNT(*) FROM detections").fetchone()[0] == 5
++
++
++def test_roi_crop_inference_never_sees_objects_far_outside_the_pavement(alert_env):
++    """EXPERIMENTAL filters.roi_crop_inference (OFF by default): the model only sees the ROI's bounding rectangle +
++    padding, so an object deep in the counter is not even a raw detection. Default full frame keeps it (rejected)."""
++    db, alerts, meta = alert_env
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.85), ((728, 980, 760, 1000), 0.90)])
++    roi = ROISet.from_json(CAM_A_LAYOUT)
++    on = detect_image(stub_engine(), img, merged_settings({"pavement": {"enabled": True},
++                                                           "filters": {"roi_crop_inference": True}}),
++                      roi, meta, None, None, "CAM_A", camera_registered=True)
++    off = detect_image(stub_engine(), img, S(), roi, meta, None, None, "CAM_A", camera_registered=True)   # default
++    assert on["counts"]["raw"] == 1 and off["counts"]["raw"] == 2
++    assert off["pavement"]["counts"]["rejected_outside_roi"] == 1 and off["count"] == on["count"] == 1
++
++
++def test_image_without_roi_creates_no_alert_in_pavement_mode(alert_env):
++    db, alerts, meta = alert_env
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.95)])
++    res = detect_image(stub_engine(), img, S(), None, meta, db, alerts, "CAM_X", create_alerts=True)
++    assert res["pavement"]["status"] == pv.ROI_NOT_CONFIGURED and res["count"] == 0 and n_alerts(db) == 0
++    assert res["detections"][0]["outcome"] == pv.UNVERIFIED
++
++
++def test_video_pipeline_confirms_only_significant_pavement_litter(alert_env):
++    db, alerts, meta = alert_env
++    objs = [((1300, 330, 1420, 400), 0.85), ((1500, 330, 1510, 334), 0.95), ((607, 443, 648, 454), 0.90)]
++    img = scene(W, H, objs)
++    s = S()
++    pipe = StreamPipeline(stub_engine(s), s, ROISet.from_json(CAM_A_LAYOUT), alerts, db, "CAM_A", "video", "job1",
++                          camera_registered=True)
++    events = []
++    for i in range(8):
++        r = pipe.process(img, i, i * 0.5)
++        events += r.events
++        assert r.pavement_status == pv.ROI_ACTIVE
++    confirmed = [e for e in events if e["event"] == "confirmed"]
++    assert len(confirmed) == 1 and n_alerts(db) == 1
++    assert {d.outcome for d in r.detections} == {pv.CONFIRMED_LITTER, pv.SMALL_OR_WEAK_CANDIDATE, pv.REJECTED_OUTSIDE_ROI}
++
++
++def test_video_pipeline_without_roi_never_confirms(alert_env):
++    db, alerts, meta = alert_env
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.95)])
++    s = S()
++    pipe = StreamPipeline(stub_engine(s), s, None, alerts, db, "CAM_X", "video", "job2")
++    events = [e for i in range(8) for e in pipe.process(img, i, i * 0.5).events]
++    assert not [e for e in events if e["event"] == "confirmed"] and n_alerts(db) == 0
++
++
++# ---------------------------------------------------------------------- pavement mode OFF = old behaviour
++def test_pavement_mode_off_is_unchanged_behaviour():
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.85), ((607, 443, 648, 454), 0.90)])
++    roi = ROISet.from_json(CAM_A_LAYOUT)
++    res = detect_image(stub_engine(), img, DetectionSettings(), roi, None, None, None, "CAM_A")
++    assert "pavement" not in res and all("outcome" not in d for d in res["detections"])
++    dets = [det([1300, 330, 1420, 400]), det(REAL_BOX_LID)]
++    assert filter_detections(dets, (H, W, 3), DetectionSettings(), roi) is None
++    assert [d.reason for d in dets] == [None, "outside_roi"]          # the existing ROI filter still runs
++    assert DetectionSettings().pavement.enabled is False
++
++
++# ---------------------------------------------------------------------- 15. CSV and JSON
++def test_csv_and_json_distinguish_confirmed_candidates_and_rejected(alert_env):
++    db, alerts, meta = alert_env
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.85), ((1500, 330, 1510, 334), 0.95), ((607, 443, 648, 454), 0.9)])
++    res = detect_image(stub_engine(), img, S(), ROISet.from_json(CAM_A_LAYOUT), meta, None, None, "CAM_A",
++                       camera_registered=True)
++    res.pop("annotated")
++    frames = [{"idx": 1, "frame_idx": 10, "video_time_sec": 1.0, "status": "saved", "outcome": "LITTER_DETECTED",
++               "original_path": "x/s1.jpg", "result": res}]
++    objects = detection_report.link_objects(frames, iou_min=0.3, center_frac=0.04, similar=lambda a, b: a == b)
++    job = {"id": "sv_t", "store_id": "", "camera_id": "CAM_A", "mode": "auto", "sample_count": 1}
++    roi = {"status": "APPROVED", "source": "SAVED_CAMERA_ROI", "zones": CAM_A_LAYOUT, "approved": True, "name": "p"}
++    rows, summary = detection_report.build(job, {"width": W, "height": H}, frames, objects, roi, completed_at="2026-11-16T00:00:00")
++    by = {r["pavement_outcome"]: r for r in rows if r["record_type"] == "DETECTION"}
++    assert set(by) == {pv.CONFIRMED_LITTER, pv.SMALL_OR_WEAK_CANDIDATE, pv.REJECTED_OUTSIDE_ROI}
++    assert by[pv.CONFIRMED_LITTER]["review_required"] == "FALSE" and by[pv.CONFIRMED_LITTER]["size_check"] == "SIGNIFICANT"
++    assert by[pv.SMALL_OR_WEAK_CANDIDATE]["review_required"] == "TRUE"
++    assert by[pv.SMALL_OR_WEAK_CANDIDATE]["size_check"] == "BELOW_MIN_SIZE"
++    assert by[pv.REJECTED_OUTSIDE_ROI]["roi_membership"] == "OUTSIDE"            # lid: foot point not on the pavement
++    assert by[pv.REJECTED_OUTSIDE_ROI]["pavement_reason"] == "outside_pavement_roi"
++    assert by[pv.REJECTED_OUTSIDE_ROI]["confidence_score"] == 0.902
++    assert (summary["confirmed_litter_detections"], summary["small_or_weak_candidates"],
++            summary["rejected_outside_roi"], summary["total_objects_detected"]) == (1, 1, 1, 1)
++    csv_text = detection_report.to_csv(rows, detection_report.DETECTION_FIELDS)
++    assert csv_text.splitlines()[0].endswith("box_area_fraction,size_check")
++    import json
++    js = json.loads(detection_report.summary_json(summary, objects, frames, roi))
++    assert js["pavement"]["status"] == pv.CAMERA_ROI_MODE and js["pavement"]["pavement_validated"] is True and js["pavement"]["per_screenshot"][0]["confirmed_litter"] == 1
++
++
++def test_report_says_roi_not_configured_instead_of_no_litter():
++    frames = [{"idx": i, "frame_idx": i, "status": "saved", "outcome": "ROI_NOT_CONFIGURED",
++               "result": {"pavement": {"status": pv.ROI_NOT_CONFIGURED, "counts": {}}, "detections": [
++                   {"class": "food_wrapper", "confidence": 0.8, "bbox": [1, 1, 50, 50], "status": "weak",
++                    "outcome": pv.UNVERIFIED, "outcome_reason": "roi_not_configured",
++                    "geometry": {"membership": "NOT_EVALUATED", "size_ok": True}}]}} for i in (1, 2)]
++    job = {"id": "sv_t", "mode": "auto", "sample_count": 2}
++    roi = {"status": "NOT_CONFIGURED", "source": "FULL_FRAME_FALLBACK", "zones": [], "approved": False}
++    rows, summary = detection_report.build(job, {"width": W, "height": H}, frames, {}, roi, completed_at="t")
++    assert summary["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED"
++    assert summary["analysis_mode"] == pv.ROI_NOT_CONFIGURED and summary["review_required"] == "TRUE"
++    assert summary["pavement_validated"] == "FALSE"
++    assert summary["unverified_roi_not_configured"] == 2 and summary["total_objects_detected"] == 0
++    dets = [r for r in rows if r["record_type"] == "DETECTION"]
++    assert len(dets) == 2 and all(r["final_classification"] == pv.UNVERIFIED and r["review_required"] == "TRUE" for r in dets)
++
++
++# ---------------------------------------------------------------------- display
++def test_annotation_draws_roi_only_when_approved_and_states_status():
++    from backend.services.visualization import PAVEMENT_GREEN, annotate_pavement
++    img = scene(W, H, [])
++    roi = ROISet.from_json(CAM_A_LAYOUT)
++    active = annotate_pavement(img, [], roi, pv.ROI_ACTIVE, "CAM_A")
++    missing = annotate_pavement(img, [], roi, pv.ROI_NOT_CONFIGURED, "CAM_A")
++    green = lambda a: int(np.all(a == PAVEMENT_GREEN, axis=2).sum())     # noqa: E731
++    assert green(active) > 1000 and green(missing) < green(active) // 10
++
++
++ADMIN = {"Authorization": "Bearer test-admin-token"}
++
++
++# ---------------------------------------------------------------------- zero-click workflow, real v3 model
++@pytest.fixture
++def pav_client(cfg):
++    from fastapi.testclient import TestClient
++    from backend.main import create_app
++    cfg.roi_segmenter = "off"
++    with TestClient(create_app(cfg)) as c:
++        if c.app.state.app_state.engine is None:
++            pytest.skip("no detection model loaded")
++        c.app.state.app_state.save_global_settings({"pavement": {"enabled": True}})   # this test's own temp DB
++        yield c
++
++
++@pytest.mark.filterwarnings("ignore::DeprecationWarning")
++def test_auto_job_without_roi_reports_roi_not_configured_and_no_alerts(pav_client, tmp_path):
++    from tests.test_auto_analysis import _drop, _wait, litter_frame, video
++    c = pav_client
++    j, _ = _wait(c, _drop(c, video(tmp_path / "litter.mp4", 80, frame=litter_frame), camera_id="CAM-NEW").json()["job_id"])
++    assert j["lifecycle"] == "COMPLETED", j["error"]
++    assert [f["outcome"] for f in j["frames"]] == ["ROI_NOT_CONFIGURED"] * 4          # never NO_LITTER, never litter
++    assert j["summary"]["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED"
++    assert j["summary"]["total_objects_detected"] == 0 and j["summary"]["review_required"] == "TRUE"
++    assert c.get("/api/alerts", params={"limit": 1}).json()["total"] == 0
++    f = j["frames"][0]
++    assert f["pavement"]["status"] == "ROI_NOT_CONFIGURED" and f["pavement"]["counts"]["raw"] > 0
++    assert all(d["outcome"] == "UNVERIFIED_ROI_NOT_CONFIGURED" for d in f["detections"] if d["status"] != "rejected")
++    assert c.get(f["diagnostic_url"]).status_code == 200 and c.get(f["annotated_url"]).status_code == 200
++    rows = list(csv.DictReader(io.StringIO(c.get(j["reports"]["detection_csv"]).text)))
++    assert sum(r["record_type"] == "DETECTION" for r in rows) == sum(len(x["detections"]) for x in j["frames"])
++
++
++@pytest.mark.filterwarnings("ignore::DeprecationWarning")
++def test_auto_job_with_saved_roi_confirms_only_significant_members(pav_client, tmp_path):
++    from tests.test_auto_analysis import _drop, _wait, litter_frame, video
++    c = pav_client
++    bottom = {"name": "pavement", "type": "ground", "mode": "include", "polygon": [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]}
++    r = c.post("/api/cameras", headers=ADMIN, json={"id": "CAM-P", "name": "test camera", "source": "env:LM_TEST_NONE",
++                                                     "enabled": False, "roi": [bottom]})   # this test's temp DB only
++    assert r.status_code == 201, r.text
++    j, _ = _wait(c, _drop(c, video(tmp_path / "litter.mp4", 80, frame=litter_frame), camera_id="CAM-P").json()["job_id"])
++    assert j["lifecycle"] == "COMPLETED", j["error"]
++    dets = [d for f in j["frames"] for d in f["detections"]]
++    assert {f["pavement"]["status"] for f in j["frames"]} == {"CAMERA_ROI_MODE"}
++    for d in dets:
++        if d["outcome"] == "CONFIRMED_LITTER":
++            assert d["geometry"]["size_ok"] and d["geometry"]["membership"] != "OUTSIDE" and d["status"] == "confirmed"
++            assert d["bbox"][3] >= 0.5 * j["frames"][0]["image_size"][1] - 0.01 * j["frames"][0]["image_size"][1]
++        else:
++            assert d["status"] != "confirmed"
++    assert any(d["outcome"] == "REJECTED_OUTSIDE_ROI" for d in dets)       # the fixture has litter in the top half too
++    assert sum(f["detection_count"] for f in j["frames"]) == sum(d["outcome"] == "CONFIRMED_LITTER" for d in dets)
++
++
++
++# ====================================================================== review corrections (2026-11-16)
++ADMIN_H = {"Authorization": "Bearer test-admin-token"}
++
++
++# 1, 2. full-frame inference is the default; ROI-crop inference is experimental and off
++def test_full_frame_inference_is_the_default_and_roi_crop_is_off():
++    assert DetectionSettings().filters.roi_crop_inference is False
++    eng = stub_engine()
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.85)])
++    res = detect_image(eng, img, S(), ROISet.from_json(CAM_A_LAYOUT), None, None, None, "CAM_A", camera_registered=True)
++    assert eng.model.calls[0] == (H, W)                        # the model saw the whole frame (first pass)
++    assert res["count"] == 1
++    from backend.services.pipeline import roi_window
++    assert roi_window((H, W, 3), S(), ROISet.from_json(CAM_A_LAYOUT)) is None
++
++
++# 3. the ROI is a post-detection filter: coordinates identical to plain inference
++def test_roi_post_filtering_does_not_alter_inference_coordinates():
++    objs = [((1300, 330, 1420, 400), 0.85), ((607, 443, 648, 454), 0.9), ((1500, 330, 1510, 334), 0.95),
++            ((900, 980, 1150, 1100), 0.8)]
++    img = scene(W, H, objs)
++    plain = detect_image(stub_engine(), img, DetectionSettings(), None, None, None, None, "upload")
++    gated = detect_image(stub_engine(), img, S(), ROISet.from_json(CAM_A_LAYOUT), None, None, None, "CAM_A",
++                         camera_registered=True)
++    key = lambda r: sorted((tuple(d["bbox"]), d["confidence"]) for d in r["detections"])   # noqa: E731
++    assert key(plain) == key(gated) and len(gated["detections"]) == 4
++    assert {d["outcome"] for d in gated["detections"]} >= {pv.CONFIRMED_LITTER, pv.REJECTED_OUTSIDE_ROI}
++
++
++# general image mode = the existing behaviour, labelled as not validated
++def test_general_image_mode_keeps_existing_results_and_alerts(alert_env):
++    db, alerts, meta = alert_env
++    objs = [((1300, 330, 1420, 400), 0.85), ((607, 443, 648, 454), 0.90), ((1500, 330, 1510, 334), 0.95)]
++    img = scene(W, H, objs)
++    old = detect_image(stub_engine(), img, DetectionSettings(), None, meta, None, None, "upload")
++    new = detect_image(stub_engine(), img, S(), None, meta, db, alerts, "upload", create_alerts=True)
++    assert new["pavement"]["status"] == pv.GENERAL_IMAGE_MODE and new["pavement"]["pavement_validated"] is False
++    assert [(d["status"], d["bbox"]) for d in old["detections"]] == [(d["status"], d["bbox"]) for d in new["detections"]]
++    assert new["count"] == old["count"] == 3 and len(new["alerts"]) == 3          # alerts exactly as before
++    assert {d["outcome"] for d in new["detections"]} == {pv.GENERAL_CONFIRMED}
++    assert all(d["geometry"]["membership"] == "NOT_EVALUATED" and "size_ok" in d["geometry"] for d in new["detections"])
++
++
++# 4-7 through the real API (real v3 model, this test's temp DB)
++@pytest.mark.filterwarnings("ignore::DeprecationWarning")
++def test_manual_upload_without_camera_registration_still_works(pav_client):
++    from tests.conftest import FIXTURE_IMAGE
++    c = pav_client
++    body = lambda: {"file": ("street.jpg", FIXTURE_IMAGE.read_bytes(), "image/jpeg")}      # noqa: E731
++    on = c.post("/api/detect/image", files=body(), data={"create_alerts": "false"}).json()
++    c.app.state.app_state.save_global_settings({"pavement": {"enabled": False}})
++    off = c.post("/api/detect/image", files=body(), data={"create_alerts": "false"}).json()
++    assert on["pavement"]["status"] == "GENERAL_IMAGE_MODE" and on["count"] > 0
++    assert on["count"] == off["count"] and [d["bbox"] for d in on["detections"]] == [d["bbox"] for d in off["detections"]]
++    assert "pavement" not in off
++
++
++@pytest.mark.filterwarnings("ignore::DeprecationWarning")
++def test_unknown_camera_cannot_inherit_another_cameras_roi_and_registered_camera_without_roi_confirms_nothing(pav_client):
++    from tests.conftest import FIXTURE_IMAGE
++    c = pav_client
++    full = {"name": "all", "type": "ground", "mode": "include", "polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]}
++    assert c.post("/api/cameras", headers=ADMIN_H, json={"id": "CAM-A", "name": "a", "source": "env:LM_TEST_NONE",
++                                                         "enabled": False, "roi": [full]}).status_code == 201
++    assert c.post("/api/cameras", headers=ADMIN_H, json={"id": "CAM-NOROI", "name": "n", "source": "env:LM_TEST_NONE",
++                                                         "enabled": False}).status_code == 201
++    st = c.app.state.app_state
++    assert st.roi_for(st.db.get_camera("CAM-Z"), "CAM-Z") is None                     # unknown camera: nothing
++    body = lambda: {"file": ("street.jpg", FIXTURE_IMAGE.read_bytes(), "image/jpeg")}  # noqa: E731
++    before = c.get("/api/alerts", params={"limit": 1}).json()["total"]
++    for cam in ("CAM-Z", "CAM-NOROI"):
++        r = c.post("/api/detect/image", files=body(), data={"camera_id": cam, "create_alerts": "true"}).json()
++        assert r["pavement"]["status"] == "ROI_NOT_CONFIGURED" and r["count"] == 0 and r["alerts"] == []
++        assert all(d["outcome"] in ("UNVERIFIED_ROI_NOT_CONFIGURED", "REJECTED_FILTER") for d in r["detections"])
++    assert c.get("/api/alerts", params={"limit": 1}).json()["total"] == before
++    a = c.post("/api/detect/image", files=body(), data={"camera_id": "CAM-A", "create_alerts": "false"}).json()
++    assert a["pavement"]["status"] == "CAMERA_ROI_MODE" and a["count"] > 0            # its own ROI applies
++
++
++@pytest.mark.filterwarnings("ignore::DeprecationWarning")
++def test_two_cameras_keep_separate_roi_configurations(pav_client):
++    c = pav_client
++    for cid, zones in (("INDOOR-T", CAM_A_LAYOUT), ("EZVIZ-T", CAM_B_LAYOUT)):
++        r = c.post("/api/cameras", headers=ADMIN_H, json={"id": cid, "name": cid, "source": "env:LM_TEST_NONE",
++                                                          "enabled": False, "roi": zones})
++        assert r.status_code == 201, r.text
++    st = c.app.state.app_state
++    a, b = st.roi_for(st.db.get_camera("INDOOR-T")), st.roi_for(st.db.get_camera("EZVIZ-T"))
++    assert [z.name for z in a.zones] == [z["name"] for z in CAM_A_LAYOUT]
++    assert [z.name for z in b.zones] == [z["name"] for z in CAM_B_LAYOUT]
++    assert not {tuple(map(tuple, z.polygon)) for z in a.zones} & {tuple(map(tuple, z.polygon)) for z in b.zones}
++    # the same normalised box: CAM_A pavement (centre of the pavers), but on camera B's road above the kerb
++    box = (1300, 330, 1420, 400)
++    img = scene(W, H, [(box, 0.85)])
++    ra = detect_image(stub_engine(), img, S(), a, None, None, None, "INDOOR-T", camera_registered=True)
++    rb = detect_image(stub_engine(), img, S(), b, None, None, None, "EZVIZ-T", camera_registered=True)
++    assert ra["detections"][0]["outcome"] == pv.CONFIRMED_LITTER
++    assert rb["detections"][0]["outcome"] == pv.REJECTED_OUTSIDE_ROI
++    # changing one camera's ROI never changes the other
++    assert c.put("/api/cameras/EZVIZ-T", headers=ADMIN_H, json={"roi": CAM_B_LAYOUT[:1]}).status_code == 200
++    assert [z.name for z in st.roi_for(st.db.get_camera("INDOOR-T")).zones] == [z["name"] for z in CAM_A_LAYOUT]
++
++
++# 8. full-video workflow still works (pavement off and on)
++def test_full_video_workflow_works_with_and_without_pavement_mode(tmp_path, make_video, alert_env):
++    from backend.services.pipeline import detect_video
++    db, alerts, meta = alert_env
++    w, h = 640, 360
++    k = w / W
++    frame = scene(w, h, [((int(1300 * k), int(330 * k), int(1420 * k), int(400 * k)), 0.85),
++                         ((int(607 * k), int(443 * k), int(660 * k), int(470 * k)), 0.9)])
++    vid = make_video([frame], repeat=20, fps=4.0)
++    roi = ROISet.from_json(CAM_A_LAYOUT)
++    off = detect_video(stub_engine(), vid, tmp_path / "off", DetectionSettings(), roi, None, None, "CAM_A")
++    on = detect_video(stub_engine(S()), vid, tmp_path / "on", S(), roi, db, alerts, "CAM_A", "vjob",
++                      camera_registered=True)
++    for r in (off, on):
++        assert all(Path(f).is_file() for f in r["files"].values())
++    assert "pavement" not in off["stats"] and on["stats"]["pavement"]["status"] == pv.CAMERA_ROI_MODE
++    assert on["stats"]["unique_confirmed_objects"] == 1 and len(on["alerts"]) == 1
++
++
++# 9. CSV / JSON: general detections vs ROI-validated pavement detections
++def test_csv_and_json_distinguish_general_from_roi_validated_detections():
++    img = scene(W, H, [((1300, 330, 1420, 400), 0.85)])
++    gen = detect_image(stub_engine(), img, S(), None, None, None, None, "upload")
++    cam = detect_image(stub_engine(), img, S(), ROISet.from_json(CAM_A_LAYOUT), None, None, None, "CAM_A",
++                       camera_registered=True)
++    out = {}
++    for name, res, roi in (("general", gen, {"status": "NOT_CONFIGURED", "zones": [], "approved": False}),
++                           ("camera", cam, {"status": "APPROVED", "zones": CAM_A_LAYOUT, "approved": True})):
++        res.pop("annotated")
++        frames = [{"idx": 1, "frame_idx": 1, "status": "saved", "outcome": "LITTER_DETECTED", "result": res}]
++        objects = detection_report.link_objects(frames, iou_min=0.3, center_frac=0.04, similar=lambda a, b: a == b)
++        rows, summary = detection_report.build({"id": "j", "mode": "auto", "sample_count": 1}, {"width": W, "height": H},
++                                               frames, objects, roi, completed_at="t")
++        import json
++        out[name] = ([r for r in rows if r["record_type"] == "DETECTION"][0], summary,
++                     json.loads(detection_report.summary_json(summary, objects, frames, roi)))
++    g, cm = out["general"], out["camera"]
++    assert (g[0]["analysis_mode"], g[0]["pavement_validated"], g[0]["pavement_outcome"]) == (
++        "GENERAL_IMAGE_MODE", "FALSE", pv.GENERAL_CONFIRMED)
++    assert (cm[0]["analysis_mode"], cm[0]["pavement_validated"], cm[0]["pavement_outcome"]) == (
++        "CAMERA_ROI_MODE", "TRUE", pv.CONFIRMED_LITTER)
++    assert g[0]["roi_membership"] == "NOT_EVALUATED_GENERAL_MODE" and cm[0]["roi_membership"] == "INSIDE"
++    assert cm[0]["pavement_reason"].startswith("accepted:INSIDE+significant_size")
++    assert g[1]["general_confirmed_detections"] == 1 and g[1]["confirmed_litter_detections"] == 0
++    assert cm[1]["confirmed_litter_detections"] == 1 and cm[1]["general_confirmed_detections"] == 0
++    assert g[2]["pavement"]["pavement_validated"] is False and cm[2]["pavement"]["pavement_validated"] is True
++    assert "General image mode" in g[1]["note"]
++
++
++def test_scheduled_non_litter_task_is_not_affected_by_pavement_mode():
++    """The scheduler disables pavement mode for non-litter models (e.g. the indoor uniform task)."""
++    import inspect
++    from backend.cameras import scheduler
++    src = inspect.getsource(scheduler)
++    assert 'if cfg["task"] != "litter":' in src and '"enabled": False' in src
+diff --git a/tests/test_roi_upload.py b/tests/test_roi_upload.py
+index e4e08eb..4505b4c 100644
+--- a/tests/test_roi_upload.py
++++ b/tests/test_roi_upload.py
+@@ -27,12 +27,17 @@ def test_crop_box_covers_include_zones_with_padding():
+     assert ROISet.from_json(exclude_only).crop_box(1000, 500, 0.1) is None
+ 
+ 
++CROP_ON = {"filters": {"roi_crop_inference": True}}   # experimental setting, OFF by default
++
++
+ def test_roi_window_skips_full_frame_and_disabled_roi():
+-    s = DetectionSettings()
++    s = merged_settings(CROP_ON)
+     roi = ROISet.from_json(LEFT_HALF)
+     assert roi_window((500, 1000, 3), s, roi) is not None
++    assert roi_window((500, 1000, 3), DetectionSettings(), roi) is None          # default: full-frame inference
+     assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_crop_inference": False}}), roi) is None
+-    assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_enabled": False}}), roi) is None
++    assert roi_window((500, 1000, 3), merged_settings({"filters": {"roi_enabled": False, "roi_crop_inference": True}}),
++                      roi) is None
+     whole = [{**LEFT_HALF[0], "polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]}]
+     assert roi_window((500, 1000, 3), s, ROISet.from_json(whole)) is None
+ 
+@@ -50,8 +55,8 @@ class _FakeEngine:
+ def test_detect_in_roi_runs_on_crop_and_maps_boxes_back():
+     eng = _FakeEngine()
+     frame = np.zeros((500, 1000, 3), np.uint8)
+-    (dets, _), = detect_in_roi(eng, [frame], DetectionSettings(), ROISet.from_json(LEFT_HALF))
+-    x1, y1, x2, y2 = roi_window(frame.shape, DetectionSettings(), ROISet.from_json(LEFT_HALF))
++    (dets, _), = detect_in_roi(eng, [frame], merged_settings(CROP_ON), ROISet.from_json(LEFT_HALF))
++    x1, y1, x2, y2 = roi_window(frame.shape, merged_settings(CROP_ON), ROISet.from_json(LEFT_HALF))
+     assert eng.shapes == [(y2 - y1, x2 - x1, 3)]
+     assert dets[0].bbox == [10.0 + x1, 20.0 + y1, 30.0 + x1, 40.0 + y1]
+     (dets, _), = detect_in_roi(eng, [frame], DetectionSettings(), None)   # no ROI: full frame

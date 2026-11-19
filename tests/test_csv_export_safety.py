@@ -19,7 +19,7 @@ from backend.database.db import utcnow
 from backend.main import create_app
 from backend.sampling import report
 
-from .test_sampled import GROUND, _needs_engine, _upload, _wait, write_video
+from .test_sampled import _needs_engine, _upload, _wait, write_video
 
 RISKY = ["=1+1", "+SUM(A1:A2)", "-2+3", "@cmd", '=HYPERLINK("http://example.invalid","x")', "\t=1", "\r=1"]
 
@@ -114,14 +114,11 @@ def test_stored_report_written_before_the_fix_is_made_safe_when_served():
 
 
 def test_sampled_job_month_and_all_csv_exports_are_protected(cfg, tmp_path):
-    cfg.roi_segmenter = "off"
     with TestClient(create_app(cfg)) as client:
         _needs_engine(client)
         m = _upload(client, write_video(tmp_path / "v.mp4", 150, fps=10), name="-x.mp4").json()
         assert m["filename"].startswith("-")                                  # the sanitised display name keeps '-'
-        jid = client.post("/api/sampled/jobs", json={"media_id": m["id"], "roi_mode": "manual", "seed": 5}).json()["job_id"]
-        _wait(client, jid, ("awaiting_roi", "failed"))
-        assert client.put(f"/api/sampled/jobs/{jid}/roi", json={"zones": GROUND}).status_code == 200
+        jid = client.post("/api/sampled/jobs", json={"media_id": m["id"], "seed": 5}).json()["job_id"]
         j = _wait(client, jid, ("done", "failed"))
         assert j["state"] == "done", j["error"]
         month = client.get("/api/sampled/reports/overview").json()["months"]["completion"][0]

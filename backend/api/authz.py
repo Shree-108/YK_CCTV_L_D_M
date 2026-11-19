@@ -128,9 +128,15 @@ ADMIN_IF_LOGIN = [Depends(ADMIN_IF_LOGIN_PERMISSION)]
 
 def require_admin_here(request: Request, authorization: Optional[str], x_admin_token: Optional[str],
                        state: AppState, off_mode: str = "admin_token") -> None:
-    """For a route whose permission depends on its input (PUT /api/roi on a registered camera, a camera frame that
-    needs a new connection). ``off_mode="open"`` keeps the pre-Step-4 behaviour while login is off."""
+    """For a route whose permission depends on its input (e.g. a camera frame that needs a new
+    connection). ``off_mode="open"`` keeps the pre-Step-4 behaviour while login is off."""
     authorize(request, "admin", off_mode, authorization, x_admin_token, state)
+
+
+def actor_of(request: Request) -> Optional[str]:
+    """Who made this change, for audit fields such as an event review (None when login is off)."""
+    p = getattr(request.state, "principal", None)
+    return getattr(p, "username", None) if p is not None else None
 
 
 def optional_principal(request: Request) -> Optional[Principal]:
@@ -217,7 +223,7 @@ _SAFE_EVENTS: list[tuple[re.Pattern, Optional[str]]] = [(re.compile(p, re.S), r)
     (r"camera updated \([a-z_]+(, [a-z_]+)*\)", None),
     (r"connection test: [a-z_]{1,40}", None),
     (r"CCTV configuration saved|live stream (started|stopped)|stream restart requested", None),
-    (r"ROI (saved|reset) \(\d{1,3} zone\(s\)\)", None),
+    (r"ROI (saved|reset) \(\d{1,3} zone\(s\)\)", None),          # history (feature removed 2026-11-19)
     (r"alert \d{1,12} -> (new|acknowledged|resolved|false_positive)", None),
     (rf"labels updated: {_ID}/[A-Za-z0-9_.\-]{{1,80}}(/[A-Za-z0-9_.\-]{{1,80}}){{0,6}} \(\d{{1,6}} objects\)", None),
     (rf"dataset version {_ID} created from {_ID}", None),
@@ -236,6 +242,9 @@ _SAFE_EVENTS: list[tuple[re.Pattern, Optional[str]]] = [(re.compile(p, re.S), r)
     (rf"analysis {_ID} is waiting for ROI confirmation", None),
     (rf"ROI confirmed for analysis {_ID} \((auto|camera|manual|whole_frame)\)", None),
     (rf"four-screenshot analysis {_ID} finished: \d{{1,6}} litter detection\(s\)", None),
+    (rf"video analysis {_ID} finished: \d{{1,7}} litter event\(s\), \d{{1,9}} observation\(s\)", None),
+    (rf"store {_ID} (created|renamed)", None),
+    (rf"litter event {_ID} -> (DETECTED|VERIFIED|REJECTED|RESOLVED)", None),
     # messages that end in raw exception text: keep the safe prefix, drop the details
     (rf"four-screenshot analysis ({_ID}) failed: .*", rf"four-screenshot analysis \1 failed {DETAILS_HIDDEN}"),
     (r"camera disconnected: .*; retrying", f"camera disconnected; retrying {DETAILS_HIDDEN}"),

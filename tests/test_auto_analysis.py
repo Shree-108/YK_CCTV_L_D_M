@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import create_app
-from backend.sampling import auto_roi, detection_report
+from backend.sampling import detection_report
 from backend.sampling.extract import extract
 from backend.sampling.plan import FIXED_FRACTIONS, TooShort, plan_fixed
 from backend.sampling.reports import lifecycle
@@ -112,27 +112,16 @@ def test_random_operator_sampling_still_never_substitutes(tmp_path):
     assert out[0].status == "unreadable" and out[0].frame == 20
 
 
-# ---------------------------------------------------------------------- 13/14. ROI policy
-INCLUDE = {"name": "pavement", "type": "sidewalk", "mode": "include", "polygon": [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]}
-EXCLUDE = {"name": "shelf", "type": "custom", "mode": "exclude", "polygon": [[0.6, 0], [1, 0], [1, 0.5], [0.6, 0.5]]}
+# ---------------------------------------------------------------------- full frame, no ROI
+def _no_roi_columns(fields):
+    bad = [f for f in fields if "roi" in f.lower() or "pavement" in f.lower()]
+    assert not bad, bad
 
 
-def test_roi_policy_priorities_and_safe_fallback():
-    d = auto_roi.decide("CAM-1", {"id": "CAM-1", "roi": [INCLUDE, EXCLUDE]}, None)
-    assert (d.status, d.source, d.approved, d.name) == ("APPROVED", "REGISTERED_CAMERA", True, "pavement")
-    assert d.configuration_id.startswith("camera:CAM-1#") and len(d.zones) == 2
-    d = auto_roi.decide("CAM-2", None, [INCLUDE])
-    assert (d.status, d.source, d.approved) == ("APPROVED", "SAVED_CAMERA_ROI", True)
-    for cam_id, cam, saved in ((None, None, None), ("CAM-3", None, None)):
-        d = auto_roi.decide(cam_id, cam, saved)
-        assert (d.status, d.source, d.approved, d.zones) == ("NOT_CONFIGURED", "FULL_FRAME_FALLBACK", False, [])
-        assert "whole frame" in d.note
-    d = auto_roi.decide("CAM-4", None, [EXCLUDE])                        # no ground area: never "approved"
-    assert d.status == "NOT_CONFIGURED" and [z["name"] for z in d.zones] == ["shelf"] and "exclude zone" in d.note
-    d = auto_roi.decide("CAM-1", {"id": "CAM-1", "roi": [INCLUDE]}, None, roi_enabled=False)
-    assert d.status == "DISABLED_IN_SETTINGS" and d.zones == [] and not d.approved
-    d = auto_roi.decide("CAM-5", None, [{"mode": "include", "polygon": [[0, 0]]}])   # damaged stored ROI
-    assert d.status == "NOT_CONFIGURED"
+def test_reports_have_no_roi_or_pavement_columns():
+    """ROI was removed from the application (2026-11-19): the quick-check reports carry no ROI/pavement column."""
+    _no_roi_columns(detection_report.DETECTION_FIELDS)
+    _no_roi_columns(detection_report.SUMMARY_FIELDS)
 
 
 # ---------------------------------------------------------------------- linking and report rows
@@ -165,13 +154,9 @@ def test_the_same_object_in_several_screenshots_is_one_estimated_object():
 JOB = {"id": "sv_1", "store_id": "S1", "camera_id": "CAM-1", "started_at": "2026-11-15T10:00:00.000+00:00",
        "mode": "auto", "sampling": "fixed_pct", "sample_count": 4, "model_version": "v3_store_cctv"}
 MEDIA = {"filename": "clip.mp4", "width": 1000, "height": 500, "fps": 10.0, "frames": 400, "duration_sec": 40.0}
-APPROVED = auto_roi.decide("CAM-1", {"roi": [INCLUDE]}, None).as_dict()
-FALLBACK = auto_roi.decide(None, None, None).as_dict()
-
-
-def _report(frames, roi=APPROVED, failed=False):
+def _report(frames, failed=False):
     objs = detection_report.link_objects(frames, iou_min=0.3, center_frac=0.04, similar=lambda a, b: a == b)
-    return detection_report.build(JOB, MEDIA, frames, objs, roi, completed_at="2026-11-15T10:00:12.500+00:00",
+    return detection_report.build(JOB, MEDIA, frames, objs, completed_at="2026-11-15T10:00:12.500+00:00",
                                   failed=failed)
 
 
@@ -182,7 +167,7 @@ def _csv(rows, fields=detection_report.DETECTION_FIELDS):
 def test_csv_columns_values_and_no_repeated_totals():
     frames = [_frame(1, [_det("plastic_bottle", [100, 300, 140, 380], severity="MEDIUM", alert_id=5)]),
               _frame(2, [_det("plastic_bottle", [101, 300, 141, 380], severity="MEDIUM"),
-                         _det("cup", [600, 300, 620, 340], 0.7, tid=2, status="rejected", reason="outside_roi")]),
+                         _det("cup", [600, 300, 603, 302], 0.7, tid=2, status="rejected", reason="too_small")]),
               _frame(3, [], outcome="NO_LITTER"), _frame(4, [], outcome="NO_LITTER")]
     rows, summary = _report(frames)
     out = _csv(rows)
@@ -191,11 +176,12 @@ def test_csv_columns_values_and_no_repeated_totals():
                 "screenshot_id screenshot_number screenshot_timestamp_seconds frame_number screenshot_filename "
                 "annotated_screenshot_filename detection_id object_track_id litter_class confidence_score "
                 "bounding_box_x1 bounding_box_y1 bounding_box_x2 bounding_box_y2 bounding_box_width "
-                "bounding_box_height object_area_pixels object_area_percentage roi_status roi_source roi_name "
-                "roi_membership roi_configuration_id detection_status severity alert_id stationary_confirmation_status "
+                "bounding_box_height object_area_pixels object_area_percentage "
+                "detection_status severity alert_id stationary_confirmation_status "
                 "duplicate_detection_status final_classification review_required screenshot_analysis_status "
                 "overall_analysis_status").split()
     assert set(required) <= set(out[0])
+    _no_roi_columns(out[0])
     shots = [r for r in out if r["record_type"] == "SCREENSHOT"]
     assert [r["screenshot_number"] for r in shots] == ["1", "2", "3", "4"]          # always one per screenshot
     assert [r["screenshot_analysis_status"] for r in shots] == ["LITTER_OBSERVED", "LITTER_OBSERVED",
@@ -204,8 +190,6 @@ def test_csv_columns_values_and_no_repeated_totals():
     assert (d1["litter_class"], d1["confidence_score"], d1["bounding_box_width"], d1["object_area_pixels"]) == \
         ("plastic_bottle", "0.9", "40.0", "3200.0")
     assert d1["object_area_percentage"] == "0.64" and d1["video_resolution"] == "1000x500"
-    assert (d1["roi_status"], d1["roi_source"], d1["roi_membership"], d1["roi_name"]) == \
-        ("APPROVED", "REGISTERED_CAMERA", "INSIDE", "pavement")
     assert (d1["detection_status"], d1["severity"], d1["alert_id"], d1["final_classification"], d1["review_required"]) == \
         ("CONFIRMED", "MEDIUM", "5", "CONFIRMED_LITTER", "FALSE")
     assert (d1["duplicate_detection_status"], d1["stationary_confirmation_status"]) == ("FIRST_SIGHTING", "REPEATED_AT_SAME_POSITION")
@@ -213,15 +197,14 @@ def test_csv_columns_values_and_no_repeated_totals():
               and r["screenshot_number"] == "2")
     assert d2["object_track_id"] == d1["object_track_id"] and d2["duplicate_detection_status"] == "REPEAT_SIGHTING"
     assert d2["alert_id"] == "5"                                         # the repeat belongs to the same alert
-    outside = next(r for r in out if r["litter_class"] == "cup")
-    assert (outside["roi_membership"], outside["final_classification"], outside["object_track_id"]) == \
-        ("OUTSIDE", "EXCLUDED_OUTSIDE_ROI", "")
+    # a filtered (rejected) detection is not a report row; the standard detection CSV lists it instead
+    assert not any(r["litter_class"] == "cup" for r in out)
     assert d1["processing_duration_seconds"] == "12.5"
     assert d1["overall_analysis_status"] == "LITTER_OBSERVED"
     # totals live only in the summary, never on the detection rows
     assert not {"total_objects_detected", "unique_objects_estimated", "total_high_severity"} & set(out[0])
     assert (summary["total_objects_detected"], summary["unique_objects_estimated"], summary["total_medium_severity"],
-            summary["outside_roi_detections"], summary["alerts_created"]) == (2, 1, 1, 1, 1)
+            summary["possible_litter_objects"], summary["alerts_created"]) == (2, 1, 1, 0, 1)
     s = _csv([summary], detection_report.SUMMARY_FIELDS)
     assert len(s) == 1 and s[0]["unique_objects_estimated"] == "1"
 
@@ -244,20 +227,22 @@ def test_unreadable_screenshots_make_the_analysis_incomplete_never_clean():
     assert summary["overall_analysis_status"] == "FAILED"
 
 
-def test_full_frame_fallback_marks_litter_for_review():
+def test_confirmed_litter_anywhere_in_the_frame_counts():
+    """Owner decision 2026-11-19: detection runs on the whole frame; confirmed litter anywhere (here: top-left
+    corner, the old 'sky' area) is litter - final, no review, no position-based exclusion."""
     rows, summary = _report([_frame(1, [_det("cup", [10, 10, 30, 40], severity="LOW")])] +
-                            [_frame(i, [], outcome="NO_LITTER") for i in (2, 3, 4)], roi=FALLBACK)
+                            [_frame(i, [], outcome="NO_LITTER") for i in (2, 3, 4)])
     det = next(r for r in rows if r["record_type"] == "DETECTION")
-    assert (det["roi_status"], det["roi_source"], det["roi_membership"], det["review_required"]) == \
-        ("NOT_CONFIGURED", "FULL_FRAME_FALLBACK", "NOT_APPLICABLE", "TRUE")
-    assert summary["review_required"] == "TRUE" and "whole frame" in summary["note"]
+    assert det["review_required"] == "FALSE" and det["final_classification"] == "CONFIRMED_LITTER"
+    assert summary["overall_analysis_status"] == "LITTER_OBSERVED" and summary["total_objects_detected"] == 1
+    assert summary["review_required"] == "FALSE"
 
 
 def test_csv_formula_injection_is_neutralised():
     job = {**JOB, "store_id": "=HYPERLINK(\"http://x\")", "id": "sv_2"}
     media = {**MEDIA, "filename": "+cmd|' /C calc'!A0.mp4"}
     frames = [_frame(i, [], outcome="NO_LITTER", sampling_note="-2+3 adjusted" if i == 1 else None) for i in range(1, 5)]
-    rows, summary = detection_report.build(job, media, frames, {}, APPROVED, completed_at="2026-11-15T10:00:01+00:00")
+    rows, summary = detection_report.build(job, media, frames, {}, completed_at="2026-11-15T10:00:01+00:00")
     out = _csv(rows)
     assert out[0]["store_id"].startswith("'=") and out[0]["video_filename"].startswith("'+")
     assert out[0]["sampling_adjustment"].startswith("'-")
@@ -277,7 +262,6 @@ def test_lifecycle_names():
 # ---------------------------------------------------------------------- API: the zero-click journey
 @pytest.fixture
 def client(cfg):
-    cfg.roi_segmenter = "off"
     with TestClient(create_app(cfg)) as c:
         if c.app.state.app_state.engine is None:
             pytest.skip("no detection model loaded")
@@ -322,16 +306,15 @@ def test_drop_starts_the_whole_analysis_and_reports_exist_at_completion(client, 
     assert [f["frame_idx"] for f in j["frames"]] == [10, 35, 65, 90]
     assert [f["video_time_sec"] for f in j["frames"]] == pytest.approx([1.0, 3.5, 6.5, 9.0], abs=0.11)
     assert all(f["original_url"] and f["annotated_url"] for f in j["frames"])
-    # no camera given -> whole frame, clearly NOT_CONFIGURED, no alerts from unverified full-frame detections
-    assert j["roi_policy"]["status"] == "NOT_CONFIGURED" and j["roi_policy"]["source"] == "FULL_FRAME_FALLBACK"
-    assert j["create_alerts"] is False and j["counts"]["alerts"] == 0
-    # the fixture holds 19 visually verified litter boxes: the model must find litter in every screenshot, but
-    # without an approved ROI that is never pavement-litter confirmation: ROI_NOT_CONFIGURED, listed for review
-    assert all(f["outcome"] == "ROI_NOT_CONFIGURED" and f["detection_count"] > 0 for f in j["frames"])
-    assert j["counts"]["litter"] == 0 and j["counts"]["unverified_full_frame"] >= 4
+    # no camera given -> identity UNKNOWN with warnings; detection always runs on the whole frame (no ROI)
+    assert not any("roi" in k for k in j) and j["identity"]["camera_id"] == "UNKNOWN" and j["identity"]["warnings"]
+    # the fixture holds 19 visually verified litter boxes: the model's litter is confirmed and counted in every
+    # screenshot
+    assert all(f["outcome"] == "LITTER_DETECTED" and f["detection_count"] > 0 for f in j["frames"])
+    assert j["counts"]["litter"] == sum(f["detection_count"] for f in j["frames"])
     s = j["summary"]
-    assert s["total_objects_detected"] >= 4 and 1 <= s["unique_objects_estimated"] < s["total_objects_detected"]
-    assert s["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED" and s["review_required"] == "TRUE"
+    assert s["total_objects_detected"] == j["counts"]["litter"] and s["unique_objects_estimated"] > 0
+    assert s["overall_analysis_status"] == "LITTER_OBSERVED"
     assert s["total_high_severity"] + s["total_medium_severity"] + s["total_low_severity"] == s["unique_objects_estimated"]
     # reports were written before COMPLETED and are downloadable
     assert set(j["reports"]) == {"detection_csv", "summary_csv", "summary_json"}
@@ -341,9 +324,11 @@ def test_drop_starts_the_whole_analysis_and_reports_exist_at_completion(client, 
     assert sum(r["record_type"] == "SCREENSHOT" for r in rows) == 4
     confirmed = [r for r in rows if r["detection_status"] == "CONFIRMED"]
     assert len(confirmed) == s["total_objects_detected"]
-    assert all(r["review_required"] == "TRUE" and r["roi_membership"] == "NOT_APPLICABLE" for r in confirmed)
+    # full-frame litter (no ROI): confirmed rows are final (2026-11-19)
+    assert confirmed and all(r["review_required"] == "FALSE" and r["final_classification"] == "CONFIRMED_LITTER"
+                             for r in confirmed)
     assert {r["screenshot_timestamp_seconds"] for r in rows if r["record_type"] == "SCREENSHOT"} == {"1.0", "3.5", "6.5", "9.0"}
-    assert any(r["duplicate_detection_status"] == "REPEAT_SIGHTING" for r in confirmed)
+    _no_roi_columns(rows[0])
     assert client.get(j["reports"]["summary_json"]).json()["summary"]["job_id"] == j["id"]
     assert client.get(j["reports"]["summary_csv"]).status_code == 200
     assert client.get(f"/api/sampled/jobs/{j['id']}/reports/../../x.csv").status_code == 404
@@ -351,23 +336,30 @@ def test_drop_starts_the_whole_analysis_and_reports_exist_at_completion(client, 
     img = client.get(j["frames"][0]["download_annotated_url"])
     assert img.status_code == 200 and "attachment" in img.headers["content-disposition"]
     out = Path(cfg.sampled_dir) / j["id"]
-    assert (out / "reports" / "detection_report.csv").is_file() and len(list((out / "annotated").glob("*.jpg"))) == 4
+    assert (out / "reports" / "detection_report.csv").is_file()
+    # 4 annotated images (every detection above the weak floor is drawn on them; no separate diagnostic copy)
+    assert len(list((out / "annotated").glob("*_annotated.jpg"))) == 4
+    # the standard litter outputs exist too (detection + summary CSV, see backend/services/litter_reports.py)
+    std = j["standard_outputs"]
+    assert std["processing_status"] == "COMPLETED_LITTER_DETECTED" and std["unique_events"] > 0
+    assert client.get(std["urls"]["detections_csv"]).status_code == 200
 
 
-def test_no_litter_video_and_saved_camera_roi(client, tmp_path):
-    client.put("/api/roi/CAM-9", json={"zones": [INCLUDE]})                # an operator saved this camera's ROI
+def test_no_litter_video_with_free_text_store_and_camera(client, tmp_path):
     r = _drop(client, video(tmp_path / "quiet.mp4", 80), camera_id="CAM-9", store_id="Store 3")
     j, _ = _wait(client, r.json()["job_id"])
     assert j["lifecycle"] == "COMPLETED", j["error"]
-    assert (j["roi_policy"]["status"], j["roi_policy"]["source"]) == ("APPROVED", "SAVED_CAMERA_ROI")
-    assert j["roi"] == [INCLUDE] and j["create_alerts"] is True
+    assert j["create_alerts"] is True
     assert (j["store_id"], j["camera_id"]) == ("Store 3", "CAM-9")
     assert j["summary"]["overall_analysis_status"] == "NO_LITTER_OBSERVED"
     assert all(f["outcome"] == "NO_LITTER" for f in j["frames"])
     assert all(f["sampling_note"] is None and f["planned_frame_idx"] is None for f in j["frames"])   # no adjustment
     rows = list(csv.DictReader(io.StringIO(client.get(j["reports"]["detection_csv"]).text)))
     assert len(rows) == 4 and {r["final_classification"] for r in rows} == {"NO_LITTER_OBSERVED"}
-    assert {r["roi_status"] for r in rows} == {"APPROVED"} and rows[0]["roi_name"] == "pavement"
+    ident = j["identity"]                       # neither is registered: kept as given, names UNKNOWN, with warnings
+    assert (ident["store_id"], ident["camera_id"], ident["store_name"], ident["camera_name"]) == \
+        ("Store 3", "CAM-9", "UNKNOWN", "UNKNOWN") and len(ident["warnings"]) == 2
+    assert j["standard_outputs"]["processing_status"] == "COMPLETED_NO_LITTER_DETECTED"
 
 
 def test_invalid_corrupted_and_too_short_videos_create_no_job(client, tmp_path):
@@ -395,17 +387,16 @@ def test_partly_unreadable_video_completes_as_incomplete(client, tmp_path):
     j, _ = _wait(client, _drop(client, v).json()["job_id"])
     assert j["lifecycle"] == "COMPLETED"
     assert j["frames"][1]["outcome"] == "UNREADABLE" and j["frames"][1]["error"]
-    # no approved ROI: never clean (the old INCOMPLETE_NO_LITTER_... status no longer applies to an unverified job)
-    assert j["summary"]["overall_analysis_status"] == "PAVEMENT_ROI_NOT_CONFIGURED"
+    # one screenshot unreadable: incomplete, never clean (with or without an ROI)
+    assert j["summary"]["overall_analysis_status"].startswith("INCOMPLETE_")
     rows = list(csv.DictReader(io.StringIO(client.get(j["reports"]["detection_csv"]).text)))
     shots = [r for r in rows if r["record_type"] == "SCREENSHOT"]
     assert [r["screenshot_analysis_status"] for r in shots][1] == "UNREADABLE" and len(shots) == 4   # failed one kept
     assert all(r["overall_analysis_status"] != "NO_LITTER_OBSERVED" for r in rows)
 
 
-# ---------------------------------------------------------------------- camera association and ROI safety
+# ---------------------------------------------------------------------- camera association (no ROI)
 ADMIN = {"Authorization": "Bearer test-admin-token"}
-BOTTOM = {"name": "forecourt", "type": "sidewalk", "mode": "include", "polygon": [[0, 0.55], [1, 0.55], [1, 1], [0, 1]]}
 
 
 def _alerts(client) -> int:
@@ -416,44 +407,47 @@ def _rows(client, j):
     return list(csv.DictReader(io.StringIO(client.get(j["reports"]["detection_csv"]).text)))
 
 
-def test_registered_camera_resolves_and_its_approved_roi_is_applied(client, tmp_path):
+def test_registered_camera_resolves_its_store_and_detects_on_the_whole_frame(client, tmp_path):
     if not FIXTURE_IMAGE.is_file():
         pytest.skip("litter fixture image not present")
+    assert client.post("/api/stores", headers=ADMIN, json={"id": "STORE_REG", "name": "Forecourt store"}).status_code == 201
     r = client.post("/api/cameras", headers=ADMIN, json={"id": "CAM-REG", "name": "Forecourt", "source": "rtsp://127.0.0.1:9/none",
-                                                         "enabled": False, "roi": [BOTTOM]})
+                                                         "enabled": False, "store_id": "STORE_REG"})
     assert r.status_code == 201, r.text
     before = _alerts(client)
     j, _ = _wait(client, _drop(client, video(tmp_path / "reg.mp4", 100, frame=litter_frame), camera_id="CAM-REG").json()["job_id"])
     assert j["lifecycle"] == "COMPLETED", j["error"]
-    p = j["roi_policy"]
-    assert (p["status"], p["source"], p["name"]) == ("APPROVED", "REGISTERED_CAMERA", "forecourt")
-    assert p["configuration_id"].startswith("camera:CAM-REG#") and j["create_alerts"] is True
+    assert j["store_id"] == "STORE_REG"                                                  # from the camera record
+    ident = j["identity"]
+    assert (ident["store_id"], ident["store_name"], ident["camera_id"], ident["camera_name"]) == \
+        ("STORE_REG", "Forecourt store", "CAM-REG", "Forecourt") and not ident["warnings"]
     rows = [x for x in _rows(client, j) if x["record_type"] == "DETECTION"]
     confirmed = [x for x in rows if x["detection_status"] == "CONFIRMED"]
-    assert confirmed and all(x["roi_membership"] == "INSIDE" and x["review_required"] == "FALSE" for x in confirmed)
-    h = j["media"]["height"]                                                             # foot point inside (2 % margin)
-    assert all(float(x["bounding_box_y2"]) >= (0.55 - 0.021) * h for x in confirmed)
-    assert any(x["final_classification"] == "EXCLUDED_OUTSIDE_ROI" for x in rows)        # upper area filtered, still listed
-    assert _alerts(client) > before and all(x["alert_id"] for x in confirmed)            # approved ROI -> alerts
+    assert confirmed and all(x["review_required"] == "FALSE" and x["store_id"] == "STORE_REG" for x in confirmed)
+    assert all(x["final_classification"] in ("CONFIRMED_LITTER", "POSSIBLE_LITTER") for x in rows)
+    h = j["media"]["height"]                                     # the upper part of the frame is NOT filtered any more
+    assert min(float(x["bounding_box_y1"]) for x in confirmed) < 0.55 * h
+    assert _alerts(client) > before and all(x["alert_id"] for x in confirmed)
+    # a different store for this registered camera is refused (never attach litter to the wrong store)
+    bad = _drop(client, video(tmp_path / "reg2.mp4", 100), camera_id="CAM-REG", store_id="STORE_OTHER")
+    assert bad.status_code == 422 and "belongs to store" in bad.json()["detail"]
 
 
-def test_unknown_camera_or_store_alone_never_selects_another_cameras_roi(client, tmp_path):
+def test_unknown_camera_never_borrows_another_cameras_store(client, tmp_path):
     if not FIXTURE_IMAGE.is_file():
         pytest.skip("litter fixture image not present")
-    client.put("/api/roi/CAM-OTHER", json={"zones": [BOTTOM]})                          # some other camera's ROI exists
+    client.post("/api/stores", headers=ADMIN, json={"id": "Store 1", "name": "One"})
     client.post("/api/cameras", headers=ADMIN, json={"id": "CAM-REG2", "name": "x", "source": "rtsp://127.0.0.1:9/none",
-                                                     "location": "Store 1", "enabled": False, "roi": [BOTTOM]})
+                                                     "store_id": "Store 1", "enabled": False})
     v = video(tmp_path / "unk.mp4", 100, frame=litter_frame)
-    before = _alerts(client)
-    for form in ({"camera_id": "CAM-NOPE", "store_id": "Store 1"}, {"store_id": "Store 1"}):
+    for form, cam in (({"camera_id": "CAM-NOPE", "store_id": "Store 1"}, "CAM-NOPE"), ({"store_id": "Store 1"}, "UNKNOWN")):
         j, _ = _wait(client, _drop(client, v, **form).json()["job_id"])
         assert j["lifecycle"] == "COMPLETED", j["error"]
-        assert (j["roi_policy"]["status"], j["roi_policy"]["source"], j["roi"]) == ("NOT_CONFIGURED", "FULL_FRAME_FALLBACK", [])
-        assert j["create_alerts"] is False and j["counts"]["alerts"] == 0
+        ident = j["identity"]
+        assert (ident["store_id"], ident["store_name"], ident["camera_id"]) == ("Store 1", "One", cam)
+        assert ident["warnings"]                                  # the camera is unknown / not given
         dets = [x for x in _rows(client, j) if x["record_type"] == "DETECTION"]
-        assert dets and all(x["review_required"] == "TRUE" and x["roi_status"] == "NOT_CONFIGURED" for x in dets)
-        assert all(x["alert_id"] == "" for x in dets)
-    assert _alerts(client) == before                                                    # no alert from the fallback
+        assert any(x["detection_status"] == "CONFIRMED" for x in dets)
 
 
 def test_reports_are_on_disk_before_the_job_is_marked_completed(client, tmp_path, monkeypatch):

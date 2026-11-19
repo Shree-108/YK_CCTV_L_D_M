@@ -181,6 +181,7 @@ def test_experiments_health_search_export(client):
 
 
 def test_alert_notes_and_timeline(client, litter_image):
+    # no ROI / camera registration needed: confirmed full-frame litter creates alerts (ROI removed 2026-11-19)
     body = client.post("/api/detect/image", files={"file": ("a.jpg", cv2.imencode(".jpg", litter_image)[1].tobytes(),
                                                             "image/jpeg")}, data={"camera_id": "CAM01"}).json()
     aid = body["alerts"][0]["id"]

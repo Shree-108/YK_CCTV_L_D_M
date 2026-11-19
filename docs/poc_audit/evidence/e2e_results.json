@@ -1,0 +1,167 @@
+[
+ {
+  "check": "health 200 + model v3 loaded",
+  "pass": true,
+  "detail": "memory 90.5%"
+ },
+ {
+  "check": "classes (viewer, no login)",
+  "pass": true,
+  "detail": "200 28"
+ },
+ {
+  "check": "auth/me reachable",
+  "pass": true,
+  "detail": "200 {'auth_mode': 'off', 'authenticated': False}"
+ },
+ {
+  "check": "image detect store_real_frame",
+  "pass": true,
+  "detail": "1 dets in 3.7s; classes ['food_wrapper']; has bbox/conf: True; alerts 1; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']"
+ },
+ {
+  "check": "image detect street_aug100_frame",
+  "pass": true,
+  "detail": "19 dets in 1.3s; classes ['cup', 'food_wrapper', 'other_litter', 'paper', 'plastic_bag', 'plastic_packaging', 'plastic_piece']; has bbox/conf: True; alerts 17; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']"
+ },
+ {
+  "check": "image detect store_footfall_frame",
+  "pass": true,
+  "detail": "0 dets in 0.3s; classes []; has bbox/conf: True; alerts 0; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']"
+ },
+ {
+  "check": "corrupt image -> 400",
+  "pass": true,
+  "detail": "400 {'detail': 'Could not decode image (corrupt or not an image)'}"
+ },
+ {
+  "check": "txt upload -> 415",
+  "pass": true,
+  "detail": "415 {'detail': \"Unsupported file type '.txt'. Allowed: .bmp, .jpeg, .jpg, .png, .webp\"}"
+ },
+ {
+  "check": "path-traversal filename handled",
+  "pass": true,
+  "detail": "200 filename=evil.jpg"
+ },
+ {
+  "check": "bad camera_id rejected",
+  "pass": true,
+  "detail": "422 {'detail': \"camera_id may only contain letters, digits, '-' and '_' (max 40)\"}"
+ },
+ {
+  "check": "unknown job file -> 404",
+  "pass": true,
+  "detail": "404"
+ },
+ {
+  "check": "admin route without token rejected",
+  "pass": true,
+  "detail": "401 {'detail': 'Invalid or missing admin token'}"
+ },
+ {
+  "check": "CORS allows UI origin :3000",
+  "pass": true,
+  "detail": "http://localhost:3000"
+ },
+ {
+  "check": "CORS preflight POST from :3000",
+  "pass": true,
+  "detail": "200"
+ },
+ {
+  "check": "CORS blocks unknown origin",
+  "pass": true,
+  "detail": "None"
+ },
+ {
+  "check": "API docs disabled by default",
+  "pass": true,
+  "detail": "404"
+ },
+ {
+  "check": "video upload -> 202 queued",
+  "pass": true,
+  "detail": "202 {'job_id': '20261113_021912_6502a151', 'status': 'queued', 'status_url': '/api/jobs/20261113_021912_6502a151'}"
+ },
+ {
+  "check": "video job finished",
+  "pass": true,
+  "detail": "status done in 45s; progress samples [(0, 'running', 0.0), (5, 'running', 0.09), (10, 'running', 0.216)]...[(40, 'running', 0.904), (45, 'done', 1.0)]; error None"
+ },
+ {
+  "check": "job file video",
+  "pass": true,
+  "detail": "200 100098047 bytes video/mp4"
+ },
+ {
+  "check": "job file detections",
+  "pass": true,
+  "detail": "200 257215 bytes application/json"
+ },
+ {
+  "check": "job file events",
+  "pass": true,
+  "detail": "200 1113 bytes application/json"
+ },
+ {
+  "check": "job file stats",
+  "pass": true,
+  "detail": "200 3563 bytes application/json"
+ },
+ {
+  "check": "job stats/events content",
+  "pass": true,
+  "detail": "stats keys ['video', 'frames_analysed', 'sample_every_n_frames', 'unique_confirmed_objects', 'litter', 'confirmed_by_class', 'new_alerts', 'detections_by_status', 'rejection_reasons', 'peak_per_frame', 'model_runs', 'frames_reused_static']; events 6"
+ },
+ {
+  "check": "jobs list includes new job",
+  "pass": true,
+  "detail": "3 jobs"
+ },
+ {
+  "check": "alerts list",
+  "pass": true,
+  "detail": "47 alerts; first keys ['bbox', 'camera_id', 'class', 'confidence', 'crop_url', 'id', 'job_id', 'last_seen_ts', 'location', 'model_version', 'notes', 'notified', 'occurrences', 'session_id']"
+ },
+ {
+  "check": "alert snapshot image",
+  "pass": true,
+  "detail": "200 image/jpeg 86878B"
+ },
+ {
+  "check": "alert status update (operator)",
+  "pass": true,
+  "detail": "200 {'id': 47, 'ts': '2026-11-12T20:49:44.102+00:00', 'camera_id': 'upload', 'class': 'food_wrapper', 'confidence': 0.7086, 'track_id': 10, 'session_id': "
+ },
+ {
+  "check": "GET /summary",
+  "pass": true,
+  "detail": "200 {'live': {}, 'new_alerts': 46, 'alerts_today': 24, 'cameras': []}"
+ },
+ {
+  "check": "GET /analytics",
+  "pass": true,
+  "detail": "200 {'start': None, 'end': None, 'camera_id': None, 'alerts_total': 47, 'confirmed_objects': 48, 'by_camera': [{'camera_id': 'upload', 'n': 47}], 'by_class': [{'cla"
+ },
+ {
+  "check": "GET /detections",
+  "pass": true,
+  "detail": "200 {'detections': [{'id': 4457, 'ts': '2026-11-12T20:49:54.483+00:00', 'camera_id': 'upload', 'source_type': 'video', 'job_id': '20261113_021912_6502a151', 'frame_"
+ },
+ {
+  "check": "GET /events",
+  "pass": true,
+  "detail": "200 {'events': [{'id': 21, 'ts': '2026-11-12T20:49:58.103+00:00', 'level': 'info', 'source': 'alerts', 'camera_id': None, 'message': 'alert 47 -> acknowledged', 'da"
+ },
+ {
+  "check": "GET /models",
+  "pass": true,
+  "detail": "200 {'models': [{'version': 'v3_store_cctv', 'name': 'v3_store_cctv', 'path': 'C:\\\\SHREE\\\\YATRIKART\\\\PROJECTS\\\\YK_CCTV_L_D_M_main\\\\YK_CCTV_L_D_M\\\\models\\\\litter_yol"
+ },
+ {
+  "check": "GET /settings",
+  "pass": true,
+  "detail": "200 {'settings': {'confidence': {'weak_threshold': 0.3, 'candidate_threshold': 0.45, 'confirmed_threshold': 0.6}, 'inference': {'image_size': 640, 'iou_threshold': "
+ }
+]

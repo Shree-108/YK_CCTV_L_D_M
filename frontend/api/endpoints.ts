@@ -2,11 +2,11 @@ import { api, qs } from './client'
 import type {
   Alert, AlertStatus, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
   DetectionRow, Evaluation, EvaluationListItem, Experiment, ExperimentDetail, HardExample, Health,
-  Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RoiConfig, RoiZone, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
-  TestLabResponse, VideoResult,
+  Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
+  TestLabResponse, VideoResult, Store, Identity, LitterEvent, LitterEventQuery, LitterAnalysis, LitterAnalytics, LitterAnalyticsQuery, ReviewStatus,
 } from './types'
 import type {
-  RoiApproveBody, RoiConfirmBody, SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
+  SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
   SampledMedia, SampledMonth, SampledOverview,
 } from './sampledTypes'
 
@@ -23,6 +23,10 @@ export const Api = {
   events: (limit = 100, camera_id?: string) => api<{ events: SystemEvent[] }>(`/api/events${qs({ limit, camera_id })}`),
   search: (q: string) => api<SearchResult>(`/api/search${qs({ q })}`),
   authCheck: () => api<{ admin: boolean }>('/api/auth/check', { admin: true }),
+
+  stores: () => api<{ stores: Store[] }>('/api/stores'),
+  createStore: (body: { id: string; name: string }) => api<Store>('/api/stores', { method: 'POST', body, admin: true }),
+  updateStore: (id: string, body: { name: string }) => api<Store>(`/api/stores/${encodeURIComponent(id)}`, { method: 'PUT', body, admin: true }),
 
   cameras: () => api<{ cameras: Camera[] }>('/api/cameras'),
   camera: (id: string) => api<Camera>(`/api/cameras/${encodeURIComponent(id)}`),
@@ -51,11 +55,10 @@ export const Api = {
   scheduleAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop' | 'capture-now') =>
     api<{ schedule: ScheduleStatus; capture?: Capture }>(`/api/schedule/${encodeURIComponent(id)}/${action}`, { method: 'POST' }),
   captures: (camera_id?: string, limit = 12) => api<{ captures: Capture[] }>(`/api/captures${qs({ camera_id, limit })}`),
-  roi: (cameraId: string) => api<RoiConfig>(`/api/roi/${encodeURIComponent(cameraId)}`),
-  saveRoi: (cameraId: string, zones: RoiZone[]) => api<RoiConfig>(`/api/roi/${encodeURIComponent(cameraId)}`, { method: 'PUT', body: { zones } }),
 
   detectImage: (form: FormData) => api<ImageDetectResult>('/api/detect/image', { form }),
-  detectVideo: (form: FormData) => api<{ job_id: string; status: string }>('/api/detect/video', { form }),
+  /** Full-video tracking analysis (form: file, store_id, camera_id, recording_start, sample_interval_sec, tiling, ...). */
+  detectVideo: (form: FormData) => api<{ job_id: string; status: string; status_url?: string; identity?: Identity }>('/api/detect/video', { form }),
   job: <R = VideoResult>(id: string) => api<Job<R>>(`/api/jobs/${id}`),
   jobs: (limit = 50) => api<{ jobs: Job[] }>(`/api/jobs${qs({ limit })}`),
 
@@ -104,10 +107,6 @@ export const Api = {
   sampledMedia: (id: string) => api<SampledMedia>(`/api/sampled/media/${encodeURIComponent(id)}`),
   sampledCreate: (body: SampledCreateBody) => api<{ job_id: string; reused: boolean; state: string }>('/api/sampled/jobs', { method: 'POST', body }),
   sampledJob: (id: string) => api<SampledJob>(`/api/sampled/jobs/${encodeURIComponent(id)}`),
-  sampledConfirmRoi: (id: string, body: RoiConfirmBody) =>
-    api<{ job_id: string; state: string; stage: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/roi`, { method: 'PUT', body }),
-  sampledApproveRoi: (id: string, body: RoiApproveBody) =>
-    api<{ job_id: string; state: string; stage: string; saved_for_camera: boolean }>(`/api/sampled/jobs/${encodeURIComponent(id)}/roi/approve`, { method: 'POST', body }),
   sampledCancel: (id: string) => api<{ job_id: string; state: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   sampledOverview: () => api<SampledOverview>('/api/sampled/reports/overview'),
   sampledMonth: (month: string, by: 'completion' | 'recording') => api<SampledMonth>(`/api/sampled/reports/months/${month}${qs({ by })}`),
@@ -117,6 +116,13 @@ export const Api = {
     api<{ total: number; classes: string[]; detections: SampledDetectionRow[] }>(`/api/sampled/reports/detections${qs(q)}`),
   sampledHourly: (q: { store?: string; camera?: string; date?: string }) =>
     api<{ available: boolean; basis: string; rows: SampledHourlyRow[]; excluded_analyses: number; note: string }>(`/api/sampled/reports/hourly${qs(q)}`),
+
+  // litter events and analytics
+  litterEvents: (q: LitterEventQuery = {}) => api<{ events: LitterEvent[]; total: number }>(`/api/litter/events${qs(q)}`),
+  reviewLitterEvent: (eventId: string, body: { review_status: ReviewStatus; note?: string }) =>
+    api<LitterEvent>(`/api/litter/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body }),
+  litterAnalyses: (limit = 20) => api<{ analyses: LitterAnalysis[] }>(`/api/litter/analyses${qs({ limit })}`),
+  litterAnalytics: (q: LitterAnalyticsQuery = {}) => api<LitterAnalytics>(`/api/litter/analytics${qs(q)}`),
 
   hardExamples: (q: { kind?: string; status?: string; offset?: number; limit?: number }) =>
     api<{ items: HardExample[]; total: number; counts: { kind: string; review_status: string; n: number }[] }>(`/api/hard-examples${qs(q)}`),

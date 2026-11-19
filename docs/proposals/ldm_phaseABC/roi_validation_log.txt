@@ -1,0 +1,31 @@
+settings: roi_enabled=True anchor=footpoint margin=0.02
+crop_box(px) for crop inference: (596, 0, 2232, 819)
+PASS  DROP (counter_trays_devices_glass) foot=(737,991)  REAL S1 plastic_piece 0.7163
+PASS  DROP (shop_left_rack_and_storage_box) foot=(343,466)  REAL S2 plastic_packaging 0.5447
+PASS  DROP (counter_trays_devices_glass) foot=(738,992)  REAL S3 plastic_piece 0.644
+PASS  DROP (counter_trays_devices_glass) foot=(23,838)  REAL S3 food_wrapper 0.5594
+PASS  DROP (shop_left_rack_and_storage_box) foot=(627,454)  REAL S3 plastic_packaging 0.5261
+PASS  DROP (counter_trays_devices_glass) foot=(4,918)  REAL S3 food_wrapper 0.4632
+PASS  DROP (counter_trays_devices_glass) foot=(738,992)  REAL S4 plastic_piece 0.7231
+PASS  DROP (shop_left_rack_and_storage_box) foot=(629,454)  REAL S4 plastic_packaging 0.5492
+PASS  KEEP (outdoor_pavement) foot=(1500,450)  pavement centre (1500,450)
+PASS  KEEP (outdoor_pavement) foot=(800,120)  small far litter near road (800,120)
+PASS  KEEP (outdoor_pavement) foot=(1450,690)  litter just above counter edge (1450,690)
+PASS  KEEP (outdoor_pavement) foot=(950,520)  litter just above left tray rim (950,520)
+PASS  KEEP (outdoor_pavement) foot=(2120,640)  litter at right edge (2120,640)
+PASS  KEEP (outdoor_pavement) foot=(1640,240)  litter just below awning flap (1640,240)
+PASS  DROP (counter_trays_devices_glass) foot=(950,560)  can cap in left tray (950,560)
+PASS  DROP (counter_trays_devices_glass) foot=(2000,795)  item on right tray rim (2000,795)
+PASS  DROP (counter_trays_devices_glass) foot=(1822,880)  jar on right tray (1820,880)
+PASS  DROP (counter_trays_devices_glass) foot=(1472,780)  scanner head (1470,780)
+PASS  DROP (counter_trays_devices_glass) foot=(1600,850)  pavement seen through counter glass (1600,850)
+PASS  DROP (awning_and_hanging_sign) foot=(1702,205)  awning white flap bottom (1700,205)
+PASS  DROP (awning_and_hanging_sign) foot=(880,60)  hanging sign tip (880,60)
+PASS  DROP (shop_left_rack_and_storage_box) foot=(400,300)  snack rack (400,300)
+PASS  DROP (shop_left_rack_and_storage_box) foot=(500,440)  storage box lid (500,440)
+PASS  DROP (counter_trays_devices_glass) foot=(400,900)  food-warmer cabinet (400,900)
+PASS  DROP (shop_right_racks) foot=(2300,500)  right rack merchandise (2300,500)
+PASS  DROP (counter_trays_devices_glass) foot=(900,1050)  counter shelf (900,1050)
+
+26/26 PASS
+If written to a camera record, auto_roi.decide() -> APPROVED REGISTERED_CAMERA camera:CAMX#8ccb84f502

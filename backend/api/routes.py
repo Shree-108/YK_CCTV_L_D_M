@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime as dt
+import json
 import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
@@ -15,14 +16,19 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from backend.api.authz import (ADMIN, ADMIN_IF_LOGIN, OPERATOR, PUBLIC, VIEWER, full_details, login_enabled,
+from backend.api.authz import (ADMIN, actor_of, ADMIN_IF_LOGIN, OPERATOR, PUBLIC, VIEWER, full_details, login_enabled,
                                message_filter, optional_principal, require_admin_here, stream_guard)
 from backend.api.deps import IMAGE_EXTS, VIDEO_EXTS, check_camera_id, get_state, safe_display_name, save_upload
 from backend.cameras import cctv
 from backend.cameras.manager import camera_source, mask_source, open_capture
 from backend.core.settings import DetectionSettings
 from backend.database.db import utcnow
-from backend.detection.filters import ROISet, ROIZone
+from backend.sampling.plan import parse_recording_start
+from backend.services import analysis_outputs as ao
+from backend.services import daily_report as dr
+from backend.services import litter_reports as lr
+from backend.services import litter_store as ls
+from backend.services import video_evidence as ve
 from backend.services.pipeline import detect_image
 from backend.services.state import AppState
 
@@ -39,7 +45,7 @@ class CameraIn(BaseModel):
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
     enabled: bool = True
-    roi: list[ROIZone] = []
+    store_id: Optional[str] = Field(None, max_length=64)   # must be a registered store (GET /api/stores)
     settings: dict[str, Any] = {}
     notify: dict[str, Any] = {}
 
@@ -52,7 +58,7 @@ class CameraUpdate(BaseModel):
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
     enabled: Optional[bool] = None
-    roi: Optional[list[ROIZone]] = None
+    store_id: Optional[str] = Field(None, max_length=64)   # "" removes the store assignment
     settings: Optional[dict[str, Any]] = None
     notify: Optional[dict[str, Any]] = None
 
@@ -61,6 +67,23 @@ class AlertUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: Optional[Literal["new", "acknowledged", "resolved", "false_positive"]] = None
     notes: Optional[str] = Field(None, max_length=2000)
+
+
+class StoreIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[A-Za-z0-9._ \-]{1,64}$")
+    name: str = Field(min_length=1, max_length=120)
+
+
+class StoreUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+
+
+class EventReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review_status: Literal["DETECTED", "VERIFIED", "REJECTED", "RESOLVED"]
+    note: Optional[str] = Field(None, max_length=1000)
 
 
 class ActivateModel(BaseModel):
@@ -93,6 +116,8 @@ def _camera_out(state: AppState, cam: dict[str, Any], full: bool = True,
         cfg = cctv.RtspConfig.model_validate(cam["rtsp"])
         out["rtsp_url"] = cctv.display_url(cfg)          # masked: never contains the password
         out["has_password"] = cctv.has_password(cam["id"])
+    store = ls.get_store(state.db, cam["store_id"]) if cam.get("store_id") else None
+    out["store_name"] = store["name"] if store else None
     st = state.cameras.status(cam["id"])
     out["status"] = ({"state": st.state, "fps": st.fps, "inference_ms": st.inference_ms, "last_error": redact(st.last_error),
                       "reconnects": st.reconnects, "frames_processed": st.frames_processed,
@@ -230,25 +255,37 @@ def get_camera(cam_id: str, request: Request, state: AppState = Depends(get_stat
     return _camera_out(state, cam, full_details(request), message_filter(request).error)
 
 
+def _check_store(state: AppState, store_id: Optional[str]) -> Optional[str]:
+    """A camera may only be assigned to a registered store (no invented store IDs)."""
+    store_id = (store_id or "").strip() or None
+    if store_id and not ls.get_store(state.db, store_id):
+        raise HTTPException(422, f"Store {store_id} is not registered. Add it under Stores first.")
+    return store_id
+
+
 @router.post("/cameras", status_code=201, dependencies=ADMIN)
-def create_camera(body: CameraIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def create_camera(body: CameraIn, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     if state.db.get_camera(body.id):
         raise HTTPException(409, f"Camera {body.id} already exists")
     _validate_cam_settings(state, body.settings)
-    cam = state.db.upsert_camera(body.model_dump(mode="json"))
+    data = body.model_dump(mode="json")
+    data["store_id"] = _check_store(state, data.get("store_id"))
+    cam = state.db.upsert_camera(data)
     state.db.log_event("info", "camera", "camera created", body.id)
     state.sync_cameras()
-    return _camera_out(state, cam)
+    return _camera_out(state, cam)  # type: ignore[arg-type]
 
 
 @router.put("/cameras/{cam_id}", dependencies=ADMIN)
-def update_camera(cam_id: str, body: CameraUpdate, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def update_camera(cam_id: str, body: CameraUpdate, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     cam = state.db.get_camera(cam_id)
     if not cam:
         raise HTTPException(404, "Camera not found")
     patch = body.model_dump(mode="json", exclude_none=True)
     if "settings" in patch:
         _validate_cam_settings(state, patch["settings"])
+    if "store_id" in patch:
+        patch["store_id"] = _check_store(state, patch["store_id"])
     cam = state.db.upsert_camera({**cam, **patch})
     state.db.log_event("info", "camera", f"camera updated ({', '.join(patch)})", cam_id)
     state.sync_cameras()
@@ -268,10 +305,10 @@ def delete_camera(cam_id: str, state: AppState = Depends(get_state)) -> dict[str
 def camera_frame(cam_id: str, request: Request, raw: bool = False, authorization: Optional[str] = Header(default=None),
                  x_admin_token: Optional[str] = Header(default=None), state: AppState = Depends(get_state)) -> Response:
     """Latest annotated frame of a running camera; otherwise one raw frame grabbed from the source
-    (used by the ROI editor). Opening a new connection to the camera/NVR is admin-only with login on: a viewer
+    (camera setup preview). Opening a new connection to the camera/NVR is admin-only with login on: a viewer
     must not be able to make the server connect to a camera on demand."""
     w = state.cameras.workers.get(cam_id)
-    if w and raw and w.latest_live()[1]:   # un-annotated frame (ROI editor)
+    if w and raw and w.latest_live()[1]:   # un-annotated frame (camera setup preview)
         return Response(w.latest_live()[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
     if w and w.latest_jpeg:
         return Response(w.latest_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -366,7 +403,7 @@ def cctv_save(cam_id: str, body: dict[str, Any], state: AppState = Depends(get_s
     _validate_cam_settings(state, settings)
     if password:
         cctv.store_password(cam_id, password)
-    cam = state.db.upsert_camera({**(existing or {"roi": [], "notify": {}, "location": ""}), "id": cam_id, "name": name,
+    cam = state.db.upsert_camera({**(existing or {"notify": {}, "location": ""}), "id": cam_id, "name": name,
                                   "source": f"cctv:{cam_id}", "rtsp": cfg.model_dump(), "settings": settings,
                                   "enabled": bool(existing and existing["enabled"])})
     state.db.log_event("info", "cctv", "CCTV configuration saved", cam_id)
@@ -471,40 +508,101 @@ def capture_image(cap_id: str, kind: Literal["original", "annotated"] = "annotat
     return FileResponse(p, media_type="image/jpeg")
 
 
-# =========================================================================== ROI
-class RoiIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    zones: list[ROIZone] = Field(default_factory=list, max_length=20)
+# =========================================================================== stores
+@router.get("/stores", dependencies=VIEWER)
+def list_stores(state: AppState = Depends(get_state)) -> dict[str, Any]:
+    return {"stores": ls.list_stores(state.db)}
 
 
-def _roi_out(camera_id: str, zones: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"camera_id": camera_id, "zones": zones, "active": any(z.get("mode", "include") == "include" for z in zones)}
+@router.post("/stores", status_code=201, dependencies=ADMIN)
+def create_store(body: StoreIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    if ls.get_store(state.db, body.id.strip()):
+        raise HTTPException(409, f"Store {body.id} already exists")
+    st = ls.upsert_store(state.db, body.id.strip(), body.name.strip())
+    state.db.log_event("info", "store", f"store {st['id']} created")
+    return st
 
 
-@router.get("/roi/{camera_id}", dependencies=VIEWER)
-def get_roi(camera_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """ROI used for detections attributed to ``camera_id`` (a registered camera or an upload context)."""
-    check_camera_id(camera_id)
-    cam = state.db.get_camera(camera_id)
-    return _roi_out(camera_id, cam["roi"] if cam else state.db.get_setting(f"roi:{camera_id}", []) or [])
+@router.put("/stores/{store_id}", dependencies=ADMIN)
+def update_store(store_id: str, body: StoreUpdate, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    if not ls.get_store(state.db, store_id):
+        raise HTTPException(404, "Store not found")
+    st = ls.upsert_store(state.db, store_id, body.name.strip())
+    state.db.log_event("info", "store", f"store {store_id} renamed")
+    return st
 
 
-@router.put("/roi/{camera_id}", dependencies=OPERATOR)
-def put_roi(camera_id: str, body: RoiIn, request: Request, authorization: Optional[str] = Header(default=None),
-            x_admin_token: Optional[str] = Header(default=None), state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """Save the ROI. An upload context's ROI is an analysis preference (operator); changing a registered
-    camera's ROI changes live monitoring, so that needs admin (same as PUT /cameras)."""
-    check_camera_id(camera_id)
-    zones = [z.model_dump() for z in body.zones]
-    cam = state.db.get_camera(camera_id)
-    if cam:
-        require_admin_here(request, authorization, x_admin_token, state)
-        state.db.upsert_camera({**cam, "roi": zones})
-        state.sync_cameras()
-    else:
-        state.db.set_setting(f"roi:{camera_id}", zones)
-    state.db.log_event("info", "roi", f"ROI {'saved' if zones else 'reset'} ({len(zones)} zone(s))", camera_id)
-    return _roi_out(camera_id, zones)
+def _identity(state: AppState, store_id: Optional[str], camera_id: Optional[str]) -> lr.Identity:
+    try:
+        return ls.resolve_identity(state.db, store_id, camera_id)
+    except ls.IdentityError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+# =========================================================================== litter events / analytics
+@router.get("/litter/events", dependencies=VIEWER)
+def litter_events(store_id: Optional[str] = None, camera_id: Optional[str] = None,
+                  cls: Optional[str] = Query(None, alias="class"),
+                  status: Optional[Literal["DETECTED", "VERIFIED", "REJECTED", "RESOLVED"]] = None,
+                  start: Optional[str] = None, end: Optional[str] = None, limit: int = Query(100, ge=1, le=1000),
+                  offset: int = Query(0, ge=0), state: AppState = Depends(get_state)) -> dict[str, Any]:
+    _check_dates(start, end)
+    rows, total = ls.list_events(state.db, start=start, end=end, store_id=store_id, camera_id=camera_id, cls=cls,
+                                 status=status, limit=limit, offset=offset)
+    return {"events": rows, "total": total}
+
+
+@router.patch("/litter/events/{event_id}", dependencies=OPERATOR)
+def review_litter_event(event_id: str, body: EventReview, request: Request,
+                        state: AppState = Depends(get_state)) -> dict[str, Any]:
+    if not ls.review_event(state.db, event_id, body.review_status, actor_of(request), body.note):
+        raise HTTPException(404, "Litter event not found")
+    state.db.log_event("info", "litter", f"litter event {event_id} -> {body.review_status}")
+    return ls._event_out(ls.get_event(state.db, event_id))  # type: ignore[arg-type]
+
+
+@router.get("/litter/events/{event_id}/image", dependencies=VIEWER)
+def litter_event_image(event_id: str, state: AppState = Depends(get_state)) -> FileResponse:
+    e = ls.get_event(state.db, event_id)
+    p = Path(e["image_path"]).resolve() if e and e.get("image_path") else None
+    if p is None or not p.is_file() or ao.output_root(state.cfg.storage_dir).resolve() not in p.parents:
+        raise HTTPException(404, "Evidence image not available")
+    return FileResponse(p, media_type="image/jpeg")
+
+
+@router.get("/litter/analyses", dependencies=VIEWER)
+def litter_analyses(request: Request, limit: int = Query(50, ge=1, le=500),
+                    state: AppState = Depends(get_state)) -> dict[str, Any]:
+    mf = message_filter(request)
+    out = []
+    for a in ls.list_analyses(state.db, limit):
+        a.pop("output_dir", None)
+        a["urls"] = ao.urls_for(a["id"], a.pop("files") or {})
+        a["error"] = mf.error(a.get("error"))
+        a.update(analysis_id=a["id"], processing_status=a["status"],
+                 source_type={"quick_check": "sampled"}.get(a["kind"], a["kind"]),
+                 identity={k: a.get(k) for k in ("store_id", "store_name", "camera_id", "camera_name",
+                                                  "recording_id")} | {"warnings": a.get("warnings") or []})
+        out.append(a)
+    return {"analyses": out}
+
+
+@router.get("/litter/analytics", dependencies=VIEWER)
+def litter_analytics(start: Optional[str] = None, end: Optional[str] = None, store_id: Optional[str] = None,
+                     camera_id: Optional[str] = None, granularity: Literal["hour", "day", "week"] = "day",
+                     state: AppState = Depends(get_state)) -> dict[str, Any]:
+    _check_dates(start, end)
+    return ls.analytics(state.db, start=start, end=end, store_id=store_id, camera_id=camera_id,
+                        granularity=granularity)
+
+
+def _check_dates(*values: Optional[str]) -> None:
+    for v in values:
+        if v:
+            try:
+                dt.datetime.fromisoformat(v)
+            except ValueError as exc:
+                raise HTTPException(422, f"invalid ISO date: {v}") from exc
 
 
 # =========================================================================== detections
@@ -522,53 +620,131 @@ def list_detections(limit: int = Query(100, ge=1, le=1000), offset: int = Query(
 
 
 @router.post("/detect/image", dependencies=OPERATOR)
-async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = Form("upload"),
+async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = Form(""),
                                 return_image: bool = Form(True), model_version: Optional[str] = Form(None),
                                 confidence: Optional[float] = Form(None, ge=0.01, le=0.99),
                                 image_size: Optional[int] = Form(None, ge=160, le=4096),
                                 tiling: Literal["auto", "on", "off"] = Form("auto"),
-                                use_roi: bool = Form(True), create_alerts: bool = Form(True),
+                                create_alerts: bool = Form(True),
+                                store_id: Optional[str] = Form(None, max_length=64),
+                                save_outputs: bool = Form(True),
                                 state: AppState = Depends(get_state)) -> dict[str, Any]:
-    check_camera_id(camera_id)
+    """Single-image litter detection on the FULL frame. Every detection the model returned (above the weak floor) is
+    listed and drawn with its detection_status. With ``save_outputs`` (default) the analysis is stored: original,
+    annotated image, detection CSV, summary CSV and metadata under LDM_OUTPUT/<store>/<date>/<camera>/, plus one
+    litter event per DETECTED object. Store/camera identity: backend/services/litter_store.py (422 on a camera
+    that belongs to another store)."""
+    if camera_id and camera_id != "upload":
+        check_camera_id(camera_id)
+    ident = _identity(state, store_id, camera_id)
     _engine(state)
     try:
         engine = state.get_engine(model_version)
     except KeyError as exc:
         raise HTTPException(404, f"model {model_version} not found") from exc
     path = await save_upload(file, IMAGE_EXTS, state.cfg.max_image_mb, state.cfg.uploads_dir)
+    name = safe_display_name(file.filename)
+    cam_key = ident.camera_id if ident.camera_id != lr.UNKNOWN else "upload"
     try:
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if img is None:
             raise HTTPException(400, "Could not decode image (corrupt or not an image)")
-        cam = state.db.get_camera(camera_id)
+        cam = state.db.get_camera(cam_key)
         s = _settings_override(state, cam, confidence, image_size, tiling)
-        roi = state.roi_for(cam, camera_id) if use_roi else None
-        res = await asyncio.to_thread(detect_image, engine, img, s, roi, state.meta, state.db,
-                                      state.alerts if create_alerts else None, camera_id,
-                                      safe_display_name(file.filename), camera_registered=cam is not None)
+        when = lr.local_now()
+        res = await asyncio.to_thread(detect_image, engine, img, s, state.meta, state.db,
+                                      state.alerts if create_alerts else None, cam_key, name,
+                                      location=" · ".join(x for x in (ident.store_id, ident.camera_id)
+                                                          if x != lr.UNKNOWN),
+                                      header=ao.header_lines(ident, when))
+        summary = {"confidence": s.confidence.model_dump(), "inference_image_size": s.inference.image_size,
+                   "tiling": tiling, "create_alerts": create_alerts}
+        res["analysis"] = await asyncio.to_thread(
+            ao.image_analysis, state.db, state.cfg.storage_dir, result=res, image_bytes_path=path,
+            original_name=name, ident=ident, settings_summary=summary, save=save_outputs)
     finally:
         path.unlink(missing_ok=True)
+    res["analysis"].pop("output_dir", None)
+    res["identity"] = ident.as_dict()
     annotated = res.pop("annotated")
     res["alerts"] = [_alert_out(a) for a in res["alerts"]]
-    res["filename"] = safe_display_name(file.filename)
-    res["camera_id"] = camera_id
+    res["filename"] = name
+    res["camera_id"] = ident.camera_id
     if return_image:
         res["annotated_image"] = base64.b64encode(cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])[1]
                                                   .tobytes()).decode()
     return res
 
 
+@router.get("/analyses/{analysis_id}", dependencies=VIEWER)
+def get_analysis(analysis_id: str, request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """One stored analysis (image / video / quick check): identity, status, counts and file URLs."""
+    a = ls.get_analysis(state.db, analysis_id) if lr.ANALYSIS_ID_RE.match(analysis_id) else None
+    if a is None:
+        raise HTTPException(404, "Analysis not found")
+    a.pop("output_dir", None)
+    a["urls"] = ao.urls_for(analysis_id, a.pop("files") or {})
+    a["error"] = message_filter(request).error(a.get("error"))
+    return a
+
+
+@router.get("/analyses/{analysis_id}/files/{kind}", dependencies=VIEWER)
+def analysis_file(analysis_id: str, kind: str, state: AppState = Depends(get_state)) -> Response:
+    """original | annotated | video | detections_csv | summary_csv | metadata | report_csv | screenshot_01..04 |
+    screenshots_json of one analysis. ``report_csv`` (six columns) is rebuilt from the DB on every download, so an
+    operator's VERIFIED / REJECTED review is reflected (backend/services/video_evidence.py)."""
+    p = ao.analysis_file(state.db, analysis_id, kind)
+    if p is None:
+        raise HTTPException(404, "Not found")
+    if kind == "report_csv":
+        a = ls.get_analysis(state.db, analysis_id)
+        return Response(ve.live_report(state.db, a).encode("utf-8-sig"), media_type=ao.MEDIA_TYPES[kind],
+                        headers={"Content-Disposition": f'attachment; filename="{analysis_id}_litter_report.csv"'})
+    media = ao.MEDIA_TYPES.get(kind) or ("image/png" if p.suffix == ".png" else "image/jpeg")
+    return FileResponse(p, media_type=media, filename=p.name)
+
+
+@router.get("/reports/daily", dependencies=VIEWER)
+def daily_reports(state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """The consolidated six-column CSV of each day on which videos were analysed (newest first)."""
+    return {"columns": ve.REPORT_COLUMNS, "days": dr.list_days(state.cfg.storage_dir)}
+
+
+@router.get("/reports/daily/{day}.csv", dependencies=VIEWER)
+def daily_report_csv(day: str, state: AppState = Depends(get_state)) -> FileResponse:
+    """litter_report_<YYYY-MM-DD>.csv: every video analysed that day, appended in completion order."""
+    p = dr.find(state.cfg.storage_dir, day)
+    if p is None:
+        raise HTTPException(404, "No report for that date")
+    return FileResponse(p, media_type=ao.MEDIA_TYPES["daily_report_csv"], filename=p.name)
+
+
 @router.post("/detect/video", status_code=202, dependencies=OPERATOR)
-async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = Form("upload"),
+async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = Form(""),
+                                store_id: Optional[str] = Form(None, max_length=64),
+                                recording_start: Optional[str] = Form(None, max_length=40),
+                                sample_interval_sec: Optional[float] = Form(None, ge=0.1, le=60),
                                 confidence: Optional[float] = Form(None, ge=0.01, le=0.99),
                                 image_size: Optional[int] = Form(None, ge=160, le=4096),
                                 tiling: Literal["auto", "on", "off"] = Form("auto"),
                                 sample_fps: Optional[float] = Form(None, gt=0, le=60),
                                 temporal_window: Optional[int] = Form(None, ge=1, le=100),
                                 min_confirmations: Optional[int] = Form(None, ge=1, le=100),
-                                model_version: Optional[str] = Form(None), use_roi: bool = Form(True),
+                                model_version: Optional[str] = Form(None),
+                                screenshot_seed: Optional[int] = Form(None, ge=0, le=2**31 - 1),
                                 state: AppState = Depends(get_state)) -> dict[str, Any]:
-    check_camera_id(camera_id)
+    """Full-video litter detection (full frame, tracking, unique litter events). ``sample_interval_sec``: one frame
+    analysed every N seconds (wins over ``sample_fps``). ``recording_start``: local date-time of the first frame;
+    without it, timestamps are processing time (and say so)."""
+    if camera_id and camera_id != "upload":
+        check_camera_id(camera_id)
+    ident = _identity(state, store_id, camera_id)
+    try:
+        start = parse_recording_start(recording_start)
+    except ValueError:
+        raise HTTPException(422, "recording_start must be a date and time such as 2026-11-19T14:05:00") from None
+    if start is None:
+        ident.warnings.append("Recording start not given: timestamps are the time of processing, not of recording.")
     _engine(state)
     path = await save_upload(file, VIDEO_EXTS, state.cfg.max_video_mb, state.cfg.uploads_dir)
     cap = cv2.VideoCapture(str(path))
@@ -577,12 +753,16 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
     if not ok:
         path.unlink(missing_ok=True)
         raise HTTPException(400, "Could not decode video (corrupt file or unsupported codec)")
-    cam = state.db.get_camera(camera_id)
+    cam = state.db.get_camera(ident.camera_id) if ident.camera_id != lr.UNKNOWN else None
     patch = _override_patch(state, cam, confidence, image_size, tiling)
-    if sample_fps:
+    if sample_interval_sec:
+        patch.setdefault("video", {})["sample_fps"] = round(1.0 / sample_interval_sec, 6)
+    elif sample_fps:
         patch.setdefault("video", {})["sample_fps"] = sample_fps
     if tiling in ("on", "off"):
         patch.setdefault("video", {})["tiling"] = tiling == "on"
+    if screenshot_seed is not None:
+        patch.setdefault("video", {})["screenshot_seed"] = screenshot_seed
     if temporal_window or min_confirmations:
         patch["tracking"] = {k: v for k, v in (("temporal_window", temporal_window),
                                                  ("min_confirmations", min_confirmations)) if v}
@@ -594,9 +774,8 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
     if model_version and model_version not in {m["version"] for m in state.db.list_models()}:
         path.unlink(missing_ok=True)
         raise HTTPException(404, f"model {model_version} not found")
-    job_id = state.submit_video(path, camera_id, safe_display_name(file.filename), patch, model_version or None,
-                              use_roi)
-    return {"job_id": job_id, "status": "queued", "status_url": f"/api/jobs/{job_id}"}
+    job_id = state.submit_video(path, ident, safe_display_name(file.filename), patch, model_version or None, start)
+    return {"job_id": job_id, "status": "queued", "status_url": f"/api/jobs/{job_id}", "identity": ident.as_dict()}
 
 
 @router.get("/jobs", dependencies=VIEWER)
@@ -614,11 +793,22 @@ def get_job(job_id: str, request: Request, state: AppState = Depends(get_state))
     job["error"] = message_filter(request).error(job.get("error"))
     if job["status"] == "done":
         job["files"] = {k: f"/api/jobs/{job_id}/files/{k}" for k in JOB_FILES}
+        a = ls.analysis_for_job(state.db, job_id)
+        if a:
+            job["files"].update(ao.urls_for(a["id"], {k: v for k, v in a["files"].items() if k != "video"}))
     return job
 
 
 JOB_FILES = {"video": ("annotated.mp4", "video/mp4"), "detections": ("detections.json", "application/json"),
              "events": ("events.json", "application/json"), "stats": ("stats.json", "application/json")}
+
+
+@router.get("/jobs/{job_id}/evidence/{event_id}.jpg", dependencies=VIEWER)
+def job_evidence(job_id: str, event_id: str, state: AppState = Depends(get_state)) -> FileResponse:
+    e = ls.get_event(state.db, event_id)
+    if not e or e.get("job_id") != job_id:
+        raise HTTPException(404, "Evidence not found")
+    return litter_event_image(event_id, state)
 
 
 @router.get("/jobs/{job_id}/files/{kind}", dependencies=VIEWER)

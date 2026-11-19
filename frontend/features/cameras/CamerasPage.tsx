@@ -3,9 +3,8 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Camera as CameraIcon, LayoutGrid, List, Pencil, Plus, Power, Trash2 } from 'lucide-react'
-import { url } from '../../api/client'
 import { Api } from '../../api/endpoints'
-import type { Camera, RoiZone } from '../../api/types'
+import type { Camera } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { ago, cx, num } from '../../lib/format'
 import { lockedFor, useApp } from '../../stores/app'
@@ -13,7 +12,8 @@ import { Badge, Button, Field, Input, PageHeader, Panel, Segmented, Select, Slid
 import { ConfirmDialog, Drawer } from '../../components/ui/overlay'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
-import { RoiEditor } from '../../components/vision/Overlay'
+import { StoresPanel } from '../stores/StoresPanel'
+import { useStoresAndCameras } from '../stores/StoreCameraSelect'
 import { CameraDrawer, CameraTile, DEFAULT_OVERLAY } from './live'
 
 export default function CamerasPage() {
@@ -41,11 +41,12 @@ export default function CamerasPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <PageHeader title="Cameras" description="Camera sources, regions of interest and per-camera detection overrides. Each camera runs in its own worker and reconnects automatically."
+      <PageHeader title="Cameras" description="Stores, camera sources and per-camera detection overrides. Each camera belongs to one store; each camera runs in its own worker and reconnects automatically."
         actions={<>
           <Segmented label="View" value={view} onChange={setView} options={[{ value: 'cards', label: 'Cards', icon: LayoutGrid }, { value: 'list', label: 'List', icon: List }]} />
           <Button variant="primary" icon={Plus} disabled={!isAdmin} title={lock} onClick={() => router.replace('/cameras?new=1')}>Add camera</Button>
         </>} />
+      <StoresPanel />
       {cams.error && !cams.data ? <ErrorState error={cams.error} onRetry={cams.refetch} /> : !cams.data ? <LoadingState rows={5} /> : list.length === 0 ? (
         <Panel><EmptyState icon={CameraIcon} title="No cameras configured" body="Connect your first CCTV camera to begin monitoring. RTSP, HTTP streams, video files (looped) and local webcams are supported."
           action={<Button variant="primary" icon={Plus} disabled={!isAdmin} title={lock} onClick={() => router.replace('/cameras?new=1')}>Add camera</Button>} /></Panel>
@@ -59,7 +60,7 @@ export default function CamerasPage() {
                 <div className="flex justify-between text-fg-3"><span className="font-mono">{c.id}</span><span>{c.location || 'Location unavailable'}</span></div>
                 <div className="flex justify-between text-fg-3">
                   <span>{c.status.state === 'online' ? `${num(c.status.fps, 1)} fps · ${num(c.status.inference_ms, 0)} ms` : c.status.last_error ?? '—'}</span>
-                  <span>{c.roi.length} ROI zone{c.roi.length === 1 ? '' : 's'}</span>
+                  <span title="Store">{c.store_id ? `${c.store_id}${c.store_name ? ` · ${c.store_name}` : ''}` : 'no store'}</span>
                 </div>
               </div>
               <div className="mt-auto flex gap-1 border-t border-line p-2">
@@ -76,6 +77,7 @@ export default function CamerasPage() {
           <DataTable rows={list} rowKey={(c) => c.id} onRowClick={(c) => setDetail(c.id)} columns={[
             { key: 'name', header: 'Name', cell: (c) => <span className="text-fg">{c.name}</span>, sortValue: (c) => c.name },
             { key: 'id', header: 'ID', cell: (c) => <span className="font-mono">{c.id}</span>, sortValue: (c) => c.id },
+            { key: 'store', header: 'Store', cell: (c) => c.store_id ? <span><span className="font-mono">{c.store_id}</span>{c.store_name ? <span className="text-fg-3"> · {c.store_name}</span> : null}</span> : <span className="text-fg-3">none</span>, sortValue: (c) => c.store_id ?? '' },
             { key: 'loc', header: 'Location', cell: (c) => c.location || <span className="text-fg-3">unavailable</span> },
             { key: 'st', header: 'Status', cell: (c) => <StatusBadge status={c.enabled ? c.status.state : 'disabled'} />, sortValue: (c) => c.status.state },
             { key: 'fps', header: 'FPS', align: 'right', cell: (c) => num(c.status.fps, 1) },
@@ -94,7 +96,7 @@ export default function CamerasPage() {
       <CameraDrawer cam={list.find((c) => c.id === detail) ?? null} onClose={() => setDetail(null)} />
       <CameraEditor open={isNew || !!editing} cam={editing} onClose={closeEditor} existingIds={list.map((c) => c.id)} />
       <ConfirmDialog open={!!del} onClose={() => setDel(null)} danger confirmLabel="Delete camera" title={`Delete ${del?.id}?`}
-        body={<>The camera configuration and ROI are removed and its stream is stopped. Alerts, detections and snapshots already recorded are kept.</>}
+        body={<>The camera configuration is removed and its stream is stopped. Alerts, detections and snapshots already recorded are kept.</>}
         onConfirm={async () => {
           try { await Api.deleteCamera(del!.id); toast({ tone: 'ok', title: `${del!.id} deleted` }); invalidate('cameras') }
           catch (e) { toast({ tone: 'crit', title: 'Delete failed', body: (e as Error).message }) }
@@ -104,10 +106,10 @@ export default function CamerasPage() {
   )
 }
 
-type Section = 'general' | 'stream' | 'model' | 'detection' | 'roi' | 'tracking' | 'alerts'
+type Section = 'general' | 'stream' | 'model' | 'detection' | 'tracking' | 'alerts'
 
 interface Form {
-  id: string; name: string; source: string; location: string; latitude: string; longitude: string; enabled: boolean; roi: RoiZone[]
+  id: string; name: string; source: string; location: string; latitude: string; longitude: string; enabled: boolean; store_id: string
   conf: number | null; imgsz: string; tiling: '' | 'auto' | 'always' | 'off'; liveFps: string
   window: string; minConf: string; maxMissed: string
   alertsEnabled: boolean | null; cooldown: string; notifyEnabled: boolean; minSeverity: string; providers: string[]
@@ -119,7 +121,7 @@ function toForm(c: Camera | null): Form {
   const str = (v: unknown) => (v === undefined || v === null ? '' : String(v))
   return {
     id: c?.id ?? '', name: c?.name ?? '', source: c?.source ?? '', location: c?.location ?? '',
-    latitude: str(c?.latitude), longitude: str(c?.longitude), enabled: c?.enabled ?? true, roi: c?.roi ?? [],
+    latitude: str(c?.latitude), longitude: str(c?.longitude), enabled: c?.enabled ?? true, store_id: c?.store_id ?? '',
     conf: (s.confidence?.confirmed_threshold as number) ?? null, imgsz: str(s.inference?.image_size),
     tiling: s.tiling ? (s.tiling.enabled === false ? 'off' : (s.tiling.mode as 'auto' | 'always') ?? 'auto') : '',
     liveFps: str(s.video?.live_process_fps), window: str(s.tracking?.temporal_window), minConf: str(s.tracking?.min_confirmations),
@@ -157,34 +159,17 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
   const [sec, setSec] = useState<Section>('general')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null)
-  const [frameErr, setFrameErr] = useState<string | null>(null)
-  useEffect(() => { if (open) { setF(toForm(cam)); setSec('general'); setErr(null); setFrame(null); setFrameErr(null) } }, [open, cam?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const { stores } = useStoresAndCameras()
+  useEffect(() => { if (open) { setF(toForm(cam)); setSec('general'); setErr(null) } }, [open, cam?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const g = settings.data?.settings
   const isNew = !cam
   const idOk = /^[A-Za-z0-9_-]{1,40}$/.test(f.id) && (!isNew || !existingIds.includes(f.id))
-
-  const loadFrame = async () => {
-    if (!cam) return
-    setFrameErr(null)
-    try {
-      const res = await fetch(url(`/api/cameras/${encodeURIComponent(cam.id)}/frame.jpg?t=${Date.now()}`), { credentials: 'include' })
-      if (res.status === 401 || res.status === 403) throw new Error('Only administrators can grab a frame from a camera that is not running.')
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `HTTP ${res.status}`)
-      const blob = await res.blob()
-      const src = URL.createObjectURL(blob)
-      const img = new Image()
-      img.onload = () => setFrame({ src, w: img.naturalWidth, h: img.naturalHeight })
-      img.src = src
-    } catch (e) { setFrameErr((e as Error).message) }
-  }
-  useEffect(() => { if (open && sec === 'roi' && !frame) void loadFrame() }, [sec, open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     setSaving(true)
     setErr(null)
     const body = {
-      name: f.name, location: f.location, enabled: f.enabled, roi: f.roi,
+      name: f.name, location: f.location, enabled: f.enabled, store_id: f.store_id || null,
       // the API returns credentials masked; only send the source when it was actually edited
       ...(isNew || f.source !== cam!.source ? { source: f.source } : {}),
       latitude: f.latitude === '' ? null : Number(f.latitude), longitude: f.longitude === '' ? null : Number(f.longitude),
@@ -202,7 +187,7 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
 
   const SECTIONS: { value: Section; label: string }[] = [
     { value: 'general', label: 'General' }, { value: 'stream', label: 'Stream' }, { value: 'model', label: 'AI model' }, { value: 'detection', label: 'Detection' },
-    { value: 'roi', label: 'ROI' }, { value: 'tracking', label: 'Tracking' }, { value: 'alerts', label: 'Alerts' },
+    { value: 'tracking', label: 'Tracking' }, { value: 'alerts', label: 'Alerts' },
   ]
   const idx = SECTIONS.findIndex((s) => s.value === sec)
   const inherit = (v: unknown) => `inherit (${v ?? '—'})`
@@ -224,6 +209,13 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
               <Input value={f.id} disabled={!isNew} onChange={(e) => setF({ ...f, id: e.target.value.toUpperCase() })} placeholder="CAM01" aria-invalid={isNew && !!f.id && !idOk} />
             </Field>
             <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Main Entrance" /></Field>
+            <Field label="Store" hint="Detections from this camera are reported under this store.">
+              <Select value={f.store_id} onChange={(e) => setF({ ...f, store_id: e.target.value })}>
+                <option value="">None (UNKNOWN)</option>
+                {stores.map((s) => <option key={s.id} value={s.id}>{s.id} · {s.name}</option>)}
+                {f.store_id && !stores.some((s) => s.id === f.store_id) && <option value={f.store_id}>{f.store_id}</option>}
+              </Select>
+            </Field>
             <Field label="Location"><Input value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Front sidewalk" /></Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Latitude"><Input inputMode="decimal" value={f.latitude} onChange={(e) => setF({ ...f, latitude: e.target.value })} placeholder="optional" /></Field>
@@ -262,11 +254,6 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
                 <option value="">{inherit(g ? (g.tiling.enabled ? g.tiling.mode : 'off') : undefined)}</option><option value="auto">auto</option><option value="always">always</option><option value="off">off</option></Select></Field>
             </div>
           </div>
-        )}
-        {sec === 'roi' && (
-          isNew ? <p className="text-[12px] text-fg-3">Save the camera first; the ROI editor needs a frame from its stream. Without zones the whole frame is monitored.</p> :
-          frame ? <RoiEditor src={frame.src} width={frame.w} height={frame.h} zones={f.roi} onChange={(roi) => setF({ ...f, roi })} /> :
-          frameErr ? <ErrorState compact error={new Error(frameErr)} title="Could not grab a frame" onRetry={loadFrame} /> : <LoadingState rows={4} label="Grabbing a frame" />
         )}
         {sec === 'tracking' && (
           <div className="grid grid-cols-3 gap-3">

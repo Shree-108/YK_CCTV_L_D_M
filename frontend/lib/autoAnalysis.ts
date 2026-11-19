@@ -8,7 +8,7 @@
 
 export type Lifecycle =
   | 'UPLOADING' | 'QUEUED' | 'PROCESSING' | 'EXTRACTING_SCREENSHOTS' | 'RUNNING_DETECTION' | 'GENERATING_REPORT'
-  | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'AWAITING_ROI'
+  | 'COMPLETED' | 'FAILED' | 'CANCELLED'
 
 export interface UploadLimits { max_video_mb: number; video_extensions: string[] }
 
@@ -98,67 +98,32 @@ export function stepIndex(l: Lifecycle | undefined, lastActive?: Lifecycle): num
 }
 
 // ---------------------------------------------------------------- results
-export interface RoiPolicyLike { status: string; source: string; name?: string; note?: string; approved?: boolean }
-
-export function roiLabel(p: RoiPolicyLike | null | undefined, cameraId?: string | null): { text: string; tone: 'ok' | 'warn' | 'neutral' } {
-  if (!p) return { text: 'Not recorded', tone: 'neutral' }
-  if (p.status === 'APPROVED') {
-    if (p.source === 'OPERATOR_APPROVED_FOR_JOB') return { text: 'Approved ROI (drawn by the operator for this video)', tone: 'ok' }
-    const where = p.source === 'REGISTERED_CAMERA' ? 'registered camera' : 'saved camera ROI'
-    return { text: `Approved ROI (${where}${cameraId ? ` ${cameraId}` : ''})`, tone: 'ok' }
-  }
-  if (p.status === 'REVALIDATION_REQUIRED') return { text: 'Camera ROI needs revalidation (view changed): not applied', tone: 'warn' }
-  if (p.status === 'DISABLED_IN_SETTINGS') return { text: 'ROI filtering off in Settings (whole frame)', tone: 'warn' }
-  if (p.status === 'CONFIRMED_BY_OPERATOR') return { text: 'Confirmed by operator', tone: 'ok' }
-  return { text: 'ROI_NOT_CONFIGURED: no monitored ground area approved', tone: 'warn' }
+const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' | 'neutral' }> = {
+  LITTER_OBSERVED: { text: 'Litter detected', tone: 'crit' },
+  // never "clean": the model can miss litter
+  NO_LITTER_OBSERVED: { text: 'No litter detected by the model', tone: 'neutral' },
+  INCOMPLETE_LITTER_OBSERVED: { text: 'Litter detected (incomplete analysis)', tone: 'crit' },
+  INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS: { text: 'Incomplete: no litter detected in the readable screenshots', tone: 'warn' },
+  FAILED: { text: 'FAILED', tone: 'crit' },
 }
 
-/** Can the operator draw and approve an ROI for this completed automatic job? Never when a camera ROI is in force. */
-export function canCalibrate(job: { mode?: string; lifecycle?: Lifecycle; roi_policy?: RoiPolicyLike | null } | null | undefined): boolean {
-  if (!job || job.mode !== 'auto' || job.lifecycle !== 'COMPLETED' || !job.roi_policy) return false
-  return !job.roi_policy.approved || job.roi_policy.source === 'OPERATOR_APPROVED_FOR_JOB'
-}
+export const overallLabel = (s: string | undefined | null) => (s && OVERALL[s]) || { text: s ? s.replace(/_/g, ' ') : '—', tone: 'warn' as const }
 
-const OVERALL: Record<string, { text: string; tone: 'ok' | 'warn' | 'crit' }> = {
-  LITTER_OBSERVED: { text: 'Litter observed', tone: 'crit' },
-  NO_LITTER_OBSERVED: { text: 'No litter observed', tone: 'ok' },
-  INCOMPLETE_LITTER_OBSERVED: { text: 'Litter observed (incomplete analysis)', tone: 'crit' },
-  INCOMPLETE_NO_LITTER_IN_ANALYSED_SCREENSHOTS: { text: 'Incomplete: no litter in the readable screenshots', tone: 'warn' },
-  FAILED: { text: 'Failed', tone: 'crit' },
-  PAVEMENT_ROI_NOT_CONFIGURED: { text: 'ROI_NOT_CONFIGURED: not reported as clean', tone: 'warn' },
-  PAVEMENT_ROI_FRAME_MISMATCH: { text: 'ROI revalidation needed: not reported as clean', tone: 'warn' },
-}
-
-export const overallLabel = (s: string | undefined | null) => (s && OVERALL[s]) || { text: s || '—', tone: 'warn' as const }
-
-export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string; outcome?: string }
+export interface DetLike { class: string; confidence: number; status: string; severity?: string; object_id?: string }
 export interface FrameLike {
   idx: number; frame_idx: number; video_time_sec: number | null; status: string; outcome: string | null
   detections: DetLike[]; sampling_note?: string | null; error?: string | null
-  pavement?: { status: string; counts: Record<string, number> } | null
 }
 
-/** What one screenshot card shows: confirmed litter (class, model confidence, severity) and the count. */
+/** What one screenshot card shows: litter detected with high confidence (class, confidence, severity) and the count. */
 export function screenshotFacts(f: FrameLike) {
   const confirmed = f.detections.filter((d) => d.status === 'confirmed').sort((a, b) => b.confidence - a.confidence)
-  // camera ROI mode: candidates are the SMALL_OR_WEAK_CANDIDATE outcome (small or weak, inside the approved ROI);
-  // general image mode and the mode switched off keep the existing rule
-  const validated = f.pavement?.status === 'CAMERA_ROI_MODE'
-  const possible = validated ? f.detections.filter((d) => d.outcome === 'SMALL_OR_WEAK_CANDIDATE').length
-    : f.detections.filter((d) => d.status === 'candidate').length
-  const pv = f.pavement
   return {
-    pavement: pv ? {
-      active: validated, general: pv.status === 'GENERAL_IMAGE_MODE', status: pv.status,
-      rejected: (pv.counts.rejected_outside_roi ?? 0) + (pv.counts.rejected_filter ?? 0),
-      unverified: pv.counts.unverified_roi_not_configured ?? 0,
-    } : null,
     count: confirmed.length,
     items: confirmed.map((d) => ({ cls: d.class, confidence: d.confidence, severity: d.severity ?? null, object: d.object_id ?? null })),
-    possible,
+    possible: f.detections.filter((d) => d.status === 'candidate').length,
     adjusted: !!f.sampling_note,
     analysed: f.outcome === 'LITTER_DETECTED' || f.outcome === 'NO_LITTER',
-    roiUnavailable: f.outcome === 'ROI_NOT_CONFIGURED' || f.outcome === 'ROI_FRAME_MISMATCH',
   }
 }
 

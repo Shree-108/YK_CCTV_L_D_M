@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CameraOff, Download, Expand, History, Loader2, Pause, Pencil, Play, RefreshCw, Settings2, Sparkles } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { Api } from '../../api/endpoints'
-import type { Camera, Detection, LiveFrame, RoiZone } from '../../api/types'
+import type { Camera, Detection, LiveFrame } from '../../api/types'
 import { invalidate, useMutation, useQuery } from '../../hooks/useQuery'
 import { cx, dayStartIso, downloadBlob, num, todayLocal } from '../../lib/format'
 import { useApp } from '../../stores/app'
@@ -13,8 +13,8 @@ import { Button, Dot, KeyValue, Panel, StatusBadge, Unavailable } from '../../co
 import { Drawer } from '../../components/ui/overlay'
 import { ImageOverlay, STATUS_COLOR, type OverlayBox } from '../../components/vision/Overlay'
 
-export interface OverlayOpts { detections: boolean; ids: boolean; confidence: boolean; roi: boolean; weak: boolean }
-export const DEFAULT_OVERLAY: OverlayOpts = { detections: true, ids: true, confidence: true, roi: false, weak: false }
+export interface OverlayOpts { detections: boolean; ids: boolean; confidence: boolean; weak: boolean }
+export const DEFAULT_OVERLAY: OverlayOpts = { detections: true, ids: true, confidence: true, weak: false }
 
 /** Polls the latest processed frame (raw image + detections of that same frame). */
 export function useLiveFrame(camId: string | null, paused: boolean, intervalMs = 400) {
@@ -43,7 +43,7 @@ export function useLiveFrame(camId: string | null, paused: boolean, intervalMs =
             seq.current = r.frame.seq
             setImage(`data:image/jpeg;base64,${r.image}`)
             setFrame(r)
-          } else setFrame((f) => (f ? { ...f, state: r.state, fps: r.fps, inference_ms: r.inference_ms, last_error: r.last_error, roi: r.roi } : r))
+          } else setFrame((f) => (f ? { ...f, state: r.state, fps: r.fps, inference_ms: r.inference_ms, last_error: r.last_error } : r))
         } catch (e) {
           if ((e as Error).name !== 'AbortError' && !stop) setError(e as Error)
         }
@@ -72,7 +72,7 @@ export function toBoxes(dets: Detection[], o: OverlayOpts): OverlayBox[] {
 }
 
 /** Renders the current frame + overlay to a PNG for download. */
-export async function snapshotPng(image: string, width: number, height: number, boxes: OverlayBox[], roi: RoiZone[] | null, name: string) {
+export async function snapshotPng(image: string, width: number, height: number, boxes: OverlayBox[], name: string) {
   const img = new Image()
   img.src = image
   await img.decode()
@@ -84,15 +84,6 @@ export async function snapshotPng(image: string, width: number, height: number, 
   const css = getComputedStyle(document.documentElement)
   const col = (v: string) => (v.startsWith('var(') ? css.getPropertyValue(v.slice(4, -1)).trim() : v)
   g.lineWidth = Math.max(2, width / 600)
-  roi?.forEach((z) => {
-    g.strokeStyle = z.mode === 'include' ? col('var(--info)') : col('var(--crit)')
-    g.setLineDash([8, 5])
-    g.beginPath()
-    z.polygon.forEach(([x, y], i) => (i ? g.lineTo(x * width, y * height) : g.moveTo(x * width, y * height)))
-    g.closePath()
-    g.stroke()
-  })
-  g.setLineDash([])
   g.font = `600 ${Math.max(12, width / 70)}px monospace`
   boxes.forEach((b) => {
     g.strokeStyle = col(b.color)
@@ -127,7 +118,7 @@ export function CameraTile({ cam, overlay, paused, onOpen, compact, heightClass 
   return (
     <div ref={tileRef} className={cx('group relative overflow-hidden rounded-md border bg-video', offline ? 'border-crit/50' : 'border-line', heightClass)}>
       {f && image ? (
-        <ImageOverlay src={image} width={f.width} height={f.height} boxes={boxes} roi={overlay.roi ? frame?.roi : null}
+        <ImageOverlay src={image} width={f.width} height={f.height} boxes={boxes}
           className="absolute inset-0" alt={`Live frame from ${cam.name}`} />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-[12px] text-fg-3">
@@ -166,7 +157,7 @@ export function CameraTile({ cam, overlay, paused, onOpen, compact, heightClass 
         <TileBtn label={isPaused ? 'Resume' : 'Pause'} onClick={() => setLocalPause((p) => !p)}>{isPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}</TileBtn>
         <TileBtn label="Fullscreen" onClick={() => tileRef.current?.requestFullscreen?.()}><Expand className="size-3.5" /></TileBtn>
         <TileBtn label="Save snapshot" disabled={!f || !image}
-          onClick={() => f && image && snapshotPng(image, f.width, f.height, boxes, overlay.roi ? frame?.roi ?? null : null, `${cam.id}_${f.seq}.png`)}>
+          onClick={() => f && image && snapshotPng(image, f.width, f.height, boxes, `${cam.id}_${f.seq}.png`)}>
           <Download className="size-3.5" />
         </TileBtn>
         {onOpen && <TileBtn label="Camera details" onClick={onOpen}><Settings2 className="size-3.5" /></TileBtn>}
@@ -207,7 +198,7 @@ export function CameraDrawer({ cam, onClose }: { cam: Camera | null; onClose: ()
         <Link href={`/live?focus=${encodeURIComponent(cam.id)}`}><Button icon={Expand} variant="primary">Open full screen</Button></Link>
       </>}>
       <div className="flex flex-col gap-4">
-        <CameraTile cam={cam} overlay={{ ...DEFAULT_OVERLAY, roi: true }} compact />
+        <CameraTile cam={cam} overlay={DEFAULT_OVERLAY} compact />
         <KeyValue items={[
           ['Location', cam.location || <span className="text-fg-3">Location unavailable</span>],
           ['Stream source', <span key="s" className="font-mono text-[12px]" title={cam.source}>{cam.source}</span>],
@@ -220,7 +211,7 @@ export function CameraDrawer({ cam, onClose }: { cam: Camera | null; onClose: ()
           ["Today's detections", stats.loading ? '…' : num(detToday)],
           ["Today's alerts", stats.loading ? '…' : num(stats.data?.alerts_total)],
           ['Frames dropped', num(s.frames_dropped)],
-          ['ROI zones', cam.roi.length ? cam.roi.map((z) => `${z.name} (${z.mode})`).join(', ') : 'none (whole frame)'],
+          ['Store', cam.store_id ? `${cam.store_id}${cam.store_name ? ` · ${cam.store_name}` : ''}` : <span key="st" className="text-fg-3">none (UNKNOWN)</span>],
         ]} />
         <Panel title="AI model" icon={Sparkles}>
           <div className="flex items-center justify-between gap-2 text-[13px]">

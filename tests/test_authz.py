@@ -44,11 +44,18 @@ MATRIX = {
     ("GET", "/api/schedule/{cam_id}"): "viewer", ("PUT", "/api/schedule/{cam_id}"): "admin",
     ("POST", "/api/schedule/{cam_id}/{action}"): "admin",
     ("GET", "/api/captures"): "viewer", ("GET", "/api/captures/{cap_id}/image"): "viewer",
-    ("GET", "/api/roi/{camera_id}"): "viewer", ("PUT", "/api/roi/{camera_id}"): "operator",
+    # stores and litter events (ROI routes removed 2026-11-19, docs/ldm_litter_focus/API_CONTRACT.md)
+    ("GET", "/api/stores"): "viewer", ("POST", "/api/stores"): "admin", ("PUT", "/api/stores/{store_id}"): "admin",
+    ("GET", "/api/litter/events"): "viewer", ("PATCH", "/api/litter/events/{event_id}"): "operator",
+    ("GET", "/api/litter/events/{event_id}/image"): "viewer",
+    ("GET", "/api/litter/analyses"): "viewer", ("GET", "/api/litter/analytics"): "viewer",
     ("GET", "/api/detections"): "viewer",
     ("POST", "/api/detect/image"): "operator", ("POST", "/api/detect/video"): "operator",
     ("GET", "/api/jobs"): "viewer", ("GET", "/api/jobs/{job_id}"): "viewer",
     ("GET", "/api/jobs/{job_id}/files/{kind}"): "viewer",
+    ("GET", "/api/jobs/{job_id}/evidence/{event_id}.jpg"): "viewer",
+    ("GET", "/api/analyses/{analysis_id}"): "viewer", ("GET", "/api/analyses/{analysis_id}/files/{kind}"): "viewer",
+    ("GET", "/api/reports/daily"): "viewer", ("GET", "/api/reports/daily/{day}.csv"): "viewer",
     ("GET", "/api/alerts"): "viewer", ("GET", "/api/alerts/{alert_id}"): "viewer",
     ("PATCH", "/api/alerts/{alert_id}"): "operator", ("GET", "/api/alerts/{alert_id}/snapshot"): "viewer",
     ("GET", "/api/alerts/{alert_id}/timeline"): "viewer",
@@ -73,8 +80,7 @@ MATRIX = {
     ("POST", "/api/sampled/media"): "operator", ("GET", "/api/sampled/media/{media_id}"): "viewer",
     ("GET", "/api/sampled/media/{media_id}/preview.jpg"): "viewer",
     ("POST", "/api/sampled/jobs"): "operator", ("GET", "/api/sampled/jobs"): "viewer",
-    ("GET", "/api/sampled/jobs/{job_id}"): "viewer", ("PUT", "/api/sampled/jobs/{job_id}/roi"): "operator",
-    ("POST", "/api/sampled/jobs/{job_id}/roi/approve"): "operator",
+    ("GET", "/api/sampled/jobs/{job_id}"): "viewer",
     ("POST", "/api/sampled/jobs/{job_id}/cancel"): "operator",
     ("GET", "/api/sampled/jobs/{job_id}/frames/{idx}/{kind}.jpg"): "viewer",
     ("GET", "/api/sampled/jobs/{job_id}/report.csv"): "admin_if_login",
@@ -88,7 +94,12 @@ MATRIX = {
 STREAMS = {("GET", "/api/stream")}      # infinite responses: checked separately
 PARAMS = {"cam_id": "nocam", "camera_id": "nocam", "cap_id": "nocap", "job_id": "nojob", "kind": "video",
           "alert_id": "999999", "action": "start", "table": "alerts", "name": "nodataset", "exp_id": "noexp",
-          "hid": "999999", "media_id": "0123456789abcdef", "idx": "1", "month": "2026-11"}
+          "hid": "999999", "media_id": "0123456789abcdef", "idx": "1", "month": "2026-11",
+          "analysis_id": "analysis_20261117T000000_abcdef", "store_id": "NOSTORE", "day": "2000-01-01",
+          "event_id": "img_20261119T000000_abcdef-E001"}
+REMOVED_ROI_ROUTES = [("GET", "/api/roi/nocam"), ("PUT", "/api/roi/nocam"), ("GET", "/api/roi/nocam/versions"),
+                      ("POST", "/api/roi/nocam/propose"), ("PUT", "/api/sampled/jobs/nojob/roi"),
+                      ("POST", "/api/sampled/jobs/nojob/roi/approve")]
 
 
 class Clock:
@@ -192,6 +203,14 @@ def test_the_app_registers_no_route_outside_the_matrix(tmp_path):
         ops = {(m.upper(), p) for p, v in c.app.openapi()["paths"].items() for m in v}
     assert ops == set(MATRIX)
     assert not [p for _, p in ops if "invoice" in p]
+    assert not [p for _, p in ops if "roi" in p.lower() or "pavement" in p.lower()]   # ROI removed 2026-11-19
+
+
+def test_removed_roi_routes_are_gone_for_every_caller(on):
+    _login(on, "admin")
+    for method, url in REMOVED_ROI_ROUTES:
+        r = on.request(method, url, json={"zones": []})
+        assert r.status_code in (404, 405), (method, url, r.status_code)
 
 
 # ---------------------------------------------------------------- login off (the default): unchanged behaviour
@@ -287,15 +306,25 @@ def test_csv_exports_are_admin_only(on):
     assert on.get("/api/export/alerts.csv", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
 
 
-def test_roi_operator_for_uploads_admin_for_registered_cameras(on):
-    cam = {"id": "cam1", "name": "Cam 1", "source": "0", "enabled": False}
-    assert on.post("/api/cameras", json=cam, headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 201
+def test_stores_are_admin_managed_and_litter_review_is_operator(on):
+    """Stores: viewers read, only admins create/rename. Litter events: viewers read, operators review."""
+    _login(on, "viewer")
+    assert on.get("/api/stores").json() == {"stores": []}
+    assert on.post("/api/stores", json={"id": "S1", "name": "One"}).status_code == 403
+    assert on.patch("/api/litter/events/x-E001", json={"review_status": "VERIFIED"}).status_code == 403
+    assert on.get("/api/litter/events").status_code == 200 and on.get("/api/litter/analytics").status_code == 200
     _login(on, "operator")
-    assert on.put("/api/roi/upload", json={"zones": []}).status_code == 200
-    r = on.put("/api/roi/cam1", json={"zones": []})
+    r = on.post("/api/stores", json={"id": "S1", "name": "One"})
     assert r.status_code == 403 and "admin" in r.json()["detail"]
+    assert on.put("/api/stores/S1", json={"name": "Uno"}).status_code == 403
+    assert on.patch("/api/litter/events/img_20261119T000000_abcdef-E001",
+                    json={"review_status": "VERIFIED"}).status_code == 404       # allowed; the event does not exist
     _login(on, "admin")
-    assert on.put("/api/roi/cam1", json={"zones": []}).status_code == 200
+    assert on.post("/api/stores", json={"id": "S1", "name": "One"}).status_code == 201
+    assert on.post("/api/stores", json={"id": "S1", "name": "One"}).status_code == 409
+    assert on.put("/api/stores/S1", json={"name": "Uno"}).json()["name"] == "Uno"
+    _login(on, "viewer")
+    assert [x["id"] for x in on.get("/api/stores").json()["stores"]] == ["S1"]
 
 
 def test_health_says_little_to_anonymous_callers(on):
@@ -458,7 +487,10 @@ def test_every_event_message_the_application_writes_is_classified():
              ("camera", "info", "camera deleted"), ("camera", "info", "camera reconnected"),
              ("cctv", "warning", "connection test: auth_failed"), ("cctv", "info", "CCTV configuration saved"),
              ("cctv", "info", "live stream started"), ("cctv", "info", "live stream stopped"),
-             ("roi", "info", "ROI saved (2 zone(s))"), ("roi", "info", "ROI reset (0 zone(s))"),
+             ("roi", "info", "ROI saved (2 zone(s))"), ("roi", "info", "ROI reset (0 zone(s))"),   # history rows
+             ("store", "info", "store STORE_001 created"), ("store", "info", "store STORE_001 renamed"),
+             ("litter", "info", "litter event img_20261119T181500_ab12cd-E001 -> REJECTED"),
+             ("video", "info", "video analysis job_ab12 finished: 2 litter event(s), 31 observation(s)"),
              ("alerts", "info", "alert 12 -> false_positive"), ("camera", "info", "stream restart requested"),
              ("dataset", "info", "labels updated: ds_v1/images/train/a_01.jpg (3 objects)"),
              ("dataset", "info", "dataset version ds_v2 created from ds_v1"),
@@ -635,7 +667,8 @@ def test_writes_do_not_extend_it_either(on, clock):
     _login(on, "operator")
     clock.advance(20)
     assert on.patch("/api/alerts/999999", json={"status": "resolved"}).status_code == 404   # allowed, but no refresh
-    assert on.put("/api/roi/upload", json={"zones": []}).status_code == 200
+    assert on.patch("/api/litter/events/img_20261119T000000_abcdef-E001",
+                    json={"review_status": "VERIFIED"}).status_code == 404       # allowed write, no refresh either
     clock.advance(10.1)
     assert on.get("/api/alerts").status_code == 401
 

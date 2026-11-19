@@ -1,5 +1,5 @@
 {
-  "_comment": "Class metadata for 28 classes: the 25 legacy classes (preserved; 7 of them are also classes of the v3_store_cctv model) plus 3 entries added on 2026-11-13 for v3_store_cctv classes that had none: cup, newspaper, plastic_piece. The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
+  "_comment": "Class metadata for 28 classes: the 25 legacy classes (preserved; 7 of them are also classes of the v3_store_cctv model) plus 3 entries added on 2026-11-13 for v3_store_cctv classes that had none: cup, newspaper, plastic_piece. The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted. 2026-11-19: added plastic_packet, food_waste and glass, the three classes of the seven-class LDM schema (training/ldm7/schema.py) that had no entry; priorities are provisional (mirror chips_packet / food_container / glass_bottle) until the owner sets them.",
   "classes": {
     "chips_packet": {
       "priority": "critical",
@@ -112,6 +112,18 @@
     "cutlery": {
       "priority": "medium",
       "bin": "plastic"
+    },
+    "plastic_packet": {
+      "priority": "critical",
+      "bin": "general"
+    },
+    "food_waste": {
+      "priority": "high",
+      "bin": "organic"
+    },
+    "glass": {
+      "priority": "high",
+      "bin": "glass"
     }
   },
   "priority_colors": {
@@ -129,7 +141,8 @@
       "cigarette_packet",
       "plastic_bag",
       "foil",
-      "plastic_piece"
+      "plastic_piece",
+      "plastic_packet"
     ],
     "cups_containers": [
       "plastic_cup",
@@ -144,7 +157,8 @@
       "glass_bottle",
       "metal_can",
       "bottle_cap",
-      "pop_tab"
+      "pop_tab",
+      "glass"
     ],
     "paper_like": [
       "paper",
@@ -158,6 +172,9 @@
       "straw",
       "cutlery",
       "other_litter"
+    ],
+    "organic": [
+      "food_waste"
     ]
   },
   "report_groups": {

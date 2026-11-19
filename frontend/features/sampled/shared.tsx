@@ -13,29 +13,26 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states
 import { litterName } from '../detection/common'
 
 export const OUTCOME: Record<FrameOutcome, { label: string; tone: Tone; hint: string }> = {
-  LITTER_DETECTED: { label: 'Litter detected', tone: 'crit', hint: 'Confirmed litter inside the outdoor ROI.' },
-  NO_LITTER: { label: 'No litter', tone: 'ok', hint: 'Analysed: nothing reached the confirmed threshold inside the ROI.' },
-  ROI_UNCERTAIN: { label: 'ROI uncertain', tone: 'warn', hint: 'Not analysed: the outdoor area was not confirmed for this screenshot.' },
+  LITTER_DETECTED: { label: 'Litter detected', tone: 'crit', hint: 'Litter detected with high confidence on the screenshot.' },
+  // never "clean": the model can miss litter
+  NO_LITTER: { label: 'No litter detected by the model', tone: 'neutral', hint: 'Analysed: the model detected no litter with high confidence.' },
   UNREADABLE: { label: 'Unreadable', tone: 'neutral', hint: 'Not analysed: the decoded picture was corrupted or blank.' },
-  FAILED: { label: 'Failed', tone: 'crit', hint: 'Processing failed for this screenshot.' },
-  ROI_NOT_CONFIGURED: { label: 'ROI_NOT_CONFIGURED', tone: 'warn', hint: 'No approved monitoring ROI: litter on the monitored ground cannot be confirmed, and this screenshot is not reported as clean. Full-frame detections are listed for review only.' },
-  ROI_FRAME_MISMATCH: { label: 'ROI revalidation needed', tone: 'warn', hint: 'The ROI was drawn on a picture of a different shape (the camera view may have changed): it is not applied. Nothing is confirmed until an ROI is approved again.' },
+  FAILED: { label: 'FAILED', tone: 'crit', hint: 'Processing failed for this screenshot.' },
 }
 
 export const STATE: Record<SampledState, { label: string; tone: Tone }> = {
   queued: { label: 'Queued', tone: 'neutral' }, running: { label: 'Processing', tone: 'warn' },
-  awaiting_roi: { label: 'ROI confirmation needed', tone: 'warn' }, done: { label: 'Completed', tone: 'ok' },
+  done: { label: 'Completed', tone: 'ok' },
   failed: { label: 'Failed', tone: 'crit' }, cancelled: { label: 'Cancelled', tone: 'neutral' },
   interrupted: { label: 'Interrupted', tone: 'crit' },
 }
 
-export const isActive = (s: SampledState) => s === 'queued' || s === 'running' || s === 'awaiting_roi'
+export const isActive = (s: SampledState) => s === 'queued' || s === 'running'
 
 /** Pipeline stages shown to the operator. "Preview" happens at upload time, before the job exists. */
 const PIPELINE: { key: SampledStage | 'preview'; label: string }[] = [
   { key: 'received', label: 'Received' }, { key: 'validating', label: 'Validating' }, { key: 'preview', label: 'Preview' },
-  { key: 'sampling', label: 'Sampling frames' }, { key: 'identifying_roi', label: 'Identifying ROI' },
-  { key: 'roi_confirmation', label: 'ROI confirmation' }, { key: 'analysing', label: 'Analysing' },
+  { key: 'sampling', label: 'Sampling frames' }, { key: 'analysing', label: 'Analysing' },
   { key: 'generating_images', label: 'Generating images' }, { key: 'generating_csv', label: 'Generating CSV' },
   { key: 'completed', label: 'Completed' },
 ]
@@ -56,10 +53,9 @@ export function StageList({ job }: { job: SampledJob }) {
               done ? 'border-ok/40 bg-ok-bg text-ok' : stopped ? 'border-crit/40 bg-crit-bg text-crit'
                 : now ? 'border-warn/40 bg-warn-bg text-warn' : 'border-line-strong text-fg-3')}>
               {done ? <Check className="size-3" aria-hidden /> : stopped ? <X className="size-3" aria-hidden />
-                : now && job.state !== 'awaiting_roi' ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <span className="text-[10px]">{i + 1}</span>}
+                : now ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <span className="text-[10px]">{i + 1}</span>}
             </span>
             <span className={cx(done ? 'text-fg-2' : now ? 'font-medium text-fg' : 'text-fg-3')}>{p.label}</span>
-            {now && job.state === 'awaiting_roi' && <Badge tone="warn" className="ml-auto">waiting for you</Badge>}
             {stopped && <Badge tone="crit" className="ml-auto">{STATE[job.state].label.toLowerCase()}</Badge>}
           </li>
         )
@@ -101,8 +97,6 @@ export function FrameCard({ frame, compact }: { frame: SampledFrame; compact?: b
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
           <Badge tone={frame.detection_count ? 'crit' : 'neutral'}>{frame.detection_count} litter</Badge>
-          {frame.roi_status && <Badge tone={frame.roi_status === 'confirmed' ? 'ok' : 'warn'}>ROI {frame.roi_status}</Badge>}
-          {frame.outside_roi_ignored ? <Badge>{frame.outside_roi_ignored} outside ROI ignored</Badge> : null}
         </div>
         {confirmed.length > 0 && (
           <ul className="flex flex-wrap gap-1.5">

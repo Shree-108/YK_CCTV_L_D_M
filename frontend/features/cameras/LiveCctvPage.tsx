@@ -13,7 +13,7 @@ import { Badge, Button, Field, Input, PageHeader, Panel, Select, type Tone } fro
 import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/states'
-import { RoiSetup, litterName } from '../detection/common'
+import { litterName } from '../detection/common'
 import { SchedulePanel } from './SchedulePanel'
 
 const NEW = '__new__'
@@ -110,7 +110,7 @@ export default function LiveCctvPage() {
   return (
     <div className="flex flex-col gap-3">
       <PageHeader title="Live CCTV"
-        description="Authenticated RTSP from an authorized NVR/camera on the local network or VPN. Live frames go through the same YOLO model, ROI filter, tracking and alert rules as Image and Video Analysis." />
+        description="Authenticated RTSP from an authorized NVR/camera on the local network or VPN. Live frames go through the same YOLO model, filters, tracking and alert rules as Image and Video Analysis." />
       {!isAdmin && (
         <div className="flex items-center gap-2 rounded-md border border-warn/40 bg-warn-bg px-3 py-2 text-[12px] text-warn">
           <ShieldCheck className="size-4" aria-hidden /> Configuring and starting a CCTV stream needs {loginOn ? 'an administrator account.' : 'the admin token.'}
@@ -155,7 +155,6 @@ export default function LiveCctvPage() {
             )}
           </Panel>
           {cam && <SchedulePanel cameraId={cam.id} cameraState={testCam ? `${st.label} (test source)` : st.label} />}
-          {cam && s?.state === 'online' && <LiveRoi cam={cam} />}
           {cam && <LiveEvents cameraId={cam.id} />}
         </div>
 
@@ -241,26 +240,6 @@ function TestResult({ r }: { r: CctvTestResult }) {
       </ul>
       {r.url && <p className="mt-1 break-all font-mono text-[10.5px] text-fg-3">{r.url}</p>}
     </div>
-  )
-}
-
-/** Per-camera outdoor ROI, drawn on a real frame from the stream (same editor as uploads). */
-function LiveRoi({ cam }: { cam: Camera }) {
-  const [frame, setFrame] = useState<{ src: string; w: number; h: number } | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    const u = url(`/api/cameras/${encodeURIComponent(cam.id)}/frame.jpg?raw=1&t=${Date.now()}`)
-    const img = new Image()
-    setFailed(false)
-    img.onload = () => setFrame({ src: u, w: img.naturalWidth, h: img.naturalHeight })
-    img.onerror = () => setFailed(true)
-    img.src = u
-  }, [cam.id])
-  return (
-    <Panel title="Detection ROI" subtitle="Only litter inside the outdoor ground area generates detections and events">
-      {frame ? <RoiSetup cameraId={cam.id} src={frame.src} width={frame.w} height={frame.h} />
-        : <p className="text-[12px] text-fg-3">{failed ? 'No frame available: start the stream, or ask an administrator.' : 'Loading a frame…'}</p>}
-    </Panel>
   )
 }
 

@@ -76,7 +76,7 @@ export default function LivePage() {
             <option value="issues">With issues ({all.filter((c) => c.enabled && c.status.state !== 'online').length})</option>
           </Select>
         )}
-        {([['detections', 'Detections'], ['ids', 'Track IDs'], ['confidence', 'Confidence'], ['roi', 'ROI'], ['weak', 'Weak boxes']] as const).map(([k, l]) => (
+        {([['detections', 'Detections'], ['ids', 'Track IDs'], ['confidence', 'Confidence'], ['weak', 'Weak boxes']] as const).map(([k, l]) => (
           <div key={k} className="w-[128px]"><Toggle label={l} checked={overlay[k]} onChange={(v) => setOverlay((o) => ({ ...o, [k]: v }))} /></div>
         ))}
         {pages > 1 && view === 'grid' && (

@@ -12,9 +12,9 @@ export interface NavGroup { label: string; items: NavItem[]; hidden?: boolean }
 // but remain reachable through the Ctrl+K command palette and in-page links.
 export const NAV: NavGroup[] = [
   { label: 'Workspace', items: [
-    { href: '/', label: 'Overview', icon: LayoutGrid, description: 'Summary of detections and alerts' },
+    { href: '/', label: 'Overview', icon: LayoutGrid, description: 'Litter events, trends, stores and recent analyses' },
     { href: '/detect/image', label: 'Image Analysis', icon: ImageIcon, description: 'Upload a CCTV image and detect litter' },
-    { href: '/detect/video', label: 'Video Analysis', icon: FileVideo, description: 'Upload a CCTV video and detect litter' },
+    { href: '/detect/video', label: 'Video Analysis', icon: FileVideo, description: 'Track litter through a whole CCTV video' },
     { href: '/alerts', label: 'Alerts', icon: AlertTriangle, badge: 'newAlerts', description: 'Detected litter incidents' },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, description: 'Detection trends and distributions' },
   ] },
@@ -25,7 +25,7 @@ export const NAV: NavGroup[] = [
   { label: 'Advanced', hidden: true, items: [
     { href: '/results', label: 'Results Dashboard', icon: FileBarChart, description: 'Four-screenshot video analyses: summary, CSV, monthly, history' },
     { href: '/live-cctv', label: 'Live CCTV', icon: Cctv, badge: 'online', description: 'Connect an authorized NVR/RTSP stream and detect litter live' },
-    { href: '/cameras', label: 'Camera Integration', icon: Camera, badge: 'cameras', description: 'Camera configuration, RTSP and ROI' },
+    { href: '/cameras', label: 'Camera Integration', icon: Camera, badge: 'cameras', description: 'Stores, cameras and RTSP configuration' },
     { href: '/help', label: 'Help Center', icon: LifeBuoy, description: 'How to use the litter detection workspace' },
     { href: '/history', label: 'History', icon: History, description: 'Searchable detection log' },
     { href: '/test-lab', label: 'Test Lab', icon: Microscope, description: 'Compare models on the same input' },

@@ -1,0 +1,279 @@
+diff --git a/backend/core/class_metadata.json b/backend/core/class_metadata.json
+index e9f1e46..00474ca 100644
+--- a/backend/core/class_metadata.json
++++ b/backend/core/class_metadata.json
+@@ -1,5 +1,5 @@
+ {
+-  "_comment": "Class metadata for all 25 legacy classes (preserved). The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
++  "_comment": "Class metadata for 28 classes: the 25 legacy classes (preserved; 7 of them are also classes of the v3_store_cctv model) plus 3 entries added on 2026-11-13 for v3_store_cctv classes that had none: cup, newspaper, plastic_piece. The ACTIVE model's own class list decides what can be detected; classes here without training data are simply never predicted.",
+   "classes": {
+     "chips_packet": {
+       "priority": "critical",
+@@ -53,6 +53,18 @@
+       "priority": "low",
+       "bin": "general"
+     },
++    "cup": {
++      "priority": "medium",
++      "bin": "general"
++    },
++    "newspaper": {
++      "priority": "medium",
++      "bin": "paper"
++    },
++    "plastic_piece": {
++      "priority": "medium",
++      "bin": "plastic"
++    },
+     "cigarette_butt": {
+       "priority": "high",
+       "bin": "general"
+@@ -116,14 +128,16 @@
+       "plastic_film",
+       "cigarette_packet",
+       "plastic_bag",
+-      "foil"
++      "foil",
++      "plastic_piece"
+     ],
+     "cups_containers": [
+       "plastic_cup",
+       "paper_cup",
+       "food_container",
+       "styrofoam",
+-      "lid"
++      "lid",
++      "cup"
+     ],
+     "bottles_cans": [
+       "plastic_bottle",
+@@ -136,7 +150,8 @@
+       "paper",
+       "cardboard",
+       "carton",
+-      "tissue"
++      "tissue",
++      "newspaper"
+     ],
+     "small_items": [
+       "cigarette_butt",
+diff --git a/tests/test_integration.py b/tests/test_integration.py
+index 3679d1e..9f14a82 100644
+--- a/tests/test_integration.py
++++ b/tests/test_integration.py
+@@ -123,18 +123,23 @@ def test_duplicate_prevention(tmp_path):
+     assert total == 3 and max(r["occurrences"] for r in rows) == 3
+ 
+ 
+-def test_v3_classes_missing_from_class_metadata_get_default_handling(tmp_path):
+-    """cup / newspaper / plastic_piece have no entry in class_metadata.json: they get the default priority 'medium'
+-    and no similarity group, so they never merge with another class. This test records the current behaviour."""
++def test_every_v3_class_has_explicit_metadata():
++    """All 10 v3 classes have an explicit priority, bin and similarity group (no silent defaults)."""
+     from backend.core.config import AppConfig
+     meta = ClassMetadata(AppConfig().class_metadata_path)
+-    missing = [c for c in V3_CLASSES if c not in meta.classes] if V3_CLASSES else []
+-    assert set(missing) <= {"cup", "newspaper", "plastic_piece"}
+-    for c in missing:
+-        assert meta.priority(c) == "medium" and not meta.similar(c, "plastic_bottle", "group")
+-    db, am = _alert_mgr(tmp_path)
+-    a = am.on_confirmed(_event(_frame(), cls="cup"), DetectionSettings())
+-    assert a and a["severity"] == "LOW"     # 'medium' priority matches no HIGH/MEDIUM rule
++    assert len(V3_CLASSES) == 10
++    for c in V3_CLASSES:
++        assert c in meta.classes, f"{c} missing from class_metadata.json"
++        assert meta.classes[c]["priority"] in ("critical", "high", "medium", "low")
++        assert meta.classes[c]["bin"] in ("general", "plastic", "paper", "metal", "glass")
++        assert c in meta._group_of, f"{c} has no similarity group"
++    # the three entries added for v3 (approved 2026-11-13): priority medium, existing groups only
++    expected = {"cup": ("general", "cups_containers"), "newspaper": ("paper", "paper_like"),
++                "plastic_piece": ("plastic", "soft_packaging")}
++    for c, (bin_, group) in expected.items():
++        assert meta.priority(c) == "medium" and meta.bin(c) == bin_ and meta._group_of[c] == group
++    assert set(meta.groups) == {"soft_packaging", "cups_containers", "bottles_cans", "paper_like", "small_items"}
++    assert set(meta.report_groups) == {"chips_packet", "wrapper", "plastic_packaging"}           # unchanged
+ 
+ 
+ def test_severity_rules_configurable(tmp_path):
+diff --git a/tests/test_alert_dedup_v3.py b/tests/test_alert_dedup_v3.py
+new file mode 100644
+index 0000000..01e9c85
+--- /dev/null
++++ b/tests/test_alert_dedup_v3.py
+@@ -0,0 +1,176 @@
++"""Alert severity and deduplication for the v3 classes, including cup / newspaper / plastic_piece.
++
++No model, no API: AlertManager on a temporary database with the project's class_metadata.json (read only).
++Dedup rule under test (backend/alerts/manager.py find_duplicate, defaults in backend/core/settings.py):
++same camera AND same job, existing alert last seen within 900 s, not a false positive, track not still visible,
++class equal or in the same similarity group, and IoU >= 0.30 OR centre distance <= 4 % of the frame diagonal.
++"""
++from __future__ import annotations
++
++import datetime as dt
++import json
++from pathlib import Path
++
++import numpy as np
++import pytest
++
++from backend.alerts.manager import AlertManager, ClassMetadata, ConfirmedEvent, compute_severity
++from backend.core.config import AppConfig
++from backend.core.settings import DetectionSettings
++from backend.database.db import Database, utcnow
++
++W, H = 1280, 720
++DIAG_4PCT = 0.04 * float(np.hypot(W, H))        # 58.7 px on a 1280x720 frame
++BOX = (100.0, 100.0, 150.0, 140.0)              # 50 x 40 px
++NEW_CLASSES = ("cup", "newspaper", "plastic_piece")
++
++
++@pytest.fixture
++def am(tmp_path):
++    db = Database(tmp_path / "alerts.db")
++    return AlertManager(db, tmp_path / "alerts", ClassMetadata(AppConfig().class_metadata_path))
++
++
++_FRAME = np.full((H, W, 3), 120, np.uint8)
++
++
++def ev(cls, track, box=BOX, camera="CAM01", job="job1", session="s1", conf=0.8, active=1, live=frozenset()):
++    return ConfirmedEvent(camera_id=camera, session_id=session, track_id=track, cls_name=cls, confidence=conf,
++                          bbox=list(box), frame=_FRAME, annotated=None, video_time_sec=1.0, first_seen_ts=utcnow(),
++                          hits=3, active_objects=active, job_id=job, live_track_ids=live)
++
++
++def shifted(dx, dy=0.0, box=BOX):
++    return (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
++
++
++def first_then(am, existing, new, **kw_new):
++    """Create an alert for `existing`, then confirm `new` (a different track). Returns (first alert, second result)."""
++    s = DetectionSettings()
++    a = am.on_confirmed(ev(existing, track=1), s)
++    assert a is not None
++    b = am.on_confirmed(ev(new, track=2, **kw_new), s)
++    return a, b
++
++
++# ------------------------------------------------------------------ severity: explicit 'medium' == previous default
++def _meta_without_new_entries(tmp_path) -> ClassMetadata:
++    """class_metadata.json as it was before the three entries were added (entries and group memberships removed)."""
++    d = json.loads(Path(AppConfig().class_metadata_path).read_text(encoding="utf-8"))
++    for c in NEW_CLASSES:
++        d["classes"].pop(c, None)
++        for members in d["similarity_groups"].values():
++            if c in members:
++                members.remove(c)
++    p = tmp_path / "old_meta.json"
++    p.write_text(json.dumps(d), encoding="utf-8")
++    return ClassMetadata(p)
++
++
++@pytest.mark.parametrize("cls", NEW_CLASSES)
++def test_new_entries_do_not_change_severity(cls, tmp_path):
++    new, old, s = ClassMetadata(AppConfig().class_metadata_path), _meta_without_new_entries(tmp_path), DetectionSettings()
++    assert old.priority(cls) == new.priority(cls) == "medium"
++    for conf in (0.30, 0.60, 0.75, 0.95):
++        for active in (0, 1, 4, 5, 9):
++            sev = compute_severity(cls, conf, active, s, new)
++            assert sev == compute_severity(cls, conf, active, s, old)          # identical to before the change
++            assert sev == ("HIGH" if active >= 5 else "LOW")                    # medium priority: LOW unless busy
++
++
++def test_severity_is_stored_and_not_recomputed(am):
++    a = am.on_confirmed(ev("newspaper", track=1), DetectionSettings())
++    assert a["severity"] == "LOW"
++    am.meta.classes["newspaper"] = {"priority": "critical", "bin": "paper"}   # later metadata change (in memory)
++    assert am.db.get_alert(a["id"])["severity"] == "LOW"                     # existing alert keeps its severity
++
++
++# ------------------------------------------------------------------ same group, same place -> one alert
++@pytest.mark.parametrize("existing,new", [
++    ("paper", "newspaper"), ("cardboard", "newspaper"), ("newspaper", "paper"), ("newspaper", "cardboard"),
++    ("food_wrapper", "plastic_piece"), ("plastic_bag", "plastic_piece"), ("plastic_packaging", "plastic_piece"),
++    ("plastic_piece", "food_wrapper"), ("plastic_piece", "plastic_bag"),
++    ("cup", "cup"),
++])
++def test_same_group_same_place_merges(am, existing, new):
++    a, b = first_then(am, existing, new, box=shifted(3, 2))                   # re-detected on the same spot
++    assert b is None
++    rows, total = am.db.list_alerts()
++    assert total == 1 and rows[0]["occurrences"] == 2 and rows[0]["class"] == existing
++
++
++# ------------------------------------------------------------------ different groups never merge
++@pytest.mark.parametrize("existing,new", [
++    ("plastic_bottle", "cup"), ("cup", "plastic_bottle"),
++    ("paper", "plastic_piece"), ("newspaper", "plastic_piece"), ("food_wrapper", "newspaper"),
++    ("cup", "newspaper"), ("cup", "plastic_piece"), ("other_litter", "plastic_piece"),
++])
++def test_different_groups_same_place_do_not_merge(am, existing, new):
++    a, b = first_then(am, existing, new, box=shifted(3, 2))
++    assert b is not None and b["class"] == new
++    assert am.db.list_alerts()[1] == 2
++
++
++# ------------------------------------------------------------------ camera / job / live-track separation
++def test_different_cameras_never_merge(am):
++    a, b = first_then(am, "paper", "newspaper", camera="CAM02")
++    assert b is not None and b["camera_id"] == "CAM02"
++
++
++@pytest.mark.parametrize("new_job", ["job2", None])        # another upload job, or a live stream (job None)
++def test_different_jobs_never_merge(am, new_job):
++    a, b = first_then(am, "plastic_bag", "plastic_piece", job=new_job)
++    assert b is not None
++
++
++def test_track_still_visible_is_a_separate_object(am):
++    a, b = first_then(am, "cup", "cup", live=frozenset({1}))                    # track 1 is still on screen
++    assert b is not None
++
++
++# ------------------------------------------------------------------ spatial condition
++@pytest.mark.parametrize("dx,merge", [
++    (0.8 * DIAG_4PCT, True),        # no overlap (IoU 0) but centres within 4 % of the diagonal
++    (1.2 * DIAG_4PCT, False),       # no overlap and centres beyond 4 %
++    (500.0, False),                 # far away
++])
++def test_same_group_merges_only_when_close(am, dx, merge):
++    a, b = first_then(am, "newspaper", "paper", box=shifted(dx))
++    assert (b is None) == merge
++
++
++def test_distant_objects_in_same_group_stay_separate(am):
++    s = DetectionSettings()
++    assert am.on_confirmed(ev("plastic_bag", 1, box=(100, 100, 150, 140)), s)
++    assert am.on_confirmed(ev("plastic_piece", 2, box=(700, 500, 750, 540)), s)
++    assert am.on_confirmed(ev("food_wrapper", 3, box=(1100, 150, 1150, 190)), s)
++    assert am.db.list_alerts()[1] == 3
++
++
++# ------------------------------------------------------------------ time window and false positives
++def _age_alert(am, alert_id, seconds):
++    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=seconds)).isoformat()
++    am.db.update_alert(alert_id, last_seen_ts=old)       # temporary test database only
++
++
++@pytest.mark.parametrize("age,merge", [(880, True), (920, False)])
++def test_900_second_window(am, age, merge):
++    s = DetectionSettings()
++    a = am.on_confirmed(ev("paper", 1), s)
++    _age_alert(am, a["id"], age)
++    b = am.on_confirmed(ev("newspaper", 2, box=shifted(3, 2)), s)
++    assert (b is None) == merge
++
++
++def test_false_positive_alerts_are_not_merged_into(am):
++    s = DetectionSettings()
++    a = am.on_confirmed(ev("plastic_bag", 1), s)
++    am.db.update_alert(a["id"], status="false_positive")
++    assert am.on_confirmed(ev("plastic_piece", 2, box=shifted(3, 2)), s) is not None
++
++
++def test_same_track_never_alerts_twice(am):
++    s = DetectionSettings()
++    assert am.on_confirmed(ev("cup", 1), s)
++    assert am.on_confirmed(ev("cup", 1, box=shifted(400)), s) is None           # one alert per track
++    assert am.db.list_alerts()[1] == 1

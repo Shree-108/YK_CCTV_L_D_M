@@ -2,7 +2,7 @@
 
 Per camera: wait a random time between ``min_minutes`` and ``max_minutes``, grab ONE frame, run the
 camera's model (outdoor litter or indoor uniform) through the existing ``detect_image`` pipeline
-(ROI, confidence tiers, alert de-duplication), and store original + annotated image + result.
+(full frame, confidence tiers, alert de-duplication), and store original + annotated image + result.
 
 * One background thread for all cameras; a per-camera lock means a scheduled capture and
   "Capture Now" never overlap.
@@ -301,17 +301,13 @@ class CaptureScheduler:
                 window = max(settings.alerts.dedup_window_sec, cfg["max_minutes"] * 60 * 2)
                 settings = settings.model_copy(update={"alerts": settings.alerts.model_copy(update={
                     "dedup_window_sec": window, "alert_on_image_uploads": True})})
-                roi = st.roi_for(cam, cam_id) if cfg["task"] == "litter" else None
-                if cfg["task"] != "litter":            # pavement-only mode is for litter; other models are unaffected
-                    settings = settings.model_copy(update={"pavement": settings.pavement.model_copy(update={"enabled": False})})
-                res = detect_image(engine, frame, settings, roi, st.meta, st.db, st.alerts, cam_id, f"capture {cap_id}",
-                                   job_id=f"schedule:{cam_id}", camera_registered=True)
+                res = detect_image(engine, frame, settings, st.meta, st.db, st.alerts, cam_id, f"capture {cap_id}",
+                                   job_id=f"schedule:{cam_id}")
                 cv2.imwrite(str(out / "annotated.jpg"), res.pop("annotated"), [cv2.IMWRITE_JPEG_QUALITY, 90])
                 fields.update(status="done", model_version=res["model_version"], annotated_path=str(out / "annotated.jpg"),
                               counts={**res["counts"], "by_class": res["by_class"],
                                       "highest_confidence": res.get("highest_confidence"),
-                                      "average_confidence": res.get("average_confidence"),
-                                      "outside_roi_ignored": res.get("outside_roi_ignored", 0)},
+                                      "average_confidence": res.get("average_confidence")},
                               detections=res["detections"], alert_ids=[a["id"] for a in res["alerts"]])
                 (out / "result.json").write_text(json.dumps({k: v for k, v in res.items()}, indent=1), encoding="utf-8")
         except CaptureError as exc:        # camera problem: recorded, inference skipped, never raised

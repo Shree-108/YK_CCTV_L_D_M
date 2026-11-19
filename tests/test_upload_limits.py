@@ -62,7 +62,9 @@ def test_normal_image_still_works_after_rejection(client, cfg, litter_image):
     assert len(small) < MB
     r = client.post("/api/detect/image", files={"file": ("ok.jpg", small, "image/jpeg")},
                     data={"create_alerts": "false", "return_image": "false"})
-    assert r.status_code == 200 and r.json()["count"] >= 1
+    # still analysed after the rejection, on the whole frame (no ROI, no camera needed): litter is confirmed
+    assert r.status_code == 200 and r.json()["count"] >= 1 and r.json()["counts"]["raw"] >= 1
+    assert "roi_status" not in r.json()
     assert _leftovers(cfg) == []                                  # the processed upload is removed too
 
 

@@ -1,41 +1,47 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Columns2, Eye, ImageIcon, Layers, Play, RotateCcw, ScanSearch } from 'lucide-react'
+import { Columns2, Eye, FileDown, ImageIcon, Layers, ListChecks, Play, RotateCcw, ScanSearch } from 'lucide-react'
 import { Api } from '../../api/endpoints'
 import type { Detection, ImageDetectResult } from '../../api/types'
 import { invalidate, useQuery } from '../../hooks/useQuery'
-import { className as cls, cx, num, pct, time } from '../../lib/format'
+import { cx, num } from '../../lib/format'
+import { confidenceText, detectionStatusOf } from '../../lib/litter'
 import { lockedFor, useApp } from '../../stores/app'
-import { Badge, Button, PageHeader, Panel, Segmented, StatusBadge, Toggle } from '../../components/ui/primitives'
+import { Button, PageHeader, Panel, Segmented, Toggle } from '../../components/ui/primitives'
 import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
-import { AspectBox, ImageOverlay, STATUS_COLOR, type OverlayBox } from '../../components/vision/Overlay'
-import { DetectionSettingsForm, DropZone, FileInfo, RoiSetup, Steps, fileExt, fileSize, litterName, toForm, type DetectConfig } from './common'
+import { AspectBox, ImageOverlay, type OverlayBox } from '../../components/vision/Overlay'
+import { StoreCameraSelect, type StoreCamera } from '../stores/StoreCameraSelect'
+import { ConfidenceCell, DetectionStatusBadge, Downloads, IdentityBlock, ProcessingBanner } from './AnalysisOutputs'
+import { DetectionSettingsForm, DropZone, FileInfo, Steps, fileExt, fileSize, litterName, toForm, type DetectConfig } from './common'
 
 type View = 'annotated' | 'original' | 'compare'
+type Row = Detection & { _i: number; _status: string }
 
-const LITTER_COLOR = '#ff5a1f'
+/** Box colour per detection status: DETECTED solid orange, UNDER_REVIEW dashed amber, REJECTED dashed grey. */
+const BOX: Record<string, { color: string; dashed: boolean; thin: boolean }> = {
+  DETECTED: { color: '#ff5a1f', dashed: false, thin: false },
+  UNDER_REVIEW: { color: 'var(--warn)', dashed: true, thin: true },
+  REJECTED: { color: 'var(--fg-3)', dashed: true, thin: true },
+}
 
 export default function ImageDetectionPage() {
   const { toast, canOperate, role, loginOn } = useApp()
   const opLock = lockedFor('operator', role, loginOn)
   const settings = useQuery('settings', Api.settings)
-  const classes = useQuery('classes', Api.classes)
-  const classInfo = useMemo(() => Object.fromEntries((classes.data?.classes ?? []).map((c) => [c.name, c])), [classes.data])
   const [file, setFile] = useState<File | null>(null)
   const [src, setSrc] = useState<string | null>(null)
   const [dims, setDims] = useState<[number, number]>([0, 0])
-  const [cfg, setCfg] = useState<DetectConfig>({ model_version: '', confidence: 0.6, image_size: '', tiling: 'auto', camera_id: 'upload', use_roi: true })
+  const [cfg, setCfg] = useState<DetectConfig>({ model_version: '', confidence: 0.6, image_size: '', tiling: 'auto' })
+  const [who, setWho] = useState<StoreCamera>({ store_id: '', camera_id: '' })
   const [createAlerts, setCreateAlerts] = useState(false)
   const [result, setResult] = useState<ImageDetectResult | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [pending, setPending] = useState(false)
   const [view, setView] = useState<View>('annotated')
-  const [showRejected, setShowRejected] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
-  const [detectedAt, setDetectedAt] = useState<string | null>(null)
 
   useEffect(() => {
     const t = settings.data?.settings.confidence.confirmed_threshold
@@ -59,11 +65,11 @@ export default function ImageDetectionPage() {
     setPending(true)
     setError(null)
     try {
-      const r = await Api.detectImage(toForm(file, cfg, { create_alerts: String(createAlerts), return_image: 'false' }))
+      const r = await Api.detectImage(toForm(file, cfg, who, { create_alerts: String(createAlerts), return_image: 'false', save_outputs: 'true' }))
       setResult(r)
-      setDetectedAt(new Date().toISOString())
       setSelected(null)
-      if (r.alerts.length) { toast({ tone: 'warn', title: `${r.alerts.length} alert(s) created`, body: `Camera ${r.camera_id}` }); invalidate('alerts') }
+      invalidate('litter')
+      if (r.alerts.length) { toast({ tone: 'warn', title: `${r.alerts.length} alert(s) created` }); invalidate('alerts') }
     } catch (e) {
       setError(e as Error)
     } finally {
@@ -71,22 +77,25 @@ export default function ImageDetectionPage() {
     }
   }
 
-  const dets = useMemo(() => (result?.detections ?? []).map((d, i) => ({ ...d, _i: i })), [result])
-  const boxes: OverlayBox[] = useMemo(() => dets
-    .filter((d) => showRejected || d.status === 'confirmed')
-    .map((d) => ({
-      key: d._i, bbox: d.bbox, color: d.status === 'confirmed' ? LITTER_COLOR : STATUS_COLOR[d.status], dashed: d.status === 'candidate', thin: d.status !== 'confirmed',
-      label: d.status === 'weak' || d.status === 'rejected' ? undefined : litterName(d.class), sub: pct(d.confidence, 0),
+  const rows: Row[] = useMemo(() => (result?.detections ?? []).map((d, i) => ({ ...d, _i: i, _status: detectionStatusOf(d) })), [result])
+  const boxes: OverlayBox[] = useMemo(() => rows.map((d) => {
+    const b = BOX[d._status] ?? BOX.UNDER_REVIEW
+    return {
+      key: d._i, bbox: d.bbox, color: b.color, dashed: b.dashed, thin: b.thin,
+      label: d._status === 'REJECTED' ? undefined : `${d._i + 1} ${litterName(d.class)}`, sub: d.confidence.toFixed(2),
       selected: selected === d._i, onClick: () => setSelected(d._i),
-    })), [dets, showRejected, selected])
+    }
+  }), [rows, selected])
+  const count = (s: string) => rows.filter((r) => r._status === s).length
 
   const [w, h] = result?.image_size ?? dims
-
+  const a = result?.analysis
+  const stamp = a?.analysis_id ?? 'image'
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="Image Analysis" description="Litter is detected only inside the ROI. A still image has no temporal evidence, so an object counts as litter when it reaches the confirmed threshold." />
+      <PageHeader title="Image Analysis" description="The whole image is analysed. Every detection the model returns is listed with its confidence and status: only DETECTED objects count as litter events; UNDER REVIEW and REJECTED are shown for transparency." />
       <div className="rounded-xl border border-line bg-panel px-4 py-3">
-        <Steps steps={['Upload image', 'Define ROI (optional)', 'Analyze', 'Review results']} current={!file ? 0 : result ? 3 : pending ? 2 : 1} />
+        <Steps steps={['Upload image', 'Store & camera', 'Analyze', 'Review results']} current={!file ? 0 : result ? 3 : pending ? 2 : 1} />
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Panel title={file ? file.name : 'Image'} icon={ImageIcon} noPad
@@ -97,68 +106,84 @@ export default function ImageDetectionPage() {
           </>}>
           <div className="flex flex-col gap-3 p-3">
             {!file ? <DropZone accept="image/jpeg,image/png,image/webp,image/bmp" onFile={onFile} label="Drag and drop a CCTV image here" hint="JPEG, PNG, WebP or BMP · the server enforces the size limit" /> : (<>
-              <FileInfo items={[
-                ['File name', file.name], ['Size', fileSize(file.size)], ['Format', fileExt(file)],
-                ['Resolution', w && h ? `${w} × ${h}px` : '—'],
-              ]} />
+              <FileInfo items={[['File name', file.name], ['Size', fileSize(file.size)], ['Format', fileExt(file)], ['Resolution', w && h ? `${w} × ${h}px` : '—']]} />
               <div className={cx('grid gap-2', view === 'compare' && 'md:grid-cols-2')}>
-                {(view === 'compare' || view === 'original') && (
+                {view !== 'annotated' && (
                   <AspectBox width={w} height={h} className="overflow-hidden rounded-md border border-line">
                     <ImageOverlay src={src} width={w} height={h} className="absolute inset-0" alt="Original image" />
                   </AspectBox>
                 )}
-                {view === 'compare' && (
+                {view !== 'original' && (
                   <AspectBox width={w} height={h} className="overflow-hidden rounded-md border border-line">
-                    <ImageOverlay src={src} width={w} height={h} boxes={result ? boxes : []} className="absolute inset-0" alt="Image with detections" />
+                    <ImageOverlay src={src} width={w} height={h} boxes={result ? boxes : []} className="absolute inset-0" alt="Image with every detection" />
                   </AspectBox>
                 )}
-                {view === 'annotated' && <RoiSetup cameraId={cfg.camera_id} src={src} width={w} height={h} boxes={result ? boxes : []} disabled={pending} />}
               </div>
+              {result && <BoxLegend />}
             </>)}
           </div>
         </Panel>
-        <Panel title="Detection settings" icon={Layers}>
-          <DetectionSettingsForm cfg={cfg} setCfg={setCfg}>
-            <Toggle label="Create alerts" checked={createAlerts} onChange={setCreateAlerts} description="Off = test only (detections are still logged)." />
-            <Button variant="primary" icon={Play} disabled={!file || !canOperate} title={opLock} loading={pending} onClick={run} className="mt-1 w-full">Analyze Image</Button>
-          </DetectionSettingsForm>
+        <Panel title="Analysis settings" icon={Layers}>
+          <div className="flex flex-col gap-3.5">
+            <StoreCameraSelect value={who} onChange={setWho} disabled={pending} />
+            <DetectionSettingsForm cfg={cfg} setCfg={setCfg}>
+              <Toggle label="Create alerts" checked={createAlerts} onChange={setCreateAlerts} description="Off = test only (detections are still recorded)." />
+              <Button variant="primary" icon={Play} disabled={!file || !canOperate} title={opLock} loading={pending} onClick={run} className="mt-1 w-full">Analyze Image</Button>
+            </DetectionSettingsForm>
+          </div>
         </Panel>
       </div>
 
-      {error && <Panel><ErrorState error={error} onRetry={run} title="Detection failed" compact /></Panel>}
+      {error && <Panel><ErrorState error={error} onRetry={run} title="Analysis failed" compact /></Panel>}
       {result && (
-        <Panel title="Detection results" subtitle={`model ${result.model_version} · ${result.tiled ? `${result.tiles} tiles` : 'full frame'} · ${result.image_size.join('×')}px`}
-          actions={<Toggle label="Show low-confidence & ignored" checked={showRejected} onChange={setShowRejected} />} noPad>
-          <div className="grid grid-cols-2 gap-2.5 p-4 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Litter detected" value={result.counts.confirmed} tone={result.counts.confirmed ? 'crit' : 'ok'} />
-            <MetricCard label="Litter types" value={Object.keys(result.by_class).length} hint={Object.entries(result.by_class).map(([k, v]) => `${v}× ${litterName(k)}`).join(', ') || '—'} />
-            <MetricCard label="Highest confidence" value={result.highest_confidence != null ? pct(result.highest_confidence, 0) : '—'} />
-            <MetricCard label="Average confidence" value={result.average_confidence != null ? pct(result.average_confidence, 0) : '—'} />
-            <MetricCard label="Inside ROI" value={result.roi_active ? result.counts.confirmed : '—'} hint={result.roi_active ? `${num(result.outside_roi_ignored ?? 0)} outside-ROI ignored` : 'ROI not set'} />
-            <MetricCard label="Inference time" value={`${num(result.inference_ms, 0)} ms`} />
+        <Panel title="Analysis result" icon={FileDown} subtitle={`${a?.analysis_id ?? 'not saved'} · model ${result.model_version} · ${result.tiled ? `${result.tiles} tiles` : 'full frame'} · ${result.image_size.join('×')}px`}>
+          <div className="flex flex-col gap-3">
+            <ProcessingBanner status={a?.processing_status ?? (count('DETECTED') ? 'COMPLETED_LITTER_DETECTED' : 'COMPLETED_NO_LITTER_DETECTED')} />
+            <IdentityBlock identity={result.identity} />
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
+              <MetricCard label="Litter events (DETECTED)" value={a?.unique_events ?? count('DETECTED')} tone={count('DETECTED') ? 'crit' : undefined} />
+              <MetricCard label="Under review" value={count('UNDER_REVIEW')} tone={count('UNDER_REVIEW') ? 'warn' : undefined} hint="not counted as events" />
+              <MetricCard label="Rejected" value={count('REJECTED')} hint="removed by a filter" />
+              <MetricCard label="All detections" value={rows.length} />
+              <MetricCard label="Highest confidence" value={result.highest_confidence != null ? confidenceText(result.highest_confidence) : '—'} />
+              <MetricCard label="Inference time" value={`${num(result.inference_ms, 0)} ms`} />
+            </div>
+            <Downloads items={[
+              { label: 'Detections CSV', path: a?.urls.detections_csv, filename: `${stamp}_detections.csv` },
+              { label: 'Summary CSV', path: a?.urls.summary_csv, filename: `${stamp}_summary.csv` },
+              { label: 'Annotated image', path: a?.urls.annotated, filename: `${stamp}_annotated.jpg` },
+              { label: 'Metadata', path: a?.urls.metadata, filename: `${stamp}_metadata.json` },
+            ]} />
           </div>
-          <DataTable<Detection & { _i: number }> rows={dets.filter((d) => showRejected || d.status === 'confirmed')} rowKey={(d) => d._i} selectedKey={selected}
-            onRowClick={(d) => setSelected(d._i)} dense
-            empty={<EmptyState compact title="No litter detected" body="Nothing inside the ROI reached the confirmed threshold. Turn on “Show low-confidence & ignored” to see weaker or outside-ROI detections." />}
+        </Panel>
+      )}
+      {result && (
+        <Panel title="Every detection" icon={ListChecks} subtitle="Numbers match the labels on the image; click a row to highlight its box" noPad>
+          <DataTable<Row> rows={rows} rowKey={(d) => d._i} selectedKey={selected} onRowClick={(d) => setSelected(d._i)} dense pageSize={50}
+            empty={<EmptyState compact title="No litter detected by the model" body="The model returned no detection above the weak threshold. This is not a guarantee that the area is litter-free." />}
             columns={[
-              { key: 'n', header: '#', cell: (d) => <span className="text-fg-3">{d._i + 1}</span>, width: '40px' },
-              { key: 'class', header: 'Litter category', cell: (d) => (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-2 px-2.5 py-0.5 text-[12.5px] font-medium text-fg">
-                  <span className="size-2 rounded-full" style={{ background: d.status === 'confirmed' ? LITTER_COLOR : STATUS_COLOR[d.status] }} aria-hidden />{litterName(d.class)}
-                </span>), sortValue: (d) => d.class },
-              { key: 'conf', header: 'Confidence', cell: (d) => (
-                <span className="flex items-center gap-2.5">
-                  <span className="h-1.5 w-24 overflow-hidden rounded-full bg-panel-2"><span className={cx('block h-full rounded-full', d.confidence >= 0.75 ? 'bg-ok' : d.confidence >= 0.5 ? 'bg-warn' : 'bg-fg-3')} style={{ width: `${d.confidence * 100}%` }} /></span>
-                  <span className="tabular text-fg">{pct(d.confidence, 1)}</span>
-                </span>), sortValue: (d) => d.confidence },
-              { key: 'prio', header: 'Priority', cell: (d) => { const p = classInfo[d.class]?.priority ?? 'medium'; return <Badge tone={p === 'critical' ? 'crit' : p === 'high' ? 'warn' : p === 'medium' ? 'info' : 'ok'} dot>{p[0].toUpperCase() + p.slice(1)}</Badge> }, sortValue: (d) => ({ critical: 4, high: 3, medium: 2, low: 1 } as Record<string, number>)[classInfo[d.class]?.priority ?? 'medium'] },
-              { key: 'loc', header: 'Location / Area', cell: (d) => <span><span className="text-fg">{region(d.bbox, w, h)}</span> <span className="text-fg-3">· {Math.round((d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1])).toLocaleString()} px²</span></span>, sortValue: (d) => (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]) },
-              { key: 'time', header: 'Detection time', cell: () => <span className="text-fg-2">{detectedAt ? time(detectedAt) : '—'}</span> },
-              { key: 'status', header: 'Status', cell: (d) => <StatusBadge status={d.status} />, sortValue: (d) => d.status, hideable: true },
-              { key: 'reason', header: 'Reason', cell: (d) => d.reason ? <Badge>{d.reason.replace(/_/g, ' ')}</Badge> : '—', hideable: true, defaultHidden: true },
+              { key: 'n', header: '#', cell: (d) => <span className="text-fg-3">{d._i + 1}</span>, width: '44px', sortValue: (d) => d._i },
+              { key: 'class', header: 'Class', cell: (d) => <span className="font-medium text-fg">{litterName(d.class)}</span>, sortValue: (d) => d.class },
+              { key: 'conf', header: 'Confidence', cell: (d) => <ConfidenceCell value={d.confidence} />, sortValue: (d) => d.confidence },
+              { key: 'status', header: 'Status', cell: (d) => <DetectionStatusBadge status={d._status} reason={d.reason} />, sortValue: (d) => d._status },
+              { key: 'loc', header: 'Position', cell: (d) => <span><span className="text-fg">{region(d.bbox, w, h)}</span> <span className="text-fg-3">· {Math.round((d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1])).toLocaleString()} px²</span></span>, sortValue: (d) => (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]) },
+              { key: 'event', header: 'Event', cell: (d) => d.event_id ? <span className="font-mono text-[11.5px]">{d.event_id}</span> : <span className="text-fg-3">—</span>, hideable: true },
             ]} />
         </Panel>
       )}
+    </div>
+  )
+}
+
+function BoxLegend() {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-fg-3">
+      {Object.entries(BOX).map(([k, b]) => (
+        <span key={k} className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-[2px] border-2" style={{ borderColor: b.color, borderStyle: b.dashed ? 'dashed' : 'solid' }} aria-hidden />
+          {k.replace('_', ' ')}
+        </span>
+      ))}
     </div>
   )
 }

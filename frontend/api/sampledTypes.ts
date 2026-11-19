@@ -1,35 +1,14 @@
 // Four-screenshot video analysis (/api/sampled). Mirrors backend/sampling/reports.py public shapes.
-import type { Detection, RoiZone } from './types'
+import type { AnalysisInfo, Detection, Identity } from './types'
 import type { Lifecycle } from '../lib/autoAnalysis'
 
 /** A detection of a sampled screenshot: model output plus severity, estimated object and alert (when created). */
-export type SampledDetection = Detection & {
-  severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number
-  // pavement-only mode (backend/detection/pavement.py)
-  outcome?: PavementOutcome; outcome_reason?: string
-  geometry?: { membership?: string; zone?: string | null; size_ok?: boolean; min_side_frac?: number; area_frac?: number }
-}
+export type SampledDetection = Detection & { severity?: 'HIGH' | 'MEDIUM' | 'LOW'; object_id?: string; alert_id?: number }
 
-export type PavementOutcome = 'CONFIRMED_LITTER' | 'SMALL_OR_WEAK_CANDIDATE' | 'REJECTED_OUTSIDE_ROI' | 'REJECTED_FILTER'
-  | 'UNVERIFIED_ROI_NOT_CONFIGURED' | 'GENERAL_CONFIRMED' | 'GENERAL_CANDIDATE'
-/** Analysis mode: CAMERA_ROI_MODE is the only pavement-validated one. */
-export type PavementStatus = 'CAMERA_ROI_MODE' | 'GENERAL_IMAGE_MODE' | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
-
-/** Present on a screenshot result only when pavement-only mode is on. Counts are per outcome (lower-case keys). */
-export interface PavementResult {
-  status: PavementStatus
-  mode: PavementStatus
-  pavement_validated: boolean
-  note: string
-  camera_id: string | null
-  counts: Record<Lowercase<PavementOutcome> | 'raw', number>
-}
-
-export type SampledState = 'queued' | 'running' | 'awaiting_roi' | 'done' | 'failed' | 'cancelled' | 'interrupted'
-export type SampledStage = 'received' | 'validating' | 'sampling' | 'identifying_roi' | 'roi_confirmation' | 'analysing'
-  | 'generating_images' | 'generating_csv' | 'completed'
-export type FrameOutcome = 'LITTER_DETECTED' | 'NO_LITTER' | 'ROI_UNCERTAIN' | 'UNREADABLE' | 'FAILED'
-  | 'ROI_NOT_CONFIGURED' | 'ROI_FRAME_MISMATCH'
+export type SampledState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted'
+export type SampledStage = 'received' | 'validating' | 'sampling' | 'analysing' | 'generating_images' | 'generating_csv' | 'completed'
+/** NO_LITTER = the model detected no litter on the screenshot (shown as "No litter detected by the model", never "clean"). */
+export type FrameOutcome = 'LITTER_DETECTED' | 'NO_LITTER' | 'UNREADABLE' | 'FAILED'
 
 export interface SampledMedia {
   id: string
@@ -61,8 +40,6 @@ export interface SampledFrame {
   recording_timestamp: string | null
   status: 'planned' | 'saved' | 'unreadable' | 'failed'
   outcome: FrameOutcome | null
-  roi_status: string | null
-  roi: RoiZone[] | null
   detection_count: number
   error: string | null
   original_url: string | null
@@ -74,34 +51,12 @@ export interface SampledFrame {
   alert_ids: number[]
   inference_ms: number | null
   image_size: [number, number] | null
-  outside_roi_ignored: number | null
-  /** Set when an ROI with a ground area was applied: every raw detection classified by its ground-contact point. */
-  roi_counts?: RoiCounts | null
   planned_frame_idx: number | null
   sampling_note: string | null
   download_original_url: string | null
   download_annotated_url: string | null
-  pavement?: PavementResult | null
   diagnostic_url?: string | null
 }
-
-export interface RoiCounts { raw: number; inside_roi: number; outside_roi: number; review_required: number; confirmed: number }
-
-export interface RoiPolicy {
-  status: 'APPROVED' | 'NOT_CONFIGURED' | 'DISABLED_IN_SETTINGS' | 'REVALIDATION_REQUIRED'
-  source: 'REGISTERED_CAMERA' | 'SAVED_CAMERA_ROI' | 'FULL_FRAME_FALLBACK' | 'OPERATOR_APPROVED_FOR_JOB'
-  zones: RoiZone[]
-  name: string
-  configuration_id: string
-  note: string
-  approved: boolean
-  /** [w, h] of the screenshot the ROI was drawn on (when known) */
-  reference_size?: [number, number] | null
-  reference_idx?: number
-  approved_at?: string
-}
-
-export interface RoiApproveBody { zones: RoiZone[]; reference_idx: number; save_for_camera?: boolean }
 
 /** analysis_summary.csv / .json of a job (backend/sampling/detection_report.py SUMMARY_FIELDS). */
 export interface SampledReportSummary {
@@ -120,24 +75,9 @@ export interface SampledReportSummary {
   total_medium_severity: number
   total_low_severity: number
   possible_litter_objects: number
-  outside_roi_detections: number
-  roi_status: string
-  roi_source: string
   alerts_created: number
   overall_analysis_status: string
   review_required: 'TRUE' | 'FALSE'
-  note: string
-}
-
-export interface RoiProposal {
-  available: boolean
-  method: string
-  zones: RoiZone[]
-  confidence: number | null
-  status: 'proposed' | 'uncertain' | 'unavailable'
-  static_view: boolean | null
-  view_similarity: number[][]
-  frames: { idx: number; zones: RoiZone[]; confidence: number; ground_share: number; indoor_share: number; labels: Record<string, number> }[]
   note: string
 }
 
@@ -156,14 +96,7 @@ export interface SampledJob {
   recording_start: string | null
   seed: number
   sample_count: number
-  roi_mode: 'auto' | 'camera' | 'manual'
-  auto_accept: boolean
   create_alerts: boolean
-  roi: RoiZone[] | null
-  roi_source: 'auto' | 'camera' | 'manual' | 'whole_frame' | 'registered_camera' | 'saved_camera_roi' | 'full_frame_fallback' | null
-  roi_status: 'pending' | 'proposed' | 'uncertain' | 'confirmed' | 'approved' | 'not_configured' | 'disabled_in_settings'
-  roi_confidence: number | null
-  proposal: { proposal: RoiProposal; prefill: RoiZone[]; prefill_source: 'auto' | 'camera' | null } | null
   model_version: string | null
   counts: null | {
     plan?: { idx: number; frame: number; seconds: number; segment: [number, number] }[]
@@ -177,7 +110,9 @@ export interface SampledJob {
   sampling: 'random_quarters' | 'fixed_pct'
   lifecycle: Lifecycle
   reports: { detection_csv: string; summary_csv: string; summary_json: string } | null
-  roi_policy: RoiPolicy | null
+  /** standard-format outputs (`<...>_detections.csv`, `<...>_summary.csv`, metadata) of the job */
+  standard_outputs?: AnalysisInfo | null
+  identity?: Identity | null
   summary: SampledReportSummary | null
 }
 
@@ -188,7 +123,6 @@ export interface SampledSummary {
   analyses_failed: number
   analyses_cancelled: number
   analyses_in_progress: number
-  awaiting_roi: number
   screenshots_extracted: number
   screenshots_analysed: number
   total_litter: number
@@ -207,8 +141,6 @@ export interface SampledAnalysisRow {
   stage: SampledStage
   error: string | null
   duration_sec: number | null
-  roi_status: string | null
-  roi_source: string | null
   screenshots_extracted: number
   screenshots_analysed: number
   litter: number
@@ -270,18 +202,8 @@ export interface SampledCreateBody {
   camera_id?: string
   recording_start?: string
   seed?: number
-  roi_mode: 'auto' | 'camera' | 'manual'
-  auto_accept: boolean
   create_alerts: boolean
   model_version?: string
   new_run?: boolean
   mode?: 'manual' | 'auto'
-}
-
-export interface RoiConfirmBody {
-  zones: RoiZone[]
-  frame_zones?: Record<number, RoiZone[]>
-  skip_frames?: number[]
-  whole_frame?: boolean
-  save_for_camera?: boolean
 }

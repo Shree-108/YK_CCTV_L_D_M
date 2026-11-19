@@ -1,0 +1,13 @@
+Applied 2026-11-16 to HEAD 5c33a72 (security/step1-local-only), not committed.
+Patch sha256 cc8fa0d25e8d0c7b0b6c02ca9910a4474b2bda3910052251abc92b5581c29480 = applied working-tree diff sha256 (byte-identical).
+Backend: 394 passed, 7 skipped in 810.74s (0:13:30)
+Frontend: 27/27 passed; tsc --noEmit exit 0
+Mode rules (temp DB, real API):
+PASS  no camera ID                             -> GENERAL_IMAGE_MODE   confirmed=19 raw=21
+PASS  registered camera + approved ROI         -> CAMERA_ROI_MODE      confirmed=15 raw=21
+PASS  named but unregistered camera ID         -> ROI_NOT_CONFIGURED   confirmed= 0 raw=21
+PASS  ROI record without registered camera     -> ROI_NOT_CONFIGURED   confirmed= 0 raw=21
+PASS  registered camera without ROI            -> ROI_NOT_CONFIGURED   confirmed= 0 raw=21
+PASS  incorrect frame dimensions               -> ROI_FRAME_MISMATCH   confirmed= 0 raw=21
+ALL_MODE_RULES_OK
+Regression: pavement_regression_results_applied.json identical to reviewed run (every detection, both cameras).

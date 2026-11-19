@@ -76,7 +76,7 @@ export default function SettingsPage() {
           {tab === 'appearance' && <Appearance />}
           {tab === 'security' && <Security />}
           {tab === 'notifications' && <Notifications />}
-          {tab === 'cameras' && <Section title="Cameras"><p className="text-[13px] text-fg-2">Camera sources, ROI zones and per-camera overrides are managed on the <Link href="/cameras" className="text-info hover:underline">Cameras</Link> page.</p></Section>}
+          {tab === 'cameras' && <Section title="Cameras"><p className="text-[13px] text-fg-2">Stores, camera sources and per-camera overrides are managed on the <Link href="/cameras" className="text-info hover:underline">Cameras</Link> page.</p></Section>}
           {tab === 'models' && <Section title="Models"><p className="text-[13px] text-fg-2">Deployment, rollback and registration are in the <Link href="/model-lab" className="text-info hover:underline">Model Lab</Link>; the operating threshold can be applied from the <Link href="/evaluation" className="text-info hover:underline">Evaluation → Threshold lab</Link>.</p></Section>}
           {detectionTabs.includes(tab) && (q.error && !q.data ? <ErrorState error={q.error} onRetry={q.refetch} /> : !draft ? <LoadingState rows={6} /> : (
             <fieldset disabled={!isAdmin} className="flex flex-col gap-3">
@@ -114,11 +114,8 @@ export default function SettingsPage() {
                     <Field label="Min box area" hint="px²"><Input type="number" min={0} value={draft.filters.min_box_area_px} onChange={(e) => set('filters', { min_box_area_px: Number(e.target.value) })} /></Field>
                     <Field label="Max box area" hint="fraction of frame"><Input type="number" step={0.01} min={0.01} max={1} value={draft.filters.max_box_area_frac} onChange={(e) => set('filters', { max_box_area_frac: Number(e.target.value) })} /></Field>
                     <Field label="Max aspect ratio"><Input type="number" min={1} value={draft.filters.max_aspect_ratio} onChange={(e) => set('filters', { max_aspect_ratio: Number(e.target.value) })} /></Field>
-                    <Field label="ROI anchor"><Select value={draft.filters.roi_anchor} onChange={(e) => set('filters', { roi_anchor: e.target.value as 'footpoint' | 'center' })}><option value="footpoint">foot point</option><option value="center">center</option></Select></Field>
-                    <Field label="ROI margin" hint="tolerance, fraction"><Input type="number" step={0.01} min={0} max={0.2} value={draft.filters.roi_margin_frac} onChange={(e) => set('filters', { roi_margin_frac: Number(e.target.value) })} /></Field>
                     <Field label="Blocked classes" hint="comma separated"><Input value={draft.filters.class_blocklist.join(', ')} onChange={(e) => set('filters', { class_blocklist: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></Field>
                   </div>
-                  <div className="mt-3"><Toggle label="Apply ROI zones" checked={draft.filters.roi_enabled} onChange={(v) => set('filters', { roi_enabled: v })} /></div>
                 </Section>
               </>}
               {tab === 'tracking' && <>

@@ -201,10 +201,9 @@ def camera_live(cam_id: str, request: Request, since: int = Query(0, ge=0),
     if not w:
         raise HTTPException(404, "Camera is not running")
     meta, raw = w.latest_live()
-    cam = state.db.get_camera(cam_id) or {}
     fresh = meta is not None and raw is not None and meta["seq"] > since
     return {"camera_id": cam_id, "state": w.status.state, "frame": meta if fresh else None,
-            "image": base64.b64encode(raw).decode() if fresh else None, "roi": cam.get("roi", []),
+            "image": base64.b64encode(raw).decode() if fresh else None,
             "fps": w.status.fps, "inference_ms": w.status.inference_ms,
             "last_error": message_filter(request).error(w.status.last_error)}
 

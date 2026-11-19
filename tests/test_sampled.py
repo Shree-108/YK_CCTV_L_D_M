@@ -1,4 +1,4 @@
-"""Four-screenshot video analysis: sampling, decoding, ROI proposal, job workflow, CSV and reports."""
+"""Four-screenshot video analysis: sampling, decoding, job workflow (full frame, no ROI), CSV and reports."""
 from __future__ import annotations
 
 import csv
@@ -15,7 +15,7 @@ from backend.main import create_app
 from backend.sampling import SAMPLE_COUNT, frame_quality
 from backend.sampling.extract import extract
 from backend.sampling.plan import (TooShort, min_gap, plan_samples, recording_start_from_name, segments)
-from backend.sampling.roi_proposal import AUTO_ACCEPT, Masks, propose
+from backend.services import litter_reports as lr
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
@@ -44,23 +44,6 @@ def write_video(path: Path, n: int, fps: float = 10.0, moved_after: int | None =
         vw.write(scene(i, moved=moved_after is not None and i >= moved_after))
     vw.release()
     return path
-
-
-class FakeSegmenter:
-    """Ground = bottom-left quarter, interior = right half (matches ``scene``)."""
-    name = "fake"
-
-    def __init__(self, outdoor: bool = True, ground: bool = True) -> None:
-        self.outdoor, self.ground = outdoor, ground
-
-    def masks(self, image: np.ndarray) -> Masks:
-        h, w = image.shape[:2]
-        g = np.zeros((h, w), np.float32)
-        if self.ground:
-            g[h // 2:, : w // 2] = 0.95
-        i = np.zeros((h, w), np.float32)
-        i[:, w // 2:] = 0.95
-        return Masks(g, i, 0.9, {"sidewalk": 0.25}, g.copy() if self.outdoor else np.zeros_like(g))
 
 
 # ---------------------------------------------------------------------- planning
@@ -134,39 +117,9 @@ def test_extract_reports_frames_past_the_end_instead_of_substituting(tmp_path):
     assert all(e.path is None for e in out if e.status != "saved")
 
 
-# ---------------------------------------------------------------------- ROI proposal
-def test_proposal_finds_the_outdoor_ground_and_excludes_the_interior():
-    imgs = {i: scene(i * 50) for i in range(1, 5)}
-    p = propose(imgs, FakeSegmenter())
-    assert p.available and p.static_view and p.status == "proposed" and p.confidence >= AUTO_ACCEPT
-    inc = [z for z in p.zones if z["mode"] == "include"]
-    assert len(inc) == 1
-    xs, ys = zip(*inc[0]["polygon"])
-    assert max(xs) <= 0.52 and min(ys) >= 0.45                            # bottom-left, never the shelving half
-
-
-def test_ambiguous_floor_lowers_confidence_so_the_operator_confirms():
-    p = propose({i: scene(i) for i in range(1, 5)}, FakeSegmenter(outdoor=False))
-    assert p.status == "uncertain" and p.confidence < AUTO_ACCEPT and p.zones   # still pre-filled
-
-
-def test_no_ground_and_moved_camera_need_manual_confirmation():
-    p = propose({i: scene(i) for i in range(1, 5)}, FakeSegmenter(ground=False))
-    assert p.status == "uncertain" and not p.zones and "outside the store" in p.note
-    moved = {1: scene(1), 2: scene(2), 3: scene(3, moved=True), 4: scene(4, moved=True)}
-    p = propose(moved, FakeSegmenter())
-    assert p.static_view is False and p.status == "uncertain" and len(p.frames) == 4
-
-
-def test_without_a_segmenter_the_roi_is_drawn_manually():
-    p = propose({1: scene()}, None)
-    assert not p.available and p.status == "unavailable"
-
-
 # ---------------------------------------------------------------------- API workflow
 @pytest.fixture
 def client(cfg):
-    cfg.roi_segmenter = "off"
     with TestClient(create_app(cfg)) as c:
         yield c
 
@@ -188,9 +141,6 @@ def _wait(client, job_id, states, timeout=180):
 
 def _upload(client, path: Path, name: str | None = None):
     return client.post("/api/sampled/media", files={"file": (name or path.name, path.read_bytes(), "video/mp4")})
-
-
-GROUND = [{"name": "pavement", "type": "sidewalk", "mode": "include", "polygon": [[0, 0.5], [0.5, 0.5], [0.5, 1], [0, 1]]}]
 
 
 def test_upload_validates_and_describes_the_video(client, tmp_path):
@@ -216,48 +166,66 @@ def test_too_short_video_is_refused_at_job_creation(client, tmp_path):
     assert r.status_code == 422 and "too short" in r.json()["detail"]
 
 
-def test_full_workflow_manual_roi_csv_and_reports(client, tmp_path, cfg):
+ANALYSED_OUTCOMES = ("LITTER_DETECTED", "NO_LITTER", "NO_LITTER_DETECTED")
+
+
+def _no_roi_keys(obj, path="$"):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            assert "roi" not in str(k).lower() or k == "awaiting_roi", f"ROI key {path}.{k} in response"
+            _no_roi_keys(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            _no_roi_keys(v, f"{path}[{i}]")
+
+
+def test_full_workflow_runs_straight_to_done_csv_and_reports(client, tmp_path, cfg):
+    """Manual (seeded) mode: no ROI stage any more - the job goes received -> ... -> completed with one request."""
     _needs_engine(client)
     m = _upload(client, write_video(tmp_path / "store.mp4", 150, fps=10)).json()
     r = client.post("/api/sampled/jobs", json={"media_id": m["id"], "store_id": "Store 12", "camera_id": "CAM-07",
-                                               "recording_start": "2026-11-05T10:15:00", "roi_mode": "manual", "seed": 99})
+                                               "recording_start": "2026-11-05T10:15:00", "seed": 99})
     assert r.status_code == 202, r.text
     jid = r.json()["job_id"]
     dup = client.post("/api/sampled/jobs", json={"media_id": m["id"]})
     assert dup.status_code == 409 and dup.json()["detail"]["job_id"] == jid
 
-    j = _wait(client, jid, ("awaiting_roi", "failed"))
-    assert j["state"] == "awaiting_roi" and j["stage"] == "roi_confirmation"
+    j = _wait(client, jid, ("done", "failed", "awaiting_roi"))
+    assert j["state"] == "done", (j["state"], j["error"])
+    assert j["stage"] == "completed"
+    _no_roi_keys(j)
     assert len(j["frames"]) == 4 and all(f["status"] == "saved" for f in j["frames"])
     assert [f["frame_idx"] for f in j["frames"]] == sorted(f["frame_idx"] for f in j["frames"])
     assert j["frames"][0]["recording_timestamp"].startswith("2026-11-05T10:15")
     assert client.get(j["frames"][0]["original_url"]).status_code == 200
-
-    # an ROI without an outdoor area is refused unless the whole frame is chosen explicitly
-    assert client.put(f"/api/sampled/jobs/{jid}/roi", json={"zones": []}).status_code == 422
-    ok = client.put(f"/api/sampled/jobs/{jid}/roi", json={"zones": GROUND, "skip_frames": [4]})
-    assert ok.status_code == 200, ok.text
-    j = _wait(client, jid, ("done", "failed"))
-    assert j["state"] == "done", j["error"]
-    assert j["roi_source"] == "manual" and j["roi_status"] == "confirmed"
-    outcomes = [f["outcome"] for f in j["frames"]]
-    assert outcomes[3] == "ROI_UNCERTAIN" and all(o in ("LITTER_DETECTED", "NO_LITTER") for o in outcomes[:3])
-    assert j["counts"]["screenshots_analysed"] == 3 and j["counts"]["screenshots_extracted"] == 4
-    assert all(f["annotated_url"] for f in j["frames"][:3])
+    assert all(f["outcome"] in ANALYSED_OUTCOMES for f in j["frames"])      # every screenshot analysed, full frame
+    assert j["counts"]["screenshots_analysed"] == 4 and j["counts"]["screenshots_extracted"] == 4
+    assert all(f["annotated_url"] for f in j["frames"])
 
     rows = list(csv.DictReader(io.StringIO(client.get(j["csv_url"]).text)))
-    assert {r["outcome"] for r in rows} >= {"ROI_UNCERTAIN"}
     assert len({r["screenshot"] for r in rows}) == 4                       # every screenshot is traceable
     assert all(r["store_id"] == "Store 12" and r["camera_id"] == "CAM-07" for r in rows)
     assert all(r["recording_date"] == "2026-11-05" for r in rows)
+    assert all(r["outcome"] in ANALYSED_OUTCOMES for r in rows)
     assert (cfg.storage_dir / rows[0]["evidence_image"]).is_file()
+
+    # identity: an unregistered store is accepted as free text, its name is UNKNOWN with a warning
+    ident = j["identity"]
+    assert ident["store_id"] == "Store 12" and ident["store_name"] == lr.UNKNOWN and ident["camera_id"] == "CAM-07"
+    assert ident["warnings"]
+    # standard litter outputs (detection + summary CSV in the exact column format)
+    std = j["standard_outputs"]
+    assert std["processing_status"] in ("COMPLETED_LITTER_DETECTED", "COMPLETED_NO_LITTER_DETECTED")
+    det = client.get(std["urls"]["detections_csv"])
+    assert det.status_code == 200 and next(csv.reader(io.StringIO(det.text.lstrip("\ufeff")))) == lr.DETECTION_COLUMNS
+    summ = client.get(std["urls"]["summary_csv"])
+    assert summ.status_code == 200 and next(csv.reader(io.StringIO(summ.text.lstrip("\ufeff")))) == lr.SUMMARY_COLUMNS
 
     # detections are linked to the job, so history and reports can find them
     dets = client.get("/api/detections", params={"job_id": jid}).json()
     assert all(d["source_type"] == "sample" for d in dets["detections"])
     ov = client.get("/api/sampled/reports/overview").json()
     assert ov["summary"]["videos_received"] == 1 and ov["summary"]["analyses_completed"] == 1
-    assert ov["summary"]["screenshots_extracted"] == 4 and ov["summary"]["screenshots_analysed"] == 3
     assert ov["latest"]["id"] == jid and len(ov["latest"]["frames"]) == 4
     month = ov["months"]["completion"][0]
     assert client.get(f"/api/sampled/reports/months/{month}").json()["analyses_completed"] == 1
@@ -274,19 +242,11 @@ def test_full_workflow_manual_roi_csv_and_reports(client, tmp_path, cfg):
     assert again.json() == {"job_id": jid, "reused": True, "state": "done"}
 
 
-def test_automatic_roi_is_used_only_when_confident_and_allowed(client, tmp_path):
-    _needs_engine(client)
-    runner = client.app.state.app_state.sampled
-    runner._segmenter = lambda: FakeSegmenter()
-    m = _upload(client, write_video(tmp_path / "a.mp4", 150, fps=10)).json()
-    jid = client.post("/api/sampled/jobs", json={"media_id": m["id"], "auto_accept": True}).json()["job_id"]
-    j = _wait(client, jid, ("done", "failed"))
-    assert j["state"] == "done" and j["roi_source"] == "auto" and j["roi_confidence"] >= AUTO_ACCEPT
-    assert client.get(j["frames"][0]["proposal_url"]).status_code == 200
-
-    runner._segmenter = lambda: FakeSegmenter(outdoor=False)               # ambiguous -> waits for the operator
-    jid = client.post("/api/sampled/jobs", json={"media_id": m["id"], "auto_accept": True}).json()["job_id"]
-    j = _wait(client, jid, ("awaiting_roi", "done", "failed"))
-    assert j["state"] == "awaiting_roi" and j["roi_status"] == "uncertain"
-    assert j["proposal"]["prefill"] and j["proposal"]["prefill_source"] == "auto"
-    assert client.post(f"/api/sampled/jobs/{jid}/cancel").json()["state"] == "cancelled"
+def test_removed_roi_job_options_are_refused(client, tmp_path):
+    """roi_mode / auto_accept are gone from POST /api/sampled/jobs (extra fields forbidden); the ROI routes are gone."""
+    m = _upload(client, write_video(tmp_path / "r.mp4", 150, fps=10)).json()
+    for extra in ({"roi_mode": "manual"}, {"auto_accept": True}, {"roi": []}):
+        r = client.post("/api/sampled/jobs", json={"media_id": m["id"], **extra})
+        assert r.status_code == 422, (extra, r.text)
+    assert client.put("/api/sampled/jobs/sv_x/roi", json={"zones": []}).status_code in (404, 405)
+    assert client.post("/api/sampled/jobs/sv_x/roi/approve").status_code in (404, 405)

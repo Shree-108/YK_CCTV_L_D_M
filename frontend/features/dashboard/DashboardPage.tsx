@@ -1,168 +1,84 @@
 'use client'
 
+// Overview: litter events and reporting from GET /api/litter/analytics and /api/litter/analyses. "Litter events"
+// are unique objects; "frame observations" are sightings in analysed frames - always shown apart, never summed.
 import Link from 'next/link'
 import { useMemo } from 'react'
-import {
-  AlertTriangle, ArrowRight, BellRing, CheckCircle2, FileVideo, ImageIcon, Images, ScanSearch, ShieldAlert, Sparkles, Trash2,
-} from 'lucide-react'
-import { url } from '../../api/client'
+import { ArrowRight, CalendarClock, Eye, FileVideo, ImageIcon, ListChecks, ScanSearch, Timer, Trash2, XCircle } from 'lucide-react'
 import { Api } from '../../api/endpoints'
-import type { Alert } from '../../api/types'
 import { useQuery } from '../../hooks/useQuery'
-import { ago, className as cls, dateTime, dayStartIso, num, pct, todayLocal } from '../../lib/format'
-import { recentAnalyses, videoAnalysisCounts } from '../../lib/videoAnalyses'
-import { Badge, Button, PageHeader, Panel, StatusBadge } from '../../components/ui/primitives'
-import { BarList, LineChart } from '../../components/ui/charts'
+import { className as cls, duration, num, todayLocal } from '../../lib/format'
+import { seriesForDays } from '../../lib/litter'
+import { Button, PageHeader, Panel } from '../../components/ui/primitives'
+import { Legend, LineChart } from '../../components/ui/charts'
 import { KpiCard } from '../../components/ui/kpi'
-import { EmptyState, QueryView } from '../../components/ui/states'
+import { EmptyState, ErrorState, LoadingState, QueryView } from '../../components/ui/states'
+import { ByClassPanel, CameraTable, HourlyTodayPanel, ProcessingPanel, RecentAnalysesTable, StoreTable } from '../analytics/litterCharts'
 
 const DAYS = 14
-const JOB_LIMIT = 500   // backend maximum for /api/jobs; a full page means "at least this many"
-const RECENT = 5
-
-const sevTone = (s: Alert['severity']) => (s === 'HIGH' ? 'crit' : s === 'MEDIUM' ? 'warn' : 'info')
-const sevLabel = (s: Alert['severity']) => s[0] + s.slice(1).toLowerCase()
 
 export default function DashboardPage() {
-  const start = todayLocal(-(DAYS - 1))
-  const a = useQuery(`analytics:overview:${start}`, () => Api.analytics({ start: dayStartIso(start) }), { poll: 30000 })
-  const recent = useQuery('alerts:recent', () => Api.alerts({ limit: 8 }), { poll: 15000 })
-  const pending = useQuery('alerts:newcount', () => Api.alerts({ status: 'new', limit: 1 }), { poll: 15000 })
-  const health = useQuery('health', Api.health, { poll: 30000 })
-  const jobs = useQuery('jobs:overview', () => Api.jobs(JOB_LIMIT), { poll: 30000 })
-  // four-screenshot analyses (the default Video Analysis mode) are separate jobs: count and list them too
-  const sampled = useQuery('sampled:overview:recent', () => Api.sampledHistory({ limit: RECENT }), { poll: 30000 })
-  const sampledDone = useQuery('sampled:overview:done', () => Api.sampledHistory({ state: 'done', limit: 1 }), { poll: 30000 })
+  const a = useQuery('litter:analytics:overview', () => Api.litterAnalytics({ granularity: 'day' }), { poll: 30000 })
+  const recent = useQuery('litter:analyses:recent', () => Api.litterAnalyses(10), { poll: 30000 })
   const days = useMemo(() => Array.from({ length: DAYS }, (_, i) => todayLocal(i - DAYS + 1)), [])
-  const byDay = useMemo(() => new Map(a.data?.by_day.map((d) => [d.day, d.n])), [a.data])
-  const high = a.data?.by_severity.find((s) => s.severity === 'HIGH')?.n ?? 0
-  const top = a.data?.by_class[0]
-  const videoJobs = useMemo(() => (jobs.data?.jobs ?? []).filter((j) => j.kind === 'video'), [jobs.data])
-  const capped = (jobs.data?.jobs.length ?? 0) >= JOB_LIMIT
-  // with the sampled counts unavailable (older server / error) the full-video figures are shown alone, and say so
-  const sampledOk = !!(sampled.data && sampledDone.data)
-  const counts = videoAnalysisCounts(videoJobs, sampledOk ? sampled.data!.total : 0, sampledOk ? sampledDone.data!.total : 0)
-  const videoSub = !jobs.data ? (jobs.error ? 'unavailable' : '')
-    : sampledOk ? `${num(counts.fullDone)} full-video · ${num(counts.sampledDone)} four-screenshot · ${num(counts.notFinished)} not finished`
-      : `${num(counts.notFinished)} queued, running or failed${sampled.error || sampledDone.error ? ' · four-screenshot analyses unavailable' : ''}`
-  const recent5 = useMemo(() => recentAnalyses(videoJobs, sampled.data?.analyses ?? [], RECENT), [videoJobs, sampled.data])
-  const evidence = (recent.data?.alerts ?? []).filter((al) => al.snapshot_url || al.crop_url).slice(0, 6)
+  const trend = useMemo(() => seriesForDays(a.data?.series ?? [], days), [a.data, days])
+  const t = a.data?.totals
+  const loading = a.loading && !a.data
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Overview" description={`Litter detected in CCTV images, videos and live cameras over the last ${DAYS} days.`}
+      <PageHeader title="Overview" description="Litter detected in CCTV images and videos. A litter event is one unique object; frame observations count every analysed frame it was seen in."
         actions={<>
           <Link href="/detect/image"><Button icon={ImageIcon}>Analyse image</Button></Link>
           <Link href="/detect/video"><Button variant="primary" icon={FileVideo}>Analyse video</Button></Link>
         </>} />
 
+      {a.error && !a.data && <Panel><ErrorState error={a.error} onRetry={a.refetch} title="Litter analytics unavailable" compact /></Panel>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
-        <KpiCard label="Total litter detections" icon={Trash2} tone="info" loading={a.loading && !a.data} value={a.data ? num(a.data.alerts_total) : null} sub={`incidents · last ${DAYS} days`} />
-        <KpiCard label="Pending alerts" icon={BellRing} tone={pending.data?.total ? 'warn' : 'ok'} loading={pending.loading && !pending.data}
-          value={pending.data ? num(pending.data.total) : null} sub="awaiting review" />
-        <KpiCard label="High-priority incidents" icon={ShieldAlert} tone="crit" loading={a.loading && !a.data} value={a.data ? num(high) : null} sub={`last ${DAYS} days`} />
-        {/* completed video analyses of both kinds: full-video tracking jobs + four-screenshot analyses */}
-        <KpiCard label="Videos processed" icon={FileVideo} tone="neutral" loading={jobs.loading && !jobs.data}
-          value={jobs.data ? `${num(counts.done)}${capped ? '+' : ''}` : null} sub={videoSub} />
-        <KpiCard label="Most frequent type" icon={ScanSearch} loading={a.loading && !a.data} value={top ? cls(top.class) : a.data ? '—' : null} sub={top ? `${num(top.n)} incidents` : 'no data yet'} />
-        <KpiCard label="Active detection model" icon={Sparkles} tone="exp" loading={health.loading && !health.data} value={health.data?.model?.version ?? (health.data ? '—' : null)}
-          sub={health.data?.model ? `${health.data.model.device.toUpperCase()} · ${health.data.model.classes.length} classes` : health.error ? 'backend offline' : health.data ? 'no model loaded' : ''} />
+        <KpiCard label="Litter events today" icon={CalendarClock} tone="crit" loading={loading} value={t ? num(t.events_today) : null} sub="unique objects" />
+        <KpiCard label="Total litter events" icon={Trash2} tone="info" loading={loading} value={t ? num(t.unique_events) : null} sub="unique objects, all time" />
+        <KpiCard label="Frame observations" icon={Eye} loading={loading} value={t ? num(t.frame_observations) : null} sub="sightings, not objects" />
+        <KpiCard label="Most frequent class" icon={ScanSearch} loading={loading} value={a.data ? (a.data.most_frequent_class ? cls(a.data.most_frequent_class) : '—') : null}
+          sub={a.data?.by_class[0] ? `${num(a.data.by_class[0].events)} events` : 'no data yet'} />
+        <KpiCard label="Average visible time" icon={Timer} loading={loading} value={t ? (t.avg_visible_sec != null ? duration(t.avg_visible_sec) : '—') : null} sub="per litter event" />
+        <KpiCard label="Analyses failed" icon={XCircle} tone={t?.analyses_failed ? 'warn' : 'neutral'} loading={loading} value={t ? num(t.analyses_failed) : null}
+          sub={t ? `of ${num(t.analyses)} analyses` : ''} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <Panel title="Detection activity" subtitle={`Incidents per day · last ${DAYS} days`}>
-          <QueryView q={a} isEmpty={(d) => d.alerts_total === 0}
-            empty={<EmptyState compact title="No detections yet" body="Upload a CCTV image or video to start." />}>
-            {() => <LineChart ariaLabel="Detections per day" area height={230} labels={days.map((d) => d.slice(5))}
-              series={[{ name: 'Detections', values: days.map((d) => byDay.get(d) ?? 0), color: 'var(--info)' }]} />}
-          </QueryView>
-        </Panel>
-        <Panel title="Top litter categories" subtitle="By number of incidents">
-          <QueryView q={a} isEmpty={(d) => d.by_class.length === 0} empty={<EmptyState compact title="No data" />}>
-            {(d) => <BarList data={d.by_class.slice(0, 7).map((r) => ({ label: cls(r.class), value: r.n }))} />}
-          </QueryView>
-        </Panel>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Panel title="Recent alerts" noPad icon={AlertTriangle}
-          actions={<Link href="/alerts" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg">View all <ArrowRight className="size-3.5" aria-hidden /></Link>}>
-          <QueryView q={recent} isEmpty={(d) => d.alerts.length === 0}
-            empty={<EmptyState icon={CheckCircle2} compact title="No alerts" body="No litter incidents have been recorded." />}>
-            {(d) => <AlertMiniList alerts={d.alerts} />}
-          </QueryView>
-        </Panel>
-        <Panel title="Latest evidence" subtitle="Snapshots from the most recent alerts" icon={Images}>
-          <QueryView q={recent} isEmpty={() => evidence.length === 0}
-            empty={<EmptyState icon={Images} compact title="No evidence images yet" body="Alerts store a snapshot and a crop of the detected litter." />}>
+        <Panel title="Daily trend" subtitle={`Last ${DAYS} days`}>
+          <QueryView q={a} isEmpty={(d) => d.totals.unique_events === 0 && d.totals.frame_observations === 0}
+            empty={<EmptyState compact title="No litter events yet" body="Analyse a CCTV image or video to start." />}>
             {() => (
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {evidence.map((al) => (
-                  <li key={al.id}>
-                    <Link href={`/alerts?id=${al.id}`} className="group block overflow-hidden rounded-lg border border-line bg-panel-2 hover:border-line-strong">
-                      <div className="relative aspect-[4/3] bg-video">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={url((al.crop_url ?? al.snapshot_url)!)} alt={`${cls(al.class)} evidence, alert ${al.id}`} loading="lazy"
-                          className="size-full object-cover transition-opacity group-hover:opacity-90" />
-                        <Badge tone={sevTone(al.severity)} className="absolute left-1.5 top-1.5 bg-black/60 backdrop-blur">{sevLabel(al.severity)}</Badge>
-                      </div>
-                      <div className="px-2.5 py-2">
-                        <div className="truncate text-[12.5px] font-medium text-fg">{cls(al.class)} <span className="font-normal text-fg-3">· {pct(al.confidence, 0)}</span></div>
-                        <div className="truncate text-[11px] text-fg-3">{al.camera_id} · {ago(al.ts)}</div>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <LineChart ariaLabel="Litter events and frame observations per day" height={230} labels={days.map((d) => d.slice(5))}
+                  series={[{ name: 'Litter events', values: trend.events, color: 'var(--crit)' }, { name: 'Frame observations', values: trend.observations, color: 'var(--info)', dashed: true }]} />
+                <Legend items={[{ name: 'Litter events (unique)', color: 'var(--crit)' }, { name: 'Frame observations', color: 'var(--info)' }]} />
+              </>
             )}
           </QueryView>
         </Panel>
+        {a.data ? <ByClassPanel a={a.data} /> : <Panel title="Litter events by class"><QueryView q={a}>{() => null}</QueryView></Panel>}
       </div>
 
-      <Panel title="Recent video analyses" noPad icon={FileVideo}
-        actions={<Link href="/detect/video" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg">Video Analysis <ArrowRight className="size-3.5" aria-hidden /></Link>}>
-        <QueryView q={jobs} isEmpty={() => recent5.length === 0}
-          empty={<EmptyState icon={FileVideo} compact title="No videos processed yet" body="Upload a CCTV video in Video Analysis." />}>
-          {() => (
-            <ul className="divide-y divide-line">
-              {recent5.map((j) => (
-                <li key={j.key} className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-line bg-panel-2"><FileVideo className="size-4 text-fg-3" aria-hidden /></span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-fg">{j.name}</div>
-                    <div className="truncate text-[11px] text-fg-3">{j.kind === 'sampled' ? 'Four-screenshot' : 'Full video'} · {j.camera} · {dateTime(j.created)}</div>
-                  </div>
-                  {j.progress !== undefined && <span className="tabular text-[12px] text-fg-2">{pct(j.progress, 0)}</span>}
-                  <StatusBadge status={j.status} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryView>
+      {a.data && (
+        <>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+            <HourlyTodayPanel a={a.data} />
+            <ProcessingPanel a={a.data} />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <StoreTable a={a.data} />
+            <CameraTable a={a.data} />
+          </div>
+        </>
+      )}
+
+      <Panel title="Recent analyses" noPad icon={ListChecks}
+        actions={<Link href="/analytics" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg">Analytics <ArrowRight className="size-3.5" aria-hidden /></Link>}>
+        {recent.error && !recent.data ? <ErrorState error={recent.error} onRetry={recent.refetch} compact />
+          : !recent.data ? <div className="p-4"><LoadingState rows={3} /></div> : <RecentAnalysesTable rows={recent.data.analyses} />}
       </Panel>
     </div>
-  )
-}
-
-export function AlertMiniList({ alerts }: { alerts: Alert[] }) {
-  return (
-    <ul className="divide-y divide-line">
-      {alerts.map((al) => (
-        <li key={al.id}>
-          <Link href={`/alerts?id=${al.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-hover/60">
-            {al.crop_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={url(al.crop_url)} alt="" loading="lazy" className="size-10 shrink-0 rounded-md border border-line bg-video object-cover" />
-            ) : <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-line bg-panel-2"><AlertTriangle className="size-4 text-fg-3" /></div>}
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-medium text-fg">{cls(al.class)} <span className="font-normal text-fg-3">· {pct(al.confidence, 0)}</span></div>
-              <div className="truncate text-[11px] text-fg-3">{al.camera_id} · {ago(al.ts)}</div>
-            </div>
-            <Badge tone={sevTone(al.severity)} dot>{sevLabel(al.severity)}</Badge>
-            <StatusBadge status={al.status} />
-          </Link>
-        </li>
-      ))}
-    </ul>
   )
 }

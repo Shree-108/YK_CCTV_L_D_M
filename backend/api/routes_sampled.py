@@ -1,5 +1,5 @@
 """Four-screenshot video analysis API (backend/sampling). Every route declares exactly one permission
-(backend/api/authz.py): uploads, runs and ROI confirmation = OPERATOR; reads = VIEWER; CSV downloads =
+(backend/api/authz.py): uploads and runs = OPERATOR; reads = VIEWER; CSV downloads =
 ADMIN_IF_LOGIN (same rule as the existing CSV export)."""
 from __future__ import annotations
 
@@ -11,14 +11,13 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import cv2
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.api.authz import ADMIN_IF_LOGIN, OPERATOR, VIEWER, message_filter, require_admin_here
+from backend.api.authz import ADMIN_IF_LOGIN, OPERATOR, VIEWER, message_filter
 from backend.api.deps import VIDEO_EXTS, get_state, safe_display_name, save_upload
 from backend.database.db import utcnow
-from backend.detection.filters import ROIZone
 from backend.sampling import report
 from backend.sampling.media import Unreadable, new_media_id, probe, sha256_of
 from backend.sampling.reports import Reports, public_job
@@ -138,8 +137,6 @@ class JobIn(BaseModel):
     camera_id: Optional[str] = Field(None, max_length=40)
     recording_start: Optional[str] = Field(None, max_length=40)
     seed: Optional[int] = None
-    roi_mode: Literal["auto", "camera", "manual"] = "auto"
-    auto_accept: bool = False
     create_alerts: bool = True
     model_version: Optional[str] = Field(None, max_length=80)
     new_run: bool = False
@@ -182,98 +179,6 @@ def get_job(job_id: str, request: Request, state: AppState = Depends(get_state))
     return public_job(job, r.repo.media(job["media_id"]), r.repo.frames(job_id), message_filter(request).error)
 
 
-class RoiConfirmIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    zones: list[ROIZone] = Field(default_factory=list, max_length=20)
-    frame_zones: dict[int, list[ROIZone]] = Field(default_factory=dict)
-    skip_frames: list[int] = Field(default_factory=list, max_length=4)
-    whole_frame: bool = False
-    save_for_camera: bool = False
-
-
-@router.put("/jobs/{job_id}/roi", dependencies=OPERATOR)
-def confirm_roi(job_id: str, body: RoiConfirmIn, request: Request,
-                authorization: Optional[str] = Header(default=None), x_admin_token: Optional[str] = Header(default=None),
-                state: AppState = Depends(get_state)) -> dict[str, Any]:
-    r = _runner(state)
-    job = r.repo.job(job_id)
-    if not job:
-        raise HTTPException(404, "Analysis not found")
-    zones = [z.model_dump() for z in body.zones]
-    if body.save_for_camera:
-        cam_id = job.get("camera_id")
-        if not cam_id:
-            raise HTTPException(422, "Enter a Camera ID for this analysis to save the ROI for that camera.")
-        if body.whole_frame or not any(z["mode"] == "include" for z in zones):
-            raise HTTPException(422, "Only an ROI with an outdoor area can be saved for a camera.")
-        if state.db.get_camera(cam_id):           # a registered camera's ROI is admin configuration (as PUT /roi)
-            require_admin_here(request, authorization, x_admin_token, state, off_mode="open")
-    try:
-        out = r.confirm_roi(job_id, zones, frame_zones={k: [z.model_dump() for z in v] for k, v in body.frame_zones.items()},
-                            skip_frames=body.skip_frames, whole_frame=body.whole_frame)
-    except JobError as exc:
-        raise HTTPException(422, str(exc)) from None
-    if body.save_for_camera:
-        cam = state.db.get_camera(job["camera_id"])
-        if cam:
-            cam["roi"] = zones
-            state.db.upsert_camera(cam)
-            state.sync_cameras()
-        else:
-            state.db.set_setting(f"roi:{job['camera_id']}", zones)
-        state.db.log_event("info", "roi", f"ROI saved ({len(zones)} zone(s))", job["camera_id"])
-    return {"job_id": out["id"], "state": out["state"], "stage": out["stage"]}
-
-
-class RoiApproveIn(BaseModel):
-    """Operator ROI calibration of a completed automatic analysis (backend/sampling/roi_calibration.py)."""
-    model_config = ConfigDict(extra="forbid")
-    zones: list[ROIZone] = Field(..., min_length=1, max_length=10)
-    reference_idx: int = Field(..., ge=1, le=4)
-    save_for_camera: bool = False
-
-
-@router.post("/jobs/{job_id}/roi/approve", status_code=202, dependencies=OPERATOR)
-def approve_roi(job_id: str, body: RoiApproveIn, request: Request,
-                authorization: Optional[str] = Header(default=None), x_admin_token: Optional[str] = Header(default=None),
-                state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """Approve the monitored ground polygon drawn on one screenshot; it is applied to all four screenshots of this
-    job and they are analysed again. With ``save_for_camera`` it also becomes the ROI of the job's camera ID (with
-    the picture size, so a different view later needs revalidation)."""
-    from backend.sampling.roi_calibration import InvalidPolygon
-    r = _runner(state)
-    job = r.repo.job(job_id)
-    if not job:
-        raise HTTPException(404, "Analysis not found")
-    if state.engine is None and not job.get("model_version"):
-        raise HTTPException(503, "No detection model is loaded; the analysis cannot run.")
-    cam_id = job.get("camera_id")
-    if body.save_for_camera:
-        if not cam_id:
-            raise HTTPException(422, "This analysis has no Camera ID: the ROI is kept for this video only.")
-        if state.db.get_camera(cam_id):           # a registered camera's ROI is admin configuration (as PUT /roi)
-            require_admin_here(request, authorization, x_admin_token, state, off_mode="open")
-    zones = [z.model_dump() for z in body.zones]
-    try:
-        out = r.approve_roi(job_id, zones, body.reference_idx)
-    except InvalidPolygon as exc:
-        raise HTTPException(422, f"Invalid ROI polygon: {exc}") from None
-    except JobError as exc:
-        raise HTTPException(409 if "state" in str(exc) else 422, str(exc)) from None
-    if body.save_for_camera:
-        size = ((out.get("counts") or {}).get("roi_policy") or {}).get("reference_size")
-        cam = state.db.get_camera(cam_id)
-        if cam:
-            cam["roi"] = zones
-            state.db.upsert_camera(cam)
-            state.sync_cameras()
-        else:
-            state.db.set_setting(f"roi:{cam_id}", zones)
-        state.db.set_setting(f"roi_ref:{cam_id}", size)
-        state.db.log_event("info", "roi", f"ROI saved from analysis {job_id} ({len(zones)} zone(s), {size})", cam_id)
-    return {"job_id": out["id"], "state": out["state"], "stage": out["stage"], "saved_for_camera": body.save_for_camera}
-
-
 @router.post("/jobs/{job_id}/cancel", dependencies=OPERATOR)
 def cancel_job(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
     try:
@@ -296,11 +201,7 @@ def frame_image(job_id: str, idx: int, kind: str, download: bool = False,
     if not job or not f:
         raise HTTPException(404, "Not found")
     root = Path(job["output_dir"]).resolve()
-    if kind == "proposal":
-        p = root / "roi" / f"proposal_s{idx}.jpg"
-    elif kind == "diagnostic" and (f.get("result") or {}).get("diagnostic_path"):   # pavement-only mode
-        p = Path(f["result"]["diagnostic_path"])
-    elif kind in FRAME_KINDS and f.get(FRAME_KINDS[kind]):
+    if kind in FRAME_KINDS and f.get(FRAME_KINDS[kind]):
         p = Path(f[FRAME_KINDS[kind]])
     else:
         raise HTTPException(404, "Not found")

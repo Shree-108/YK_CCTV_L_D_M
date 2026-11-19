@@ -1,0 +1,38 @@
+{
+ "status": "DRAFT - NOT WRITTEN TO THE DATABASE",
+ "why_not_written": [
+  "store_id and the NVR channel / camera name are not recorded anywhere in the footage, filenames or repo",
+  "cameras.id is the primary key: it cannot be renamed via the API, and deleting a wrong record is not approved"
+ ],
+ "apply_with": "POST /api/cameras (admin) after the owner confirms the values below",
+ "payload": {
+  "id": "<STORE_ID>-cam-counter-pavement-01  (pattern ^[A-Za-z0-9_-]{1,40}$)",
+  "name": "Counter view - pavement opposite shop",
+  "source": "env:LM_CAM_COUNTER_PAVEMENT_01  (stream URL kept out of the DB; unused while disabled)",
+  "location": "store:<STORE_ID>; indoor camera behind counter, looking out at pavers/road opposite the shop",
+  "enabled": false,
+  "roi": [],
+  "settings": {},
+  "notify": {}
+ },
+ "safety_notes": [
+  "roi stays [] -> auto_roi.decide() returns NOT_CONFIGURED (full frame, review required) until the ROI is approved",
+  "enabled=false -> CameraManager.sync() starts no live worker",
+  "cameras table has no store_id column: the store is recorded in 'location' and must be passed as store_id on each upload",
+  "writing 'roi' later = ROI ACTIVATION (decide() returns APPROVED / REGISTERED_CAMERA and ROI-crop inference switches on)"
+ ],
+ "identified_from": {
+  "overlay": "'IP Camera' (bottom-right), clock top-left",
+  "resolution": "2560x1440",
+  "fps": 20.0,
+  "codec": "HEVC",
+  "recording": "2026-11-10 10:20:31-10:25:17 (285.85 s, 5696 frames)",
+  "stored_copy": "storage/media/80de1ba8e8d849e1.mp4",
+  "analysis_job": "sv_20261115_232628_e603d5 (store_id and camera_id were blank)"
+ },
+ "existing_records_preserved": {
+  "cameras_rows": 0,
+  "saved_roi_settings_rows": 0,
+  "note": "nothing was inserted, updated or deleted"
+ }
+}

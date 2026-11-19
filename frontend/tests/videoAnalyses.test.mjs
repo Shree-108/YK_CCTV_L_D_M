@@ -8,7 +8,7 @@ const sampled = (id, state, created) => ({ id, state, created_at: created, camer
 
 test('completed four-screenshot analyses are counted with full-video jobs', () => {
   const jobs = [full('a', 'done', '2026-11-01T10:00:00'), full('b', 'failed', '2026-11-02T10:00:00'), full('c', 'running', '2026-11-03T10:00:00')]
-  // 5 sampled analyses in all, 3 of them done (2 waiting for ROI / cancelled)
+  // 5 sampled analyses in all, 3 of them done (2 failed / cancelled)
   assert.deepEqual(videoAnalysisCounts(jobs, 5, 3), { done: 4, fullDone: 1, sampledDone: 3, notFinished: 4 })
 })
 
@@ -24,8 +24,8 @@ test('without sampled data the full-video figures are unchanged', () => {
 test('recent analyses mix both kinds, newest first, limited to n', () => {
   const rows = recentAnalyses(
     [full('a', 'done', '2026-11-01T10:00:00'), full('c', 'running', '2026-11-04T10:00:00')],
-    [sampled('s1', 'awaiting_roi', '2026-11-03T10:00:00'), sampled('s2', 'done', '2026-11-05T10:00:00')], 3)
-  assert.deepEqual(rows.map((r) => [r.key, r.kind, r.status]), [['s:s2', 'sampled', 'done'], ['v:c', 'full', 'running'], ['s:s1', 'sampled', 'awaiting_roi']])
+    [sampled('s1', 'running', '2026-11-03T10:00:00'), sampled('s2', 'done', '2026-11-05T10:00:00')], 3)
+  assert.deepEqual(rows.map((r) => [r.key, r.kind, r.status]), [['s:s2', 'sampled', 'done'], ['v:c', 'full', 'running'], ['s:s1', 'sampled', 'running']])
   assert.equal(rows[1].progress, 0.4)                 // progress only for a running full-video job
   assert.equal(rows[0].progress, undefined)
   assert.equal(rows[0].camera, 'CAM-07')

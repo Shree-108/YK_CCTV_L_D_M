@@ -1,0 +1,196 @@
+{
+ "status": "DRAFT FOR OWNER REVIEW - NOT APPROVED - NOT ACTIVE - NOT LOADED BY THE APPLICATION",
+ "purpose": "Offline before/after regression evidence only (docs/proposals/ldm_pavement_roi/evidence/pavement_regression.py).",
+ "drawn_by": "Claude (manual trace on a pixel grid of the frame below); the owner must redraw or confirm it before any use.",
+ "camera_ref": "EZVIZ_OUTDOOR_AWNING_VIEW (separate camera from CAM_A_IPCAM2560_COUNTER_VIEW; no coordinates shared)",
+ "camera_id": "TBD (owner to confirm)",
+ "store_id": "TBD (owner to confirm)",
+ "reference_frame": {
+  "source_video": "20261110_20261110231921_20261110232408_231922.mp4",
+  "source_video_sha256": "422d04b61f019e991aa50a161302b76acada0c32205554a61a166b48dd24b639",
+  "frame_index": 2800,
+  "width": 1920,
+  "height": 1080,
+  "night": true,
+  "coordinate_system": "pixels, origin top-left; 'polygon' = pixel/(W,H), 4 dp (LDM ROIZone format)"
+ },
+ "boundary_notes": [
+  "Top edge = road kerb (y 525-545); the carriageway and passing vehicles are outside.",
+  "Left edge inset ~8 px from the awning's lower edge (x ~1110); the awning itself is outside.",
+  "The street-lamp pole base stands on the pavement and is inside; add a pole exclusion if it produces detections.",
+  "Clock and logo exclusions are outside the include polygon already; they are listed to make the intent explicit."
+ ],
+ "suggested_camera_settings_override": {
+  "pavement": {
+   "roi_reference_size": [
+    1920,
+    1080
+   ]
+  }
+ },
+ "zones": [
+  {
+   "name": "outdoor_pavement",
+   "type": "ground",
+   "mode": "include",
+   "pixel_polygon": [
+    [
+     1120,
+     545
+    ],
+    [
+     1300,
+     541
+    ],
+    [
+     1500,
+     537
+    ],
+    [
+     1700,
+     531
+    ],
+    [
+     1920,
+     525
+    ],
+    [
+     1920,
+     1080
+    ],
+    [
+     1112,
+     1080
+    ],
+    [
+     1110,
+     610
+    ],
+    [
+     1116,
+     560
+    ]
+   ],
+   "polygon": [
+    [
+     0.5833,
+     0.5046
+    ],
+    [
+     0.6771,
+     0.5009
+    ],
+    [
+     0.7812,
+     0.4972
+    ],
+    [
+     0.8854,
+     0.4917
+    ],
+    [
+     1.0,
+     0.4861
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    [
+     0.5792,
+     1.0
+    ],
+    [
+     0.5781,
+     0.5648
+    ],
+    [
+     0.5813,
+     0.5185
+    ]
+   ]
+  },
+  {
+   "name": "osd_clock",
+   "type": "custom",
+   "mode": "exclude",
+   "pixel_polygon": [
+    [
+     60,
+     1015
+    ],
+    [
+     560,
+     1015
+    ],
+    [
+     560,
+     1080
+    ],
+    [
+     60,
+     1080
+    ]
+   ],
+   "polygon": [
+    [
+     0.0312,
+     0.9398
+    ],
+    [
+     0.2917,
+     0.9398
+    ],
+    [
+     0.2917,
+     1.0
+    ],
+    [
+     0.0312,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "osd_logo",
+   "type": "custom",
+   "mode": "exclude",
+   "pixel_polygon": [
+    [
+     15,
+     20
+    ],
+    [
+     280,
+     20
+    ],
+    [
+     280,
+     110
+    ],
+    [
+     15,
+     110
+    ]
+   ],
+   "polygon": [
+    [
+     0.0078,
+     0.0185
+    ],
+    [
+     0.1458,
+     0.0185
+    ],
+    [
+     0.1458,
+     0.1019
+    ],
+    [
+     0.0078,
+     0.1019
+    ]
+   ]
+  }
+ ]
+}

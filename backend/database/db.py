@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS cameras (
     source TEXT NOT NULL,              -- rtsp://..., http(s)://..., file path, webcam index, or env:VAR_NAME
     location TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
-    roi_json TEXT NOT NULL DEFAULT '[]',
+    roi_json TEXT NOT NULL DEFAULT '[]',   -- history only (ROI removed 2026-11-19)
     settings_json TEXT NOT NULL DEFAULT '{}',
     notify_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
@@ -98,6 +98,35 @@ CREATE TABLE IF NOT EXISTS settings (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+-- HISTORY ONLY (ROI removed from the application 2026-11-19): versioned ROI records written by earlier versions.
+-- Kept so old data stays readable; no active code reads or writes this table, cameras.roi_json or sampled_*.roi_*.
+CREATE TABLE IF NOT EXISTS roi_versions (
+    id INTEGER PRIMARY KEY,
+    roi_key TEXT NOT NULL,             -- camera:<camera_id> | job:<sampled job id>
+    camera_id TEXT,
+    store_id TEXT,                     -- recorded only; never used to select an ROI
+    job_id TEXT,
+    version INTEGER NOT NULL,          -- 1, 2, ... per roi_key
+    status TEXT NOT NULL,              -- PROPOSED | APPROVED | NEEDS_REVIEW | ROI_INVALID | REJECTED | SUPERSEDED
+    source TEXT NOT NULL,              -- OPERATOR_SAVED | ADMIN_CAMERA_CONFIG | OPERATOR_APPROVED_FOR_JOB | ...
+    zones_json TEXT NOT NULL,          -- normalised ROIZone list (as stored, also when ROI_INVALID)
+    reference_w INTEGER,               -- picture size the ROI was drawn/approved on (NULL = unknown)
+    reference_h INTEGER,
+    confidence REAL,
+    fingerprint TEXT,                  -- camera-view fingerprint (filled from U2; NULL until then)
+    note TEXT,
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    approved_at TEXT,
+    approved_by TEXT,
+    supersedes_id INTEGER,
+    status_changed_at TEXT,
+    UNIQUE(roi_key, version)
+);
+CREATE INDEX IF NOT EXISTS idx_roi_key_status ON roi_versions(roi_key, status);
+CREATE INDEX IF NOT EXISTS idx_roi_camera ON roi_versions(camera_id);
+CREATE INDEX IF NOT EXISTS idx_roi_job ON roi_versions(job_id);
+
 CREATE TABLE IF NOT EXISTS system_events (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -197,11 +226,11 @@ CREATE TABLE IF NOT EXISTS sampled_jobs (
     store_id TEXT, camera_id TEXT, recording_start TEXT,
     seed INTEGER NOT NULL,
     sample_count INTEGER NOT NULL,
-    roi_mode TEXT NOT NULL,            -- auto | camera | manual
+    roi_mode TEXT NOT NULL,            -- history: auto | camera | manual; 'none' since ROI was removed (2026-11-19)
     auto_accept INTEGER NOT NULL DEFAULT 0,
     roi_json TEXT,                     -- confirmed zones (normalised ROIZone list)
     roi_source TEXT,                   -- auto | camera | manual | whole_frame
-    roi_status TEXT NOT NULL DEFAULT 'pending',   -- pending | proposed | uncertain | confirmed
+    roi_status TEXT NOT NULL DEFAULT 'pending',   -- history; 'not_used' since ROI was removed (2026-11-19)
     roi_confidence REAL,
     proposal_json TEXT,                -- automatic proposal (zones, confidence, per-frame evidence)
     model_version TEXT,
@@ -209,7 +238,7 @@ CREATE TABLE IF NOT EXISTS sampled_jobs (
     counts_json TEXT,
     output_dir TEXT NOT NULL,
     csv_path TEXT,
-    mode TEXT NOT NULL DEFAULT 'manual',          -- manual (operator confirms the ROI) | auto (zero-click)
+    mode TEXT NOT NULL DEFAULT 'manual',          -- manual (random screenshots) | auto (fixed 10/35/65/90 %)
     sampling TEXT NOT NULL DEFAULT 'random_quarters'   -- random_quarters | fixed_pct (see backend/sampling/plan.py)
 );
 CREATE INDEX IF NOT EXISTS idx_sjobs_media ON sampled_jobs(media_id);
@@ -220,7 +249,7 @@ CREATE TABLE IF NOT EXISTS sampled_frames (
     frame_idx INTEGER NOT NULL,
     video_time_sec REAL,
     status TEXT NOT NULL,              -- planned | saved | unreadable | failed
-    outcome TEXT,                      -- LITTER_DETECTED | NO_LITTER | ROI_UNCERTAIN | UNREADABLE | FAILED
+    outcome TEXT,                      -- LITTER_DETECTED | NO_LITTER | UNREADABLE | FAILED (ROI_* = history)
     original_path TEXT, annotated_path TEXT,
     roi_json TEXT,                     -- per-frame ROI when the view differs from the job ROI
     roi_status TEXT,
@@ -231,9 +260,67 @@ CREATE TABLE IF NOT EXISTS sampled_frames (
     sampling_note TEXT,                -- why and how the planned frame was replaced
     PRIMARY KEY (job_id, idx)
 );
+-- schema version 2 (2026-11-19, additive): stores, analyses, litter events
+CREATE TABLE IF NOT EXISTS stores (
+    id TEXT PRIMARY KEY,               -- e.g. STORE_001 (never invented: entered by an administrator)
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+-- one row per analysis (image, video, quick_check): its identity, final processing status and output files
+CREATE TABLE IF NOT EXISTS analyses (
+    id TEXT PRIMARY KEY,               -- img_/vid_/qck_<YYYYMMDDTHHMMSS>_<hex>
+    kind TEXT NOT NULL,                -- image | video | quick_check
+    job_id TEXT,                       -- jobs.id / sampled_jobs.id
+    created_at TEXT NOT NULL,          -- local wall-clock time
+    finished_at TEXT,
+    status TEXT NOT NULL,              -- RUNNING | COMPLETED_LITTER_DETECTED | COMPLETED_NO_LITTER_DETECTED | FAILED
+    store_id TEXT NOT NULL, store_name TEXT NOT NULL,      -- UNKNOWN when not known
+    camera_id TEXT NOT NULL, camera_name TEXT NOT NULL,
+    recording_id TEXT,
+    model_version TEXT,
+    output_dir TEXT,
+    unique_events INTEGER NOT NULL DEFAULT 0,
+    frame_observations INTEGER NOT NULL DEFAULT 0,
+    frames_processed INTEGER NOT NULL DEFAULT 0,
+    warnings_json TEXT,
+    files_json TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at);
+CREATE INDEX IF NOT EXISTS idx_analyses_job ON analyses(job_id);
+-- one row per litter EVENT (a unique DETECTED object). Repeated frame observations are counted in observation_count,
+-- never as new rows. first_seen/last_seen: local wall-clock ISO (recording time when known, see timestamp_source).
+CREATE TABLE IF NOT EXISTS litter_events (
+    id INTEGER PRIMARY KEY,
+    event_id TEXT NOT NULL UNIQUE,     -- <analysis id>-E<n>
+    analysis_id TEXT NOT NULL,
+    source_type TEXT NOT NULL,         -- image | video | sample | live
+    job_id TEXT,
+    store_id TEXT NOT NULL, store_name TEXT NOT NULL, camera_id TEXT NOT NULL, camera_name TEXT NOT NULL,
+    recording_id TEXT,
+    track_id INTEGER,
+    class TEXT NOT NULL,
+    max_confidence REAL NOT NULL, mean_confidence REAL NOT NULL,
+    x1 REAL, y1 REAL, x2 REAL, y2 REAL,
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+    first_seen_sec REAL, last_seen_sec REAL, duration_sec REAL,
+    observation_count INTEGER NOT NULL,
+    detection_status TEXT NOT NULL,    -- DETECTED (model/tracker)
+    review_status TEXT NOT NULL,       -- DETECTED | VERIFIED | REJECTED | RESOLVED (operator)
+    reviewed_at TEXT, reviewed_by TEXT, review_note TEXT,
+    timestamp_source TEXT NOT NULL,    -- RECORDING_TIME | PROCESSING_TIME
+    model_version TEXT,
+    image_path TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_levents_first ON litter_events(first_seen);
+CREATE INDEX IF NOT EXISTS idx_levents_store_cam ON litter_events(store_id, camera_id, first_seen);
+CREATE INDEX IF NOT EXISTS idx_levents_analysis ON litter_events(analysis_id);
 """
 
 ALERT_FILTERS = {"camera_id", "class", "severity", "status"}
+SCHEMA_VERSION = 2          # 0: before roi_versions; 1: roi_versions; 2: stores/analyses/litter_events (all additive)
 
 
 def utcnow() -> str:
@@ -260,7 +347,7 @@ class Database:
     def _migrate(c: sqlite3.Connection) -> None:
         """Additive, idempotent column migrations for databases created by older versions."""
         wanted = {"alerts": {"notes": "TEXT", "updated_at": "TEXT"},
-                  "cameras": {"latitude": "REAL", "longitude": "REAL", "rtsp_json": "TEXT"},
+                  "cameras": {"latitude": "REAL", "longitude": "REAL", "rtsp_json": "TEXT", "store_id": "TEXT"},
                   "detections": {"session_id": "TEXT"},
                   "sampled_jobs": {"mode": "TEXT NOT NULL DEFAULT 'manual'",
                                    "sampling": "TEXT NOT NULL DEFAULT 'random_quarters'"},
@@ -271,6 +358,8 @@ class Database:
                 if col not in have:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         c.execute("CREATE INDEX IF NOT EXISTS idx_det_track ON detections(camera_id, session_id, track_id)")
+        if c.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:   # the new tables exist (SCHEMA)
+            c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -310,8 +399,9 @@ class Database:
     @staticmethod
     def _cam(r: dict[str, Any]) -> dict[str, Any]:
         r["enabled"] = bool(r["enabled"])
-        for k in ("roi_json", "settings_json", "notify_json", "rtsp_json"):
-            r[k.removesuffix("_json")] = json.loads(r.pop(k, None) or ("[]" if k == "roi_json" else "{}"))
+        r.pop("roi_json", None)            # history only (ROI removed); kept in the table, never exposed or used
+        for k in ("settings_json", "notify_json", "rtsp_json"):
+            r[k.removesuffix("_json")] = json.loads(r.pop(k, None) or "{}")
         return r
 
     def list_cameras(self) -> list[dict[str, Any]]:
@@ -325,15 +415,16 @@ class Database:
         now = utcnow()
         existing = self.get_camera(cam["id"])
         self._write(
-            "INSERT INTO cameras(id,name,source,location,enabled,roi_json,settings_json,notify_json,created_at,updated_at,"
-            "latitude,longitude,rtsp_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
-            " source=excluded.source, location=excluded.location, enabled=excluded.enabled,"
-            " roi_json=excluded.roi_json, settings_json=excluded.settings_json, notify_json=excluded.notify_json,"
-            " updated_at=excluded.updated_at, latitude=excluded.latitude, longitude=excluded.longitude, rtsp_json=excluded.rtsp_json",
+            "INSERT INTO cameras(id,name,source,location,enabled,settings_json,notify_json,created_at,updated_at,"
+            "latitude,longitude,rtsp_json,store_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
+            " name=excluded.name, source=excluded.source, location=excluded.location, enabled=excluded.enabled,"
+            " settings_json=excluded.settings_json, notify_json=excluded.notify_json,"
+            " updated_at=excluded.updated_at, latitude=excluded.latitude, longitude=excluded.longitude,"
+            " rtsp_json=excluded.rtsp_json, store_id=excluded.store_id",
             (cam["id"], cam["name"], cam["source"], cam.get("location", ""), int(cam.get("enabled", True)),
-             json.dumps(cam.get("roi", [])), json.dumps(cam.get("settings", {})), json.dumps(cam.get("notify", {})),
+             json.dumps(cam.get("settings", {})), json.dumps(cam.get("notify", {})),
              existing["created_at"] if existing else now, now, cam.get("latitude"), cam.get("longitude"),
-             json.dumps(cam.get("rtsp") or {})))
+             json.dumps(cam.get("rtsp") or {}), cam.get("store_id") or None))
         return self.get_camera(cam["id"])  # type: ignore[return-value]
 
     def delete_camera(self, cam_id: str) -> bool:

@@ -10,20 +10,20 @@ import { Kbd, PageHeader, Panel } from '../../components/ui/primitives'
 const GUIDES: { href: string; title: string; icon: LucideIcon; steps: string[] }[] = [
   { href: '/detect/image', title: 'Analyse an image', icon: ImageIcon, steps: [
     'Open Image Analysis and drop a CCTV still (JPEG, PNG, WebP or BMP).',
-    'Optionally define the ROI: click the corners of the outdoor ground area, then Save ROI.',
-    'Choose detection settings and press Analyze Image.',
-    'Review the annotated preview and the detection table (category, confidence, priority).',
+    'Pick the store and camera (or leave them Unknown), choose detection settings and press Analyze Image.',
+    'The whole image is analysed. Review the annotated image and the table of every detection (class, confidence, status).',
+    'Download the detections CSV, summary CSV, annotated image or metadata.',
   ] },
   { href: '/detect/video', title: 'Analyse a video', icon: FileVideo, steps: [
     'Open Video Analysis and drop a CCTV recording (MP4, MOV, AVI, MKV, M4V or WebM).',
-    'Draw the ROI on the first frame if litter should only be counted in one area.',
-    'Adjust sampling and temporal confirmation, then press Analyze Video.',
-    'When processing finishes, the annotated video plays; click timestamps to jump to each detection.',
+    'Quick check (4 screenshots) is the default; switch to Full video (tracking) to pick the store and camera, the recording start (optional) and the sampling interval.',
+    'Press Analyze Video. Every sampled frame is analysed and objects are tracked across frames.',
+    'When processing finishes, the annotated video plays. Unique litter events and frame observations are counted separately; click an event to jump to it.',
   ] },
   { href: '/live-cctv', title: 'Monitor a live camera', icon: Cctv, steps: [
     'Add the camera under Camera Integration (RTSP / NVR details).',
     'Open Live CCTV, select the camera and connect.',
-    'Confirmed litter inside the ROI raises an alert automatically.',
+    'Litter detected with high confidence raises an alert automatically.',
   ] },
   { href: '/alerts', title: 'Work through alerts', icon: AlertTriangle, steps: [
     'New alerts appear under the New tab, highest priority first when sorted.',
@@ -34,9 +34,9 @@ const GUIDES: { href: string; title: string; icon: LucideIcon; steps: string[] }
 ]
 
 const PAGES: { href: string; label: string; icon: LucideIcon; body: string }[] = [
-  { href: '/', label: 'Overview', icon: LayoutGrid, body: 'Totals, priority incidents, trends and the latest evidence. "Videos processed" counts completed video analyses of both kinds (full-video and four-screenshot); a video analysed twice counts twice.' },
+  { href: '/', label: 'Overview', icon: LayoutGrid, body: 'Litter events today and in total, frame observations, most frequent class, store-wise and camera-wise counts, hourly and daily trends, and recent analyses.' },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, body: 'Trends by day, hour, category and camera with filters.' },
-  { href: '/cameras', label: 'Camera Integration', icon: Camera, body: 'Camera list, RTSP configuration and per-camera ROI.' },
+  { href: '/cameras', label: 'Camera Integration', icon: Camera, body: 'Stores, camera list, store per camera and RTSP configuration.' },
   { href: '/settings', label: 'Settings', icon: Settings, body: 'Thresholds, alert rules, appearance and security.' },
 ]
 

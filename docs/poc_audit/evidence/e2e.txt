@@ -1,0 +1,35 @@
+﻿PASS health 200 + model v3 loaded | memory 90.5%
+PASS classes (viewer, no login) | 200 28
+PASS auth/me reachable | 200 {'auth_mode': 'off', 'authenticated': False}
+PASS image detect store_real_frame | 1 dets in 3.7s; classes ['food_wrapper']; has bbox/conf: True; alerts 1; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']
+PASS image detect street_aug100_frame | 19 dets in 1.3s; classes ['cup', 'food_wrapper', 'other_litter', 'paper', 'plastic_bag', 'plastic_packaging', 'plastic_piece']; has bbox/conf: True; alerts 17; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']
+PASS image detect store_footfall_frame | 0 dets in 0.3s; classes []; has bbox/conf: True; alerts 0; keys ['alerts', 'average_confidence', 'by_class', 'camera_id', 'count', 'counts', 'detections', 'filename', 'highest_confidence', 'image_size', 'inference_ms', 'model_version', 'outside_roi_ignored', 'roi_active', 'tiled', 'tiles']
+PASS corrupt image -> 400 | 400 {'detail': 'Could not decode image (corrupt or not an image)'}
+PASS txt upload -> 415 | 415 {'detail': "Unsupported file type '.txt'. Allowed: .bmp, .jpeg, .jpg, .png, .webp"}
+PASS path-traversal filename handled | 200 filename=evil.jpg
+PASS bad camera_id rejected | 422 {'detail': "camera_id may only contain letters, digits, '-' and '_' (max 40)"}
+PASS unknown job file -> 404 | 404
+PASS admin route without token rejected | 401 {'detail': 'Invalid or missing admin token'}
+PASS CORS allows UI origin :3000 | http://localhost:3000
+PASS CORS preflight POST from :3000 | 200
+PASS CORS blocks unknown origin | None
+PASS API docs disabled by default | 404
+PASS video upload -> 202 queued | 202 {'job_id': '20261113_021912_6502a151', 'status': 'queued', 'status_url': '/api/jobs/20261113_021912_6502a151'}
+PASS video job finished | status done in 45s; progress samples [(0, 'running', 0.0), (5, 'running', 0.09), (10, 'running', 0.216)]...[(40, 'running', 0.904), (45, 'done', 1.0)]; error None
+PASS job file video | 200 100098047 bytes video/mp4
+PASS job file detections | 200 257215 bytes application/json
+PASS job file events | 200 1113 bytes application/json
+PASS job file stats | 200 3563 bytes application/json
+PASS job stats/events content | stats keys ['video', 'frames_analysed', 'sample_every_n_frames', 'unique_confirmed_objects', 'litter', 'confirmed_by_class', 'new_alerts', 'detections_by_status', 'rejection_reasons', 'peak_per_frame', 'model_runs', 'frames_reused_static']; events 6
+PASS jobs list includes new job | 3 jobs
+PASS alerts list | 47 alerts; first keys ['bbox', 'camera_id', 'class', 'confidence', 'crop_url', 'id', 'job_id', 'last_seen_ts', 'location', 'model_version', 'notes', 'notified', 'occurrences', 'session_id']
+PASS alert snapshot image | 200 image/jpeg 86878B
+PASS alert status update (operator) | 200 {'id': 47, 'ts': '2026-11-12T20:49:44.102+00:00', 'camera_id': 'upload', 'class': 'food_wrapper', 'confidence': 0.7086, 'track_id': 10, 'session_id': 
+PASS GET /summary | 200 {'live': {}, 'new_alerts': 46, 'alerts_today': 24, 'cameras': []}
+PASS GET /analytics | 200 {'start': None, 'end': None, 'camera_id': None, 'alerts_total': 47, 'confirmed_objects': 48, 'by_camera': [{'camera_id': 'upload', 'n': 47}], 'by_class': [{'cla
+PASS GET /detections | 200 {'detections': [{'id': 4457, 'ts': '2026-11-12T20:49:54.483+00:00', 'camera_id': 'upload', 'source_type': 'video', 'job_id': '20261113_021912_6502a151', 'frame_
+PASS GET /events | 200 {'events': [{'id': 21, 'ts': '2026-11-12T20:49:58.103+00:00', 'level': 'info', 'source': 'alerts', 'camera_id': None, 'message': 'alert 47 -> acknowledged', 'da
+PASS GET /models | 200 {'models': [{'version': 'v3_store_cctv', 'name': 'v3_store_cctv', 'path': 'C:\\SHREE\\YATRIKART\\PROJECTS\\YK_CCTV_L_D_M_main\\YK_CCTV_L_D_M\\models\\litter_yol
+PASS GET /settings | 200 {'settings': {'confidence': {'weak_threshold': 0.3, 'candidate_threshold': 0.45, 'confirmed_threshold': 0.6}, 'inference': {'image_size': 640, 'iou_threshold': 
+
+33/33 passed

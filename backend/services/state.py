@@ -16,7 +16,6 @@ from backend.core.config import AppConfig
 from backend.core.settings import DetectionSettings, merged_settings
 from backend.database.db import Database, utcnow
 from backend.detection.engine import YoloEngine, hardware_profile
-from backend.detection.filters import ROISet
 from backend.services.model_registry import ModelRegistry
 from backend.services.pipeline import StreamPipeline, detect_video
 
@@ -56,8 +55,7 @@ class AppState:
                                               cfg.storage_dir / "runs"], PROJECT_ROOT)
         self.load_engine()
         from backend.sampling.runner import SampledRunner
-        from backend.sampling.segmenter import load_segmenter
-        self.sampled = SampledRunner(self, segmenter=lambda: load_segmenter(cfg))
+        self.sampled = SampledRunner(self)
         from backend.cameras.scheduler import CaptureScheduler
         self.scheduler = CaptureScheduler(self)
         self.scheduler.start_loop()
@@ -69,17 +67,6 @@ class AppState:
     def settings(self, camera: Optional[dict[str, Any]] = None) -> DetectionSettings:
         return merged_settings(self.global_settings_json(), (camera or {}).get("settings"))
 
-    def roi_for(self, camera: Optional[dict[str, Any]], camera_id: Optional[str] = None) -> Optional[ROISet]:
-        """A registered camera's ROI; for a context without a camera row (e.g. "upload") the ROI saved
-        with PUT /api/roi/{camera_id}."""
-        if camera:
-            return ROISet.from_json(camera.get("roi"))
-        return self.upload_roi(camera_id) if camera_id else None
-
-    def upload_roi(self, camera_id: str) -> Optional[ROISet]:
-        raw = self.db.get_setting(f"roi:{camera_id}")
-        return ROISet.from_json(raw) if raw else None
-
     def save_global_settings(self, patch: dict[str, Any]) -> DetectionSettings:
         from backend.core.settings import deep_merge
         new_json = deep_merge(self.global_settings_json(), patch)
@@ -87,7 +74,7 @@ class AppState:
         self.db.set_setting("global", new_json)
         if self.engine:
             self.engine.update_settings(s)
-        self.cameras.refresh_settings(lambda cam: (self.settings(cam), self.roi_for(cam)))
+        self.cameras.refresh_settings(self.settings)
         self.db.log_event("info", "settings", "global detection settings updated", data=patch)
         return s
 
@@ -201,8 +188,9 @@ class AppState:
 
     # ------------------------------------------------------------------ cameras
     def _make_pipeline(self, cam: dict[str, Any]) -> StreamPipeline:
-        return StreamPipeline(self.require_engine(), self.settings(cam), self.roi_for(cam), self.alerts, self.db,
-                              cam["id"], "live", None, cam.get("location", ""), camera_registered=True)
+        from backend.services.live_events import LiveEventRecorder
+        return StreamPipeline(self.require_engine(), self.settings(cam), self.alerts, self.db, cam["id"], "live", None,
+                              cam.get("location", ""), event_sink=LiveEventRecorder(self.db, cam["id"]))
 
     def _live_fps(self, cam: dict[str, Any]) -> float:
         return self.settings(cam).video.live_process_fps
@@ -219,31 +207,67 @@ class AppState:
             self.cameras.sync(self.db.list_cameras())
 
     # ------------------------------------------------------------------ video jobs
-    def submit_video(self, path: Path, camera_id: str, original_name: str,
+    def submit_video(self, path: Path, ident: Any, original_name: str,
                      overrides: Optional[dict[str, Any]] = None, model_version: Optional[str] = None,
-                     use_roi: bool = True) -> str:
+                     recording_start: Optional[Any] = None) -> str:
+        """Full-video analysis on the full frame with tracking. ``ident``: litter_reports.Identity (resolved and
+        validated by the caller). Writes the standard outputs (backend/services/analysis_outputs.py); a failed job
+        gets status FAILED and no CSV."""
+        from backend.services import analysis_outputs as ao
+        from backend.services import video_evidence as ve
+
         job_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         out_dir = self.cfg.videos_dir / job_id
         out_dir.mkdir(parents=True, exist_ok=True)
+        camera_id = ident.camera_id if ident.camera_id != "UNKNOWN" else "upload"
         self.db.create_job(job_id, "video", camera_id, original_name, str(out_dir))
         cam = self.db.get_camera(camera_id)
 
         def run() -> None:
             self.db.update_job(job_id, status="running")
+            aid = paths = started = None
+            settings = self.settings_with(cam, overrides)
+            summary = {"confidence": settings.confidence.model_dump(), "sample_fps": settings.video.sample_fps,
+                       "video_tiling": settings.video.tiling, "image_size": settings.inference.image_size,
+                       "tracking": settings.tracking.model_dump(), "overrides": overrides or {}}
             try:
-                res = detect_video(self.get_engine(model_version), path, out_dir, self.settings_with(cam, overrides),
-                                   self.roi_for(cam, camera_id) if use_roi else None,
-                                   self.db, self.alerts, camera_id, job_id, camera_registered=cam is not None,
+                engine = self.get_engine(model_version)
+                aid, paths, started = ao.start_video(self.db, self.cfg.storage_dir, ident, job_id, engine.version,
+                                                     recording_start)
+                res = detect_video(engine, path, out_dir, settings, self.db, self.alerts, camera_id, job_id,
                                    progress=lambda p, info: self.db.update_job(job_id, progress=round(p, 3),
-                                                                               result={"progress": info}))
+                                                                               result={"progress": info,
+                                                                                       "analysis_id": aid}),
+                                   evidence_dir=paths.sub("annotated"),
+                                   header=ao.header_lines(ident, started))
+                # four evidence screenshots: needs the uploaded file, so before keep_original() moves it
+                ev_root = ve.evidence_dir(self.cfg.storage_dir, aid)
+                shots = ve.build_screenshots(engine=engine, settings=settings, video_path=Path(path), res=res,
+                                             analysis_id=aid, out_dir=ev_root, header=ao.header_lines(ident, started),
+                                             recording_start=recording_start, seed=settings.video.screenshot_seed)
+                ref = ao.keep_original(Path(path), paths, original_name, settings.video.keep_original_video)
+                out = ao.finish_video(self.db, aid, paths, ident, job_id=job_id, res=res,
+                                      recording_start=recording_start, started=started, video_ref=ref,
+                                      settings_summary=summary, screenshots=shots, evidence_root=ev_root,
+                                      candidate_threshold=settings.confidence.candidate_threshold,
+                                      review_min_observations=settings.tracking.min_confirmations)
                 self.db.update_job(job_id, status="done", finished_at=utcnow(), progress=1.0,
                                    result={"stats": res["stats"], "events": res["events"],
-                                           "alert_ids": [a["id"] for a in res["alerts"]]})
+                                           "alert_ids": [a["id"] for a in res["alerts"]],
+                                           "identity": ident.as_dict(), "video_validation": res["validation"], **out})
+                self.db.log_event("info", "video", f"video analysis {job_id} finished: {out['litter']['unique_events']}"
+                                  f" litter event(s), {out['litter']['frame_observations']} observation(s)",
+                                  camera_id)
             except Exception as exc:  # noqa: BLE001
                 log.exception("video job %s failed", job_id)
-                self.db.update_job(job_id, status="failed", finished_at=utcnow(), error=str(exc))
+                if aid is not None:
+                    ao.fail(self.db, aid, paths, ident, getattr(self.engine, "version", ""), str(exc),
+                            {"analysis_id": aid, "kind": "video", "job_id": job_id})
+                self.db.update_job(job_id, status="failed", finished_at=utcnow(), error=str(exc),
+                                   result={"identity": ident.as_dict(),
+                                           "analysis": {"analysis_id": aid, "processing_status": "FAILED"}})
             finally:
-                Path(path).unlink(missing_ok=True)   # uploads are temporary; outputs are kept
+                Path(path).unlink(missing_ok=True)   # moved into LDM_OUTPUT/.../input when kept
 
         self.jobs.submit(run)
         return job_id
