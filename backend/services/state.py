@@ -258,6 +258,13 @@ class AppState:
                 self.db.log_event("info", "video", f"video analysis {job_id} finished: {out['litter']['unique_events']}"
                                   f" litter event(s), {out['litter']['frame_observations']} observation(s)",
                                   camera_id)
+                # ai_garbage_detection import CSV; only when LDM_GARBAGE_EXPORT=on. Never lets an export problem reach
+                # the except below, which would mark this finished job as failed.
+                try:
+                    from backend.services.export_guard import safe_auto_export
+                    safe_auto_export(self, kind="video", source_id=aid, out_dir=ev_root)
+                except Exception:  # noqa: BLE001
+                    log.exception("ai_garbage_detection export guard failed for %s", aid)
             except Exception as exc:  # noqa: BLE001
                 log.exception("video job %s failed", job_id)
                 if aid is not None:

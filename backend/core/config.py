@@ -65,8 +65,26 @@ class AppConfig:
     auth_min_password_length: int = field(default_factory=lambda: _env_int("LM_AUTH_MIN_PASSWORD_LENGTH", 12))
     # Secure cookie flag: auto = only when the request arrived over HTTPS; true/false force it
     auth_cookie_secure: str = field(default_factory=lambda: os.getenv("LM_AUTH_COOKIE_SECURE", "auto").strip().lower())
+    # ai_garbage_detection import CSV (backend/services/garbage_export.py). OFF by default: when on, every finished
+    # four-screenshot job / video analysis is also exported (a failed export never fails the analysis).
+    garbage_export_mode: str = field(default_factory=lambda: os.getenv("LDM_GARBAGE_EXPORT", "off").strip().lower())
+    store_config_path: Path = field(
+        default_factory=lambda: _env_path("LDM_STORE_CONFIG", PROJECT_ROOT / "config" / "store_config.json"))
+    garbage_export_dir: Path = field(default_factory=lambda: _env_path(
+        "LDM_GARBAGE_EXPORT_DIR", PROJECT_ROOT / "storage" / "exports" / "ai_garbage_detection"))
+    garbage_export_ledger: Path = field(default_factory=lambda: _env_path(
+        "LDM_GARBAGE_EXPORT_LEDGER", PROJECT_ROOT / "storage" / "exports" / "ai_garbage_detection_ledger.db"))
+    # MP4 container creation time as recording start. Off: the exports seen so far carry an encode time there.
+    trust_container_time: bool = field(
+        default_factory=lambda: os.getenv("LDM_TRUST_CONTAINER_TIME", "off").strip().lower() in ("on", "true"))
+
+    @property
+    def garbage_export_enabled(self) -> bool:
+        return self.garbage_export_mode == "on"
 
     def __post_init__(self) -> None:
+        if self.garbage_export_mode not in ("off", "on"):
+            raise ValueError(f"LDM_GARBAGE_EXPORT must be 'off' or 'on' (got {self.garbage_export_mode!r})")
         if self.auth_mode not in ("off", "on"):
             raise ValueError(f"LM_AUTH_MODE must be 'off' or 'on' (got {self.auth_mode!r})")
         if self.auth_cookie_secure not in ("auto", "true", "false"):

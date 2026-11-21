@@ -1,0 +1,12 @@
+{
+  "_comment": "Store master data for the ai_garbage_detection import CSV (backend/services/garbage_export.py). One entry per store. storeKey = the S3 folder name the importer uses as the store key; storeName = the store name written in every row; cart_id = whole number (CONFIRM its meaning and source with the importer owner); camera_ids = every camera of that store, exactly as entered in the app. Placeholder values (REPLACE_...) and a null cart_id are rejected on purpose: nothing is exported until real values are filled in. Check with: py -m backend.services.garbage_export check-config",
+  "schema_version": 1,
+  "stores": [
+    {
+      "storeKey": "REPLACE_WITH_S3_STORE_FOLDER",
+      "storeName": "REPLACE_WITH_STORE_NAME",
+      "cart_id": null,
+      "camera_ids": ["REPLACE_WITH_CAMERA_ID"]
+    }
+  ]
+}

@@ -357,3 +357,9 @@ class SampledRunner:
                              error="No screenshot could be analysed (see the per-screenshot errors)." if failed_all else None)
         self.state.db.log_event("info", "sampled", f"four-screenshot analysis {job_id} finished: "
                                 f"{totals['litter']} litter detection(s)", job.get("camera_id"))
+        if not failed_all:      # ai_garbage_detection import CSV; only when LDM_GARBAGE_EXPORT=on
+            try:                # never lets an export problem reach the job's error handler (job stays "done")
+                from backend.services.export_guard import safe_auto_export
+                safe_auto_export(self.state, kind="sampled", source_id=job_id, out_dir=rdir)
+            except Exception:  # noqa: BLE001
+                log.exception("ai_garbage_detection export guard failed for %s", job_id)

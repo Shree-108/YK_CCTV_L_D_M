@@ -201,3 +201,24 @@ The seven `*_count` columns count unique DETECTED events of exactly those class 
 
 Output folder: `<storage>/LDM_OUTPUT/<STORE>/<YYYY>/<MM>/<DD>/<CAMERA>/{input,annotated,detections,reports,metadata}/`
 (UNKNOWN_STORE / UNKNOWN_CAMERA when unknown). File names carry the analysis id, so nothing is overwritten.
+
+## Import CSV for the dashboard importer (`ai_garbage_detection`, 2026-11-20)
+
+Additive: the CSV formats above are unchanged. Format, rules and validator live only in
+`backend/services/garbage_export.py` (module docstring = full contract).
+
+- Folder: `storage/exports/ai_garbage_detection/<storeKey>/<YYYY-MM-DD>/<storeKey>_<date>_<camera>_<source id>_<stamp>.csv`;
+  one new file per run, camera and date. A file is never rewritten; a camera check (storeKey, camera_id, timestamp) is
+  exported at most once (ledger `storage/exports/ai_garbage_detection_ledger.db`).
+- Columns (fixed order, UTF-8 without BOM, comma, RFC 4180 quoting):
+  `timestamp,camera_id,image_name,litter_class,confidence_score,detection_status,remark,cart_id,store_name`.
+- One row = one check (one analysed screenshot of a four-screenshot job or of a full-video analysis).
+  `detection_status` = `clean` | `litter_detected` | `view_blocked`; class/confidence empty unless `litter_detected`;
+  confidence 0-100 (2 dp); timestamp Asia/Kolkata `YYYY-MM-DDTHH:MM:SS+05:30` = recording start + frame offset (source
+  in `remark`; never processing time - no source, no file).
+- Store data: `config/store_config.json` (`storeKey`, `storeName`, `cart_id`, `camera_ids`); placeholders are rejected.
+- Switches: `LDM_GARBAGE_EXPORT=on` (export every finished run automatically; default off), `LDM_STORE_CONFIG`,
+  `LDM_GARBAGE_EXPORT_DIR`, `LDM_GARBAGE_EXPORT_LEDGER`, `LDM_TRUST_CONTAINER_TIME` (default off).
+- CLI: `py -m backend.services.garbage_export check-config | export --sampled-job ID | --video-analysis ID
+  [--store-key K --camera-id C --recording-start ISO] | validate FILE...`.
+- Older CSVs in `storage/` are test output: `storage/TEST_OUTPUT_CSV_NOTICE.md`.
