@@ -66,8 +66,16 @@ class CameraUpdate(BaseModel):
 
 class AlertUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    status: Optional[Literal["new", "acknowledged", "resolved", "false_positive"]] = None
+    status: Optional[Literal["new", "review", "confirmed", "dismissed", "acknowledged", "resolved", "false_positive"]] = None
     notes: Optional[str] = Field(None, max_length=2000)
+
+
+class AlertDecision(BaseModel):
+    """CCTV room (pilot): Confirm needs nothing; Dismiss needs a reason (logged with crop, full frame and time)."""
+    model_config = ConfigDict(extra="forbid")
+    reason: Optional[Literal["shadow", "carton", "stock", "puddle", "person_vehicle", "duplicate", "already_cleaned",
+                             "other"]] = None
+    note: Optional[str] = Field(None, max_length=500)
 
 
 class StoreIn(BaseModel):
@@ -629,15 +637,18 @@ async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = F
                                 create_alerts: bool = Form(True),
                                 store_id: Optional[str] = Form(None, max_length=64),
                                 save_outputs: bool = Form(True),
+                                roi_polygons: Optional[str] = Form(None, max_length=200_000),
                                 state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Single-image litter detection on the FULL frame. Every detection the model returned (above the weak floor) is
     listed and drawn with its detection_status. With ``save_outputs`` (default) the analysis is stored: original,
     annotated image, detection CSV, summary CSV and metadata under LDM_OUTPUT/<store>/<date>/<camera>/, plus one
     litter event per DETECTED object. Store/camera identity: backend/services/litter_store.py (422 on a camera
-    that belongs to another store)."""
+    that belongs to another store). Detection runs only inside the camera's monitored region (automatic pavement ROI,
+    backend/services/roi_service.py); ``roi_polygons`` (JSON, normalised) overrides it for this request."""
     if camera_id and camera_id != "upload":
         check_camera_id(camera_id)
     ident = _identity(state, store_id, camera_id)
+    req_polys = _roi_polygons(roi_polygons)
     _engine(state)
     try:
         engine = state.get_engine(model_version)
@@ -653,11 +664,12 @@ async def detect_image_endpoint(file: UploadFile = File(...), camera_id: str = F
         cam = state.db.get_camera(cam_key)
         s = _settings_override(state, cam, confidence, image_size, tiling)
         when = lr.local_now()
+        roi = await asyncio.to_thread(state.roi_for_frames, cam_key, [img], s, req_polys)
         res = await asyncio.to_thread(detect_image, engine, img, s, state.meta, state.db,
                                       state.alerts if create_alerts else None, cam_key, name,
                                       location=" · ".join(x for x in (ident.store_id, ident.camera_id)
                                                           if x != lr.UNKNOWN),
-                                      header=ao.header_lines(ident, when))
+                                      header=ao.header_lines(ident, when), roi=roi)
         summary = {"confidence": s.confidence.model_dump(), "inference_image_size": s.inference.image_size,
                    "tiling": tiling, "create_alerts": create_alerts}
         res["analysis"] = await asyncio.to_thread(
@@ -733,6 +745,7 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
                                 min_confirmations: Optional[int] = Form(None, ge=1, le=100),
                                 model_version: Optional[str] = Form(None),
                                 screenshot_seed: Optional[int] = Form(None, ge=0, le=2**31 - 1),
+                                roi_polygons: Optional[str] = Form(None, max_length=200_000),
                                 state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Full-video litter detection (full frame, tracking, unique litter events). ``sample_interval_sec``: one frame
     analysed every N seconds (wins over ``sample_fps``). ``recording_start``: local date-time of the first frame;
@@ -740,6 +753,7 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
     if camera_id and camera_id != "upload":
         check_camera_id(camera_id)
     ident = _identity(state, store_id, camera_id)
+    req_polys = _roi_polygons(roi_polygons)
     try:
         start = parse_recording_start(recording_start)
     except ValueError:
@@ -775,7 +789,8 @@ async def detect_video_endpoint(file: UploadFile = File(...), camera_id: str = F
     if model_version and model_version not in {m["version"] for m in state.db.list_models()}:
         path.unlink(missing_ok=True)
         raise HTTPException(404, f"model {model_version} not found")
-    job_id = state.submit_video(path, ident, safe_display_name(file.filename), patch, model_version or None, start)
+    job_id = state.submit_video(path, ident, safe_display_name(file.filename), patch, model_version or None, start,
+                                roi_polygons=req_polys)
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/jobs/{job_id}", "identity": ident.as_dict()}
 
 
@@ -829,13 +844,66 @@ def job_file(job_id: str, kind: str, state: AppState = Depends(get_state)) -> Fi
 def list_alerts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
                 camera_id: Optional[str] = None, cls: Optional[str] = Query(None, alias="class"),
                 severity: Optional[Literal["LOW", "MEDIUM", "HIGH"]] = None,
-                status: Optional[Literal["new", "acknowledged", "resolved", "false_positive"]] = None,
+                status: Optional[Literal["new", "review", "confirmed", "dismissed", "acknowledged", "resolved", "false_positive"]] = None,
                 min_confidence: Optional[float] = Query(None, ge=0, le=1),
                 start: Optional[str] = None, end: Optional[str] = None,
                 state: AppState = Depends(get_state)) -> dict[str, Any]:
     rows, total = state.db.list_alerts(limit, offset, start, end, min_confidence, camera_id=camera_id,
                                        severity=severity, status=status, **{"class": cls})
     return {"alerts": [_alert_out(a) for a in rows], "total": total}
+
+
+@router.get("/alerts/dismissals", dependencies=VIEWER)
+def list_dismissals(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+                    state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """Pilot dismissal log: reason, time, who, and the crop / full frame kept at dismissal time."""
+    rows, total = state.db.list_dismissals(limit, offset)
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["bbox"] = [r.pop("x1"), r.pop("y1"), r.pop("x2"), r.pop("y2")]
+        r["crop_url"] = f"/api/alerts/dismissals/{r['id']}/image?kind=crop" if r.get("crop_path") else None
+        r["full_url"] = f"/api/alerts/dismissals/{r['id']}/image?kind=full" if r.get("full_path") else None
+        r.pop("crop_path", None)
+        r.pop("full_path", None)
+        out.append(r)
+    return {"dismissals": out, "total": total}
+
+
+@router.get("/alerts/dismissals/{dismissal_id}/image", dependencies=VIEWER)
+def dismissal_image(dismissal_id: int, kind: Literal["full", "crop"] = "crop",
+                    state: AppState = Depends(get_state)) -> FileResponse:
+    rows = state.db._query("SELECT crop_path, full_path FROM alert_dismissals WHERE id=?", (dismissal_id,))
+    path = rows and rows[0].get("crop_path" if kind == "crop" else "full_path")
+    if not path:
+        raise HTTPException(404, "Image not found")
+    p = Path(path).resolve()
+    if not p.is_file() or state.cfg.storage_dir.resolve() not in p.parents:
+        raise HTTPException(404, "Image not found")
+    return FileResponse(p, media_type="image/jpeg")
+
+
+@router.post("/alerts/{alert_id}/confirm", dependencies=OPERATOR)
+def confirm_alert(alert_id: int, request: Request, body: Optional[AlertDecision] = None,
+                  state: AppState = Depends(get_state)) -> dict[str, Any]:
+    a = state.alerts.confirm(alert_id, actor_of(request) or "", (body.note if body else None) or "")
+    if a is None:
+        raise HTTPException(404, "Alert not found")
+    state.db.log_event("info", "alerts", f"alert {alert_id} confirmed by the CCTV room", a["camera_id"])
+    return _alert_out(a)
+
+
+@router.post("/alerts/{alert_id}/dismiss", dependencies=OPERATOR)
+def dismiss_alert(alert_id: int, body: AlertDecision, request: Request,
+                  state: AppState = Depends(get_state)) -> dict[str, Any]:
+    if not body.reason:
+        raise HTTPException(422, "A dismissal needs a reason")
+    a = state.alerts.dismiss(alert_id, body.reason, body.note or "", actor_of(request) or "",
+                             state.cfg.storage_dir / "dismissals")
+    if a is None:
+        raise HTTPException(404, "Alert not found")
+    state.db.log_event("info", "alerts", f"alert {alert_id} dismissed ({body.reason})", a["camera_id"])
+    return _alert_out(a)
 
 
 @router.get("/alerts/{alert_id}", dependencies=VIEWER)
@@ -952,6 +1020,17 @@ def put_settings(patch: dict[str, Any], state: AppState = Depends(get_state)) ->
     except ValidationError as exc:
         raise HTTPException(422, [{"loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]) from exc
     return {"settings": s.model_dump()}
+
+
+def _roi_polygons(raw: Optional[str]) -> Any:
+    """``roi_polygons`` form field: JSON list of polygons (normalised 0..1) -> validated, or None."""
+    if not raw:
+        return None
+    from backend.services.roi_service import validate_polygons
+    try:
+        return validate_polygons(json.loads(raw))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, f"invalid roi_polygons: {exc}") from exc
 
 
 def _override_patch(state: AppState, cam: Optional[dict[str, Any]], confidence: Optional[float],

@@ -44,6 +44,11 @@ class AppState:
         for j in self.db._query("SELECT id FROM jobs WHERE status IN ('queued','running')", ()):
             self.db.update_job(j["id"], status="failed", finished_at=utcnow(),
                                error="Interrupted: the server restarted during processing. Please upload the video again.")
+        from backend.services.roi_service import RoiService
+        # automatic monitored region (pavement ROI): config/camera_roi.json, reference frames in storage/auto_roi
+        self.roi = RoiService(cfg.roi_store_path, cfg.storage_dir / "auto_roi", enabled=cfg.roi_mode == "on",
+                              legacy_path=cfg.storage_dir / "camera_roi.json")
+        self.roi_warmup: dict[str, Any] = {"state": "not started"}
         self.cameras = CameraManager(self._make_pipeline, self._live_fps, self._camera_event, capture_factory)
         self._hw: Optional[dict[str, Any]] = None
         self._pool: dict[str, YoloEngine] = {}
@@ -189,8 +194,41 @@ class AppState:
     # ------------------------------------------------------------------ cameras
     def _make_pipeline(self, cam: dict[str, Any]) -> StreamPipeline:
         from backend.services.live_events import LiveEventRecorder
+        from backend.services.roi_service import LiveRoi
+        roi = LiveRoi(self.roi, cam["id"], lambda: self.settings(self.db.get_camera(cam["id"]) or cam)) \
+            if self.roi.enabled else None
         return StreamPipeline(self.require_engine(), self.settings(cam), self.alerts, self.db, cam["id"], "live", None,
-                              cam.get("location", ""), event_sink=LiveEventRecorder(self.db, cam["id"]))
+                              cam.get("location", ""), event_sink=LiveEventRecorder(self.db, cam["id"]), roi=roi)
+
+    # ------------------------------------------------------------------ monitored region (ROI)
+    def roi_for_frames(self, camera_id: Optional[str], frames: Any, settings: DetectionSettings,
+                       request_polygons: Any = None) -> Any:
+        """RoiContext for one image / a few frames (cached per camera; None when ROI is off)."""
+        return self.roi.resolve(camera_id, frames, settings, request_polygons)
+
+    def warmup_roi(self) -> None:
+        """App start (background thread): load the segmenter and build missing/stale ROIs of configured cameras that
+        are not streaming (streaming cameras build theirs from the live frames)."""
+        from backend.services.roi_service import frames_from_source
+
+        def frames_for(cam: dict[str, Any]) -> list[Any]:
+            if cam["id"] in self.cameras.workers:
+                return []
+            return frames_from_source(cam, self.settings(cam).roi)
+
+        self.roi_warmup = {"state": "running"}
+        try:
+            cams = [c for c in self.db.list_cameras() if c.get("enabled", True) and c["id"] not in self.cameras.workers]
+            res = self.roi.warmup(self.settings(), cams, frames_for)
+            self.roi_warmup = {"state": "done", **res}
+            if res.get("error"):
+                self.db.log_event("error", "roi", f"ROI model not available: {res['error']}")
+            else:
+                self.db.log_event("info", "roi", f"ROI ready ({res.get('model')}); {len(res['cameras'])} camera(s)"
+                                  " checked at start-up")
+        except Exception as exc:  # noqa: BLE001 - start-up must never fail because of the ROI
+            log.exception("ROI warm-up failed")
+            self.roi_warmup = {"state": "failed", "error": str(exc)}
 
     def _live_fps(self, cam: dict[str, Any]) -> float:
         return self.settings(cam).video.live_process_fps
@@ -209,7 +247,7 @@ class AppState:
     # ------------------------------------------------------------------ video jobs
     def submit_video(self, path: Path, ident: Any, original_name: str,
                      overrides: Optional[dict[str, Any]] = None, model_version: Optional[str] = None,
-                     recording_start: Optional[Any] = None) -> str:
+                     recording_start: Optional[Any] = None, roi_polygons: Any = None) -> str:
         """Full-video analysis on the full frame with tracking. ``ident``: litter_reports.Identity (resolved and
         validated by the caller). Writes the standard outputs (backend/services/analysis_outputs.py); a failed job
         gets status FAILED and no CSV."""
@@ -234,17 +272,21 @@ class AppState:
                 engine = self.get_engine(model_version)
                 aid, paths, started = ao.start_video(self.db, self.cfg.storage_dir, ident, job_id, engine.version,
                                                      recording_start)
+                # monitored region: ~30 frames of the first ~10 s, majority vote (cached per camera)
+                self.db.update_job(job_id, result={"progress": {"stage": "monitored region"}, "analysis_id": aid})
+                roi = self.roi.for_video(camera_id, path, settings, roi_polygons)
                 res = detect_video(engine, path, out_dir, settings, self.db, self.alerts, camera_id, job_id,
                                    progress=lambda p, info: self.db.update_job(job_id, progress=round(p, 3),
                                                                                result={"progress": info,
                                                                                        "analysis_id": aid}),
                                    evidence_dir=paths.sub("annotated"),
-                                   header=ao.header_lines(ident, started))
+                                   header=ao.header_lines(ident, started), roi=roi)
                 # four evidence screenshots: needs the uploaded file, so before keep_original() moves it
                 ev_root = ve.evidence_dir(self.cfg.storage_dir, aid)
                 shots = ve.build_screenshots(engine=engine, settings=settings, video_path=Path(path), res=res,
                                              analysis_id=aid, out_dir=ev_root, header=ao.header_lines(ident, started),
-                                             recording_start=recording_start, seed=settings.video.screenshot_seed)
+                                             recording_start=recording_start, seed=settings.video.screenshot_seed,
+                                             roi=roi)
                 ref = ao.keep_original(Path(path), paths, original_name, settings.video.keep_original_video)
                 out = ao.finish_video(self.db, aid, paths, ident, job_id=job_id, res=res,
                                       recording_start=recording_start, started=started, video_ref=ref,
@@ -254,6 +296,7 @@ class AppState:
                 self.db.update_job(job_id, status="done", finished_at=utcnow(), progress=1.0,
                                    result={"stats": res["stats"], "events": res["events"],
                                            "alert_ids": [a["id"] for a in res["alerts"]],
+                                           **({"roi": res["stats"]["roi"]} if res["stats"].get("roi") else {}),
                                            "identity": ident.as_dict(), "video_validation": res["validation"], **out})
                 self.db.log_event("info", "video", f"video analysis {job_id} finished: {out['litter']['unique_events']}"
                                   f" litter event(s), {out['litter']['frame_observations']} observation(s)",

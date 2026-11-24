@@ -1,6 +1,6 @@
 import { api, qs } from './client'
 import type {
-  Alert, AlertStatus, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
+  Alert, AlertDismissal, AlertStatus, DismissReason, Analytics, Annotation, Camera, ClassInfo, DatasetImage, DatasetStats, DatasetSummary,
   DetectionRow, Evaluation, EvaluationListItem, Experiment, ExperimentDetail, HardExample, Health,
   Capture, CctvTestResult, ImageDetectResult, ScheduleConfig, ScheduleStatus, Job, RtspConfig, LiveFrame, ModelInfo, SearchResult, Settings, SystemEvent, SystemHealth,
   TestLabResponse, VideoResult, Store, Identity, LitterEvent, LitterEventQuery, LitterAnalysis, LitterAnalytics, LitterAnalyticsQuery, ReviewStatus,
@@ -45,6 +45,10 @@ export const Api = {
   alerts: (q: AlertQuery = {}) => api<{ alerts: Alert[]; total: number }>(`/api/alerts${qs(q)}`),
   alert: (id: number) => api<Alert>(`/api/alerts/${id}`),
   updateAlert: (id: number, body: { status?: AlertStatus; notes?: string }) => api<Alert>(`/api/alerts/${id}`, { method: 'PATCH', body }),
+  /** Pilot CCTV room decisions: Confirm, or Dismiss with a reason (logged with crop, full frame and time). */
+  confirmAlert: (id: number, note?: string) => api<Alert>(`/api/alerts/${id}/confirm`, { method: 'POST', body: note ? { note } : {} }),
+  dismissAlert: (id: number, reason: DismissReason, note?: string) => api<Alert>(`/api/alerts/${id}/dismiss`, { method: 'POST', body: { reason, ...(note ? { note } : {}) } }),
+  dismissals: (limit = 100, offset = 0) => api<{ dismissals: AlertDismissal[]; total: number }>(`/api/alerts/dismissals${qs({ limit, offset })}`),
   alertTimeline: (id: number) => api<{ observations: { ts: string; frame_idx: number; video_time_sec: number | null; class: string; confidence: number; status: string }[]; note: string | null }>(`/api/alerts/${id}/timeline`),
 
   detections: (q: { limit?: number; offset?: number; camera_id?: string; status?: string; job_id?: string; start?: string; end?: string; class?: string; model_version?: string; min_confidence?: number }) =>

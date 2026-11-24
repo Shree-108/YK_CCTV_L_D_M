@@ -157,7 +157,10 @@ def test_severity_rules_configurable(tmp_path):
 def test_video_confirms_static_litter_once_and_outputs_files(engine, litter_image, make_video, tmp_path):
     video = make_video([litter_image], repeat=15, fps=5.0)        # 3 s static scene
     db, am = _alert_mgr(tmp_path)
-    res = detect_video(engine, video, tmp_path / "out", DetectionSettings(), db, am, "CAM01", "job1")
+    # this test is about temporal confirmation + dedup (one alert per object), not the pilot rules (30 s stationary,
+    # 10-minute cooldown per location: tests/test_pilot_alerts.py), so pilot mode is off here
+    s = merged_settings({"alerts": {"pilot_mode": False}})
+    res = detect_video(engine, video, tmp_path / "out", s, db, am, "CAM01", "job1")
     st = res["stats"]
     gt = len(fixture_boxes(litter_image))
     assert 1 <= st["unique_confirmed_objects"] <= gt + 5           # roughly one object per real item, not per frame

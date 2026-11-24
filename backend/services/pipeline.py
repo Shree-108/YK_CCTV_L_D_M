@@ -4,9 +4,10 @@ FRAME -> YOLO on the FULL frame (optional overlapping tiles for small objects) -
       -> filters (confidence tier, class, size, aspect) -> tracker (ByteTrack-style) -> temporal confirmation
       -> litter events / alert manager
 
-There is no region of interest (owner decision 2026-11-19: ROI removed from the application). Every detection the
-model returns above ``confidence.weak_threshold`` is kept, tagged with a status and shown; nothing is discarded for
-where it is in the picture.
+Monitored region (owner brief 2026-11-24, backend/services/roi_service.py): when a caller passes an ROI context,
+detection runs only inside the automatic pavement region (uniform gate, masked crop, bottom-centre + overlap rule).
+Without one (``roi=None``) the frame is processed whole, exactly as before. Inside the region every detection above
+``confidence.weak_threshold`` is kept, tagged with a status and shown.
 
 Terms used in results (backend/services/litter_reports.py):
   observation   one detection in one processed frame
@@ -35,6 +36,8 @@ from backend.detection.engine import YoloEngine
 from backend.detection.filters import apply_filters, confirm_single_image
 from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detection, InferenceInfo
 from backend.services.litter_reports import DETECTED, TRACKED, detection_status, iso, local_now
+from backend.services.roi_service import (NO_LITTER_MSG, RoiContext, StaticCandidates, resolve_candidates,
+                                          roi_detect)
 from backend.services.visualization import annotate, annotate_litter
 from backend.tracking.tracker import LitterTracker
 
@@ -49,6 +52,7 @@ class FrameResult:
     inference_ms: float
     tiled: bool
     events: list[dict[str, Any]] = field(default_factory=list)
+    roi: Optional[dict[str, Any]] = None          # roi_service block of this frame (None: no ROI)
 
 
 def summarize(dets: list[Detection], tracker: LitterTracker, new_alerts: int) -> dict[str, int]:
@@ -65,6 +69,23 @@ def _copy(dets: list[Detection]) -> list[Detection]:
     return [Detection(list(d.bbox), d.cls_id, d.cls_name, d.confidence, source=d.source) for d in dets]
 
 
+def _copy_block(block: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    return json.loads(json.dumps(block)) if block is not None else None
+
+
+def pending_block(camera_id: str) -> dict[str, Any]:
+    """Live stream whose monitored region is still being computed: nothing is scanned meanwhile."""
+    return {"applied": False, "source": "pending", "camera_id": camera_id, "status": "roi_pending",
+            "warning": "Monitored region is being computed: detection starts when it is ready",
+            "candidates": [], "polygons": [], "remark_tags": ["roi_pending"], "detector_run": False}
+
+
+def confirming_boxes(dets: list[Detection], s: DetectionSettings) -> list[list[float]]:
+    """Detector boxes that confirm a colour candidate: kept by the filters and at/above the confirmed threshold."""
+    return [d.bbox for d in dets if d.status in (CANDIDATE, CONFIRMED)
+            and d.confidence >= s.confidence.confirmed_threshold]
+
+
 EventSink = Callable[[str, Any, "StreamPipeline", Optional[np.ndarray], list[Detection]], None]
 
 
@@ -74,7 +95,7 @@ class StreamPipeline:
 
     def __init__(self, engine: YoloEngine, settings: DetectionSettings, alerts: Optional[AlertManager],
                  db: Optional[Database], camera_id: str, source_type: str = "live", job_id: Optional[str] = None,
-                 location: str = "", event_sink: Optional[EventSink] = None) -> None:
+                 location: str = "", event_sink: Optional[EventSink] = None, roi: Any = None) -> None:
         self.engine, self.settings = engine, settings
         self.alerts, self.db = alerts, db
         self.camera_id, self.source_type, self.job_id, self.location = camera_id, source_type, job_id, location
@@ -87,13 +108,29 @@ class StreamPipeline:
         self._last_infer_t: Optional[float] = None
         self.frames_reused = 0
         self._last_log = 0.0
+        # ROI: a fixed RoiContext (video) or a provider with .update(frame) -> RoiContext|None and .pending (live)
+        self.roi = roi
+        self._last_block: Optional[dict[str, Any]] = None
+        self._static = StaticCandidates()
+        self.roi_counts: Counter = Counter()
+        # pilot stationary rule: (first time seen, first box) per track; confirmed tracks waiting to be still
+        self._first_pos: dict[int, tuple[float, list[float]]] = {}
+        self._await_still: set[int] = set()
+
+    def roi_for(self, frame: np.ndarray) -> tuple[Optional[RoiContext], bool]:
+        """(context, pending). pending: a live ROI is still being built -> detection waits."""
+        if self.roi is None or isinstance(self.roi, RoiContext):
+            return self.roi, False
+        ctx = self.roi.update(frame)
+        return ctx, bool(getattr(self.roi, "pending", False))
 
     def update_settings(self, settings: DetectionSettings) -> None:
         self.settings = settings
         self.tracker.update_settings(settings)
 
     def _raw_detect(self, frame: np.ndarray, s: DetectionSettings, video_time: Optional[float],
-                    force_tiling: Optional[bool], allow_reuse: bool) -> tuple[list[Detection], Any, bool]:
+                    force_tiling: Optional[bool], allow_reuse: bool
+                    ) -> tuple[list[Detection], Any, bool, Optional[dict[str, Any]]]:
         """Run the model, or - for a fixed camera whose view has not changed - reuse the previous raw
         detections. Reuse is bounded by ``max_reuse_sec`` so the model re-checks the scene regularly."""
         v = s.video
@@ -102,11 +139,14 @@ class StreamPipeline:
                 and video_time is not None and self._last_infer_t is not None
                 and video_time - self._last_infer_t < v.max_reuse_sec
                 and float(np.mean(np.abs(thumb - self._last_thumb))) < v.static_diff_threshold):
-            return _copy(self._last_raw), InferenceInfo(), True
-        dets, info = self.engine.detect_many([frame], s, force_tiling)[0]
-        self._last_raw = _copy(dets)
+            return _copy(self._last_raw), InferenceInfo(), True, _copy_block(self._last_block)
+        ctx, pending = self.roi_for(frame)
+        if pending:
+            return [], InferenceInfo(), False, pending_block(self.camera_id)
+        dets, info, block = roi_detect(self.engine, frame, s, ctx, force_tiling)
+        self._last_raw, self._last_block = _copy(dets), _copy_block(block)
         self._last_thumb, self._last_infer_t = thumb, video_time
-        return dets, info, False
+        return dets, info, False, block
 
     def plan_reuse(self, frame: np.ndarray, video_time: float) -> bool:
         """Decide (in frame order) whether this frame can reuse the previous model output. Frames that
@@ -126,24 +166,50 @@ class StreamPipeline:
                 precomputed: Optional[tuple[list[Detection], Any]] = None, reuse_previous: bool = False) -> FrameResult:
         s = self.settings
         if precomputed is not None:
-            dets, info = precomputed
+            dets, info = precomputed[0], precomputed[1]
+            block = precomputed[2] if len(precomputed) > 2 else None
             reused = False
-            self._last_raw = _copy(dets)
+            self._last_raw, self._last_block = _copy(dets), _copy_block(block)
         elif reuse_previous and self._last_raw is not None:
-            dets, info, reused = _copy(self._last_raw), InferenceInfo(), True
+            dets, info, reused, block = _copy(self._last_raw), InferenceInfo(), True, _copy_block(self._last_block)
         else:
-            dets, info, reused = self._raw_detect(frame, s, video_time, force_tiling, allow_reuse)
+            dets, info, reused, block = self._raw_detect(frame, s, video_time, force_tiling, allow_reuse)
         self.frames_reused += int(reused)
         apply_filters(dets, frame.shape, s)
+        if block is not None:
+            # colour candidates: confirmed by a strong detector box in this frame, or by staying static
+            resolve_candidates(block, confirming_boxes(dets, s))
+            self._static.update(block, video_time if video_time is not None else time.monotonic(), s.roi)
+            self.roi_counts[block.get("status") or "none"] += 1
+            self.roi_counts["possible_candidates"] += sum(1 for c in block.get("candidates") or []
+                                                          if c["state"] == "possible")
         track_events = self.tracker.update(dets, frame_idx, frame.shape)
         now = utcnow()
+        t_now = video_time if video_time is not None else time.monotonic()
         for d in dets:
             if d.track_id is not None:
                 self._first_seen.setdefault(d.track_id, now)
+                self._first_pos.setdefault(d.track_id, (t_now, list(d.bbox)))
+        in_roi = None if block is None else bool(block.get("applied"))
 
         new_alerts: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
-        annotated_cache: Optional[np.ndarray] = None
+        annotated_cache: list[Optional[np.ndarray]] = [None]
+
+        def raise_alert(t: Any) -> Optional[dict[str, Any]]:
+            if annotated_cache[0] is None:
+                annotated_cache[0] = annotate_fn(frame, dets) if annotate_fn else annotate(frame, dets)
+            return self.alerts.on_confirmed(ConfirmedEvent(
+                camera_id=self.camera_id, session_id=self.session_id, track_id=t.track_id, cls_name=t.cls_name,
+                confidence=t.mean_hit_conf, bbox=[round(v, 1) for v in t.bbox], frame=frame,
+                annotated=annotated_cache[0], video_time_sec=video_time,
+                first_seen_ts=self._first_seen.get(t.track_id, now), hits=t.total_hits,
+                active_objects=sum(1 for x in self.tracker.visible_tracks() if x.confirmed), location=self.location,
+                job_id=self.job_id, source_type=self.source_type, model_version=self.engine.version,
+                live_track_ids=frozenset(x.track_id for x in self.tracker.active_tracks), in_roi=in_roi), s)
+
+        a = s.alerts
+        wait_still = a.pilot_mode and a.stationary_sec > 0 and self.source_type in ("video", "live")
         for ev in track_events:
             t = ev.track
             events.append({"event": ev.kind, "track_id": t.track_id, "class": t.cls_name, "frame_idx": frame_idx,
@@ -154,25 +220,45 @@ class StreamPipeline:
                 except Exception:  # noqa: BLE001 - recording an event must never stop detection
                     log.exception("event sink failed for %s track %s", self.camera_id, t.track_id)
             if ev.kind == "confirmed" and self.alerts is not None:
-                if annotated_cache is None:
-                    annotated_cache = annotate_fn(frame, dets) if annotate_fn else annotate(frame, dets)
-                alert = self.alerts.on_confirmed(ConfirmedEvent(
-                    camera_id=self.camera_id, session_id=self.session_id, track_id=t.track_id, cls_name=t.cls_name,
-                    confidence=t.mean_hit_conf, bbox=[round(v, 1) for v in t.bbox], frame=frame,
-                    annotated=annotated_cache, video_time_sec=video_time,
-                    first_seen_ts=self._first_seen.get(t.track_id, now), hits=t.total_hits,
-                    active_objects=sum(1 for x in self.tracker.visible_tracks() if x.confirmed), location=self.location,
-                    job_id=self.job_id, source_type=self.source_type, model_version=self.engine.version,
-                    live_track_ids=frozenset(x.track_id for x in self.tracker.active_tracks)), s)
+                if wait_still:
+                    self._await_still.add(t.track_id)      # pilot: alert once it has been stationary long enough
+                    continue
+                alert = raise_alert(t)
                 if alert:
                     new_alerts.append(alert)
                     events[-1]["alert_id"] = alert["id"]
-            elif ev.kind == "lost" and self.alerts is not None:
-                self.alerts.on_lost(self.session_id, t.track_id)
+            elif ev.kind == "lost":
+                self._await_still.discard(t.track_id)
+                if self.alerts is not None:
+                    self.alerts.on_lost(self.session_id, t.track_id)
+        if self._await_still and self.alerts is not None:
+            visible = {x.track_id: x for x in self.tracker.visible_tracks(grace=0)}
+            for tid in sorted(self._await_still):
+                t = visible.get(tid)
+                first = self._first_pos.get(tid)
+                if t is None or first is None or t_now - first[0] < a.stationary_sec:
+                    continue
+                fb, b = first[1], t.bbox
+                diag = max(1.0, float(np.hypot(fb[2] - fb[0], fb[3] - fb[1])))
+                shift = float(np.hypot((b[0] + b[2] - fb[0] - fb[2]) / 2, (b[1] + b[3] - fb[1] - fb[3]) / 2))
+                if shift > a.stationary_max_shift * diag:
+                    self._first_pos[tid] = (t_now, list(b))   # it moved: the stationary clock restarts here
+                    continue
+                self._await_still.discard(tid)
+                alert = raise_alert(t)
+                events.append({"event": "stationary", "track_id": tid, "class": t.cls_name, "frame_idx": frame_idx,
+                               "video_time_sec": video_time, "stationary_sec": round(t_now - first[0], 1)})
+                if alert:
+                    new_alerts.append(alert)
+                    events[-1]["alert_id"] = alert["id"]
 
         self._log(dets, frame_idx, video_time)
         summary = summarize(dets, self.tracker, len(new_alerts))
-        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events)
+        if block is not None and block.get("applied") and block.get("status") in ("checked", "clean", "litter"):
+            # video: litter = a tracker-confirmed object visible now (the temporal rule), not one strong frame
+            block["status"] = "litter" if summary["confirmed_litter"] else "clean"
+            block["message"] = None if summary["confirmed_litter"] else (block.get("message") or NO_LITTER_MSG)
+        return FrameResult(dets, summary, new_alerts, info.inference_ms, info.tiled, events, block)
 
     def _log(self, dets: list[Detection], frame_idx: int, video_time: Optional[float]) -> None:
         if self.db is None or not dets:
@@ -214,7 +300,7 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
                  job_id: Optional[str] = None, *, source_type: str = "image", frame_idx: int = 0,
                  video_time_sec: Optional[float] = None, session_id: Optional[str] = None,
                  create_alerts: Optional[bool] = None, location: str = "",
-                 header: tuple[str, ...] = ()) -> dict[str, Any]:
+                 header: tuple[str, ...] = (), roi: Optional[RoiContext] = None) -> dict[str, Any]:
     """Detect litter in one image (full frame). A still image has no temporal evidence, so DETECTED here means:
     passed every filter AND confidence >= confirmed_threshold; other kept detections are UNDER_REVIEW.
     ``job_id`` groups images for alert de-duplication: uploads get a unique one (different recordings),
@@ -223,15 +309,19 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
     Keyword-only extras (defaults = the image-upload behaviour): ``source_type``/``frame_idx``/``video_time_sec`` are
     recorded on the detection rows; for any source other than "image" the ``job_id`` is recorded too (sampled video
     screenshots link every row to their job). ``session_id`` fixes the alert session, ``create_alerts`` overrides
-    ``alerts.alert_on_image_uploads``. ``header``: extra HUD lines on the annotated image."""
-    dets, info = engine.detect_many([image], settings)[0]
+    ``alerts.alert_on_image_uploads``. ``header``: extra HUD lines on the annotated image. ``roi``: the monitored
+    region (roi_service.RoiService.resolve); None = full frame, as before."""
+    dets, info, block = roi_detect(engine, image, settings, roi)
     apply_filters(dets, image.shape, settings)
     confirm_single_image(dets, settings)
+    resolve_candidates(block, [d.bbox for d in dets if d.status == CONFIRMED])
     # give each individual object an index so the UI/alerts can reference it
     for i, d in enumerate(sorted(dets, key=lambda d: -d.confidence), start=1):
         d.track_id = i
-    annotated = annotate_litter(image, dets, header)
+    annotated = annotate_litter(image, dets, header, roi=block if settings.roi.draw_overlay else None,
+                                roi_text=block)
     alerts_out: list[dict[str, Any]] = []
+    linked: dict[int, int] = {}                        # object index -> alert it was counted on (incl. merges)
     if db is not None:
         ts = utcnow()
         db.insert_detections([{
@@ -252,9 +342,13 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
                 video_time_sec=video_time_sec, first_seen_ts=utcnow(), hits=1, active_objects=len(confirmed),
                 location=location, job_id=job_id or f"image:{session}", source_type=source_type,
                 model_version=engine.version,
-                live_track_ids=frozenset(x.track_id for x in confirmed)), settings)
+                live_track_ids=frozenset(x.track_id for x in confirmed),
+                in_roi=None if block is None else bool(block.get("applied"))), settings)
             if a:
                 alerts_out.append(a)
+            held = alerts.linked_alert(session, d.track_id or 0)
+            if held is not None:
+                linked[d.track_id or 0] = held
     counts = Counter(d.status for d in dets)
     by_class = Counter(d.cls_name for d in dets if d.status == CONFIRMED)
     confirmed_confs = [d.confidence for d in dets if d.status == CONFIRMED]
@@ -267,10 +361,12 @@ def detect_image(engine: YoloEngine, image: np.ndarray, settings: DetectionSetti
         "highest_confidence": round(max(confirmed_confs), 4) if confirmed_confs else None,
         "average_confidence": round(float(np.mean(confirmed_confs)), 4) if confirmed_confs else None,
         "alerts": alerts_out,
+        "linked_alerts": linked,
         "inference_ms": round(info.inference_ms, 1),
         "tiled": info.tiled, "tiles": info.tiles,
         "image_size": [int(image.shape[1]), int(image.shape[0])],
         "model_version": engine.version,
+        **({"roi": block} if block is not None else {}),     # no key at all when ROI is off
         "annotated": annotated,
     }
 
@@ -335,9 +431,11 @@ def _fourcc(cap: cv2.VideoCapture) -> str:
 def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path, settings: DetectionSettings,
                  db: Optional[Database] = None, alerts: Optional[AlertManager] = None, camera_id: str = "upload",
                  job_id: Optional[str] = None, progress: Optional[Callable[[float, dict[str, Any]], None]] = None,
-                 evidence_dir: Optional[Path] = None, header: tuple[str, ...] = ()) -> dict[str, Any]:
-    """Process a video file on the full frame: annotated MP4 + detections.json + events.json + stats.json
+                 evidence_dir: Optional[Path] = None, header: tuple[str, ...] = (),
+                 roi: Optional[RoiContext] = None) -> dict[str, Any]:
+    """Process a video file: annotated MP4 + detections.json + events.json + stats.json
     (+ alert snapshots, + one evidence JPEG per litter event in ``evidence_dir`` as track_<id>.jpg).
+    ``roi``: monitored region (inference only inside it); None = full frame.
     Returns stats, tracker events, alerts, files, ``validation`` and ``litter`` (video_litter())."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -360,7 +458,8 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
             raise ValueError("The video reports no picture size (damaged file or unsupported codec)")
         max_frames = int(settings.video.max_video_seconds * fps)
         step = max(1, int(round(fps / settings.video.sample_fps)))
-        pipe = StreamPipeline(engine, settings, alerts, db, camera_id, "video", job_id)
+        pipe = StreamPipeline(engine, settings, alerts, db, camera_id, "video", job_id, roi=roi)
+        draw_roi_on = settings.roi.draw_overlay
         writer, codec = open_video_writer(out_dir / "annotated.mp4",
                                           fps if settings.video.annotate_all_frames else fps / step, (w, h))
         frames_json: list[dict[str, Any]] = []
@@ -381,22 +480,29 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
             samples = [p for p in pending if p[3]]
             reuse = {p[0]: pipe.plan_reuse(p[2], p[1]) for p in samples}
             need = [p for p in samples if not reuse[p[0]]]
-            results = dict(zip([p[0] for p in need], engine.detect_many([p[2] for p in need], settings, tiled)))
+            if roi is None:
+                results = dict(zip([p[0] for p in need], engine.detect_many([p[2] for p in need], settings, tiled)))
+            else:   # ROI crop per frame (the gate may skip the model on a uniform region)
+                results = {p[0]: roi_detect(engine, p[2], settings, roi, tiled) for p in need}
             for i, vt, frame, is_sample in pending:
                 if is_sample:
                     last = pipe.process(frame, i, vt, precomputed=results.get(i), reuse_previous=reuse[i])
                     if last.inference_ms:
                         inf_ms.append(last.inference_ms)
-                    frames_json.append({"frame_idx": i, "video_time_sec": round(vt, 3),
-                                        "processed_at": iso(local_now()),
-                                        "detections": [d.to_dict() for d in last.detections], "summary": last.summary})
+                    fj = {"frame_idx": i, "video_time_sec": round(vt, 3), "processed_at": iso(local_now()),
+                          "detections": [d.to_dict() for d in last.detections], "summary": last.summary}
+                    if last.roi is not None:
+                        fj["roi"] = {k: last.roi.get(k) for k in ("status", "message", "candidates", "detector_run",
+                                                                   "dropped_outside")}
+                    frames_json.append(fj)
                     for e in last.events:
                         if e["event"] == "confirmed":
                             confirmations[e["track_id"]] = i
                             if evidence_dir is not None:
                                 img = annotate_litter(frame, last.detections,
                                                       (*header, f"Video time {vt:.1f} s  frame {i}"),
-                                                      label_rejected=False)
+                                                      label_rejected=False, roi=last.roi if draw_roi_on else None,
+                                                      roi_text=last.roi)
                                 cv2.imwrite(str(Path(evidence_dir) / f"track_{e['track_id']}.jpg"), img,
                                             [cv2.IMWRITE_JPEG_QUALITY, 88])
                     events.extend(last.events)
@@ -404,7 +510,8 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
                     for k, v in last.summary.items():
                         peak[k] = max(peak[k], v)
                 if last is not None and (is_sample or settings.video.annotate_all_frames):
-                    writer.write(annotate_litter(frame, last.detections, header, label_rejected=False))
+                    writer.write(annotate_litter(frame, last.detections, header, label_rejected=False,
+                                                 roi=last.roi if draw_roi_on else None, roi_text=last.roi))
             pending.clear()
 
         while idx < max_frames:
@@ -472,6 +579,11 @@ def detect_video(engine: YoloEngine, video_path: str | Path, out_dir: str | Path
         "processing_fps": round(len(frames_json) / wall, 2) if wall else None,
         "wall_time_sec": round(wall, 1),
         "model_version": engine.version,
+        **({} if roi is None else {"roi": {**roi.summary(), "frames_by_status": {
+            k: v for k, v in pipe.roi_counts.items() if k != "possible_candidates"},
+            "possible_candidates": pipe.roi_counts.get("possible_candidates", 0),
+            "static_confirmed": sum(1 for f in frames_json for c in (f.get("roi") or {}).get("candidates") or []
+                                    if c.get("confirmed_by") == "static")}}),
         "settings": {"confidence": settings.confidence.model_dump(), "tracking": settings.tracking.model_dump(),
                      "tiling": settings.tiling.model_dump(), "video_tiling": settings.video.tiling,
                      "inference": settings.inference.model_dump()},

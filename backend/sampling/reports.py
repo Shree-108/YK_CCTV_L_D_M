@@ -51,6 +51,7 @@ def public_frame(job: dict[str, Any], f: dict[str, Any]) -> dict[str, Any]:
         "detections": res.get("detections", []), "counts": res.get("counts"), "by_class": res.get("by_class", {}),
         "alert_ids": res.get("alert_ids", []), "inference_ms": res.get("inference_ms"),
         "image_size": res.get("image_size"),
+        **({"roi": res["roi"]} if res.get("roi") else {}),   # region block incl. polygons; no key when ROI is off
         "planned_frame_idx": f.get("planned_frame_idx"), "sampling_note": f.get("sampling_note"),
         "download_original_url": f"{base}/original.jpg?download=1" if f.get("original_path") else None,
         "download_annotated_url": f"{base}/annotated.jpg?download=1" if f.get("annotated_path") else None,

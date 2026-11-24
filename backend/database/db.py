@@ -320,6 +320,26 @@ CREATE INDEX IF NOT EXISTS idx_levents_analysis ON litter_events(analysis_id);
 """
 
 ALERT_FILTERS = {"camera_id", "class", "severity", "status"}
+ALERT_STATUSES = ("new", "review", "confirmed", "dismissed", "acknowledged", "resolved", "false_positive")
+# pilot mode (phase 2): new = waiting in the CCTV room; review = LOW severity review list (no CCTV-room alert);
+# confirmed / dismissed = the CCTV room's decision (each dismissal is logged in alert_dismissals).
+DISMISS_REASONS = ("shadow", "carton", "stock", "puddle", "person_vehicle", "duplicate", "already_cleaned", "other")
+DISMISSALS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS alert_dismissals (
+    id INTEGER PRIMARY KEY,
+    alert_id INTEGER NOT NULL,
+    ts TEXT NOT NULL,                  -- when it was dismissed (UTC)
+    actor TEXT,
+    reason TEXT NOT NULL,              -- DISMISS_REASONS
+    note TEXT,
+    camera_id TEXT, class TEXT, confidence REAL, severity TEXT,
+    x1 REAL, y1 REAL, x2 REAL, y2 REAL,
+    alert_ts TEXT, job_id TEXT, source_type TEXT, video_time_sec REAL, model_version TEXT,
+    crop_path TEXT,                    -- copies kept under storage/dismissals/<date>/ (hard-negative material)
+    full_path TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dismiss_ts ON alert_dismissals(ts);
+"""
 SCHEMA_VERSION = 2          # 0: before roi_versions; 1: roi_versions; 2: stores/analyses/litter_events (all additive)
 
 
@@ -346,7 +366,9 @@ class Database:
     @staticmethod
     def _migrate(c: sqlite3.Connection) -> None:
         """Additive, idempotent column migrations for databases created by older versions."""
-        wanted = {"alerts": {"notes": "TEXT", "updated_at": "TEXT"},
+        c.executescript(DISMISSALS_SCHEMA)
+        wanted = {"alerts": {"notes": "TEXT", "updated_at": "TEXT", "decided_at": "TEXT", "decided_by": "TEXT",
+                             "decision_reason": "TEXT", "location_cell": "TEXT"},
                   "cameras": {"latitude": "REAL", "longitude": "REAL", "rtsp_json": "TEXT", "store_id": "TEXT"},
                   "detections": {"session_id": "TEXT"},
                   "sampled_jobs": {"mode": "TEXT NOT NULL DEFAULT 'manual'",
@@ -486,6 +508,16 @@ class Database:
 
     def get_alert(self, alert_id: int) -> Optional[dict[str, Any]]:
         return self._one("SELECT * FROM alerts WHERE id=?", (alert_id,))
+
+    def insert_dismissal(self, row: dict[str, Any]) -> int:
+        cols = list(row)
+        return int(self._write(f"INSERT INTO alert_dismissals({','.join(cols)}) VALUES "
+                               f"({','.join('?' * len(cols))})", row.values()).lastrowid)
+
+    def list_dismissals(self, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+        total = self._one("SELECT COUNT(*) AS n FROM alert_dismissals")["n"]  # type: ignore[index]
+        return self._query("SELECT * FROM alert_dismissals ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)), \
+            int(total)
 
     def recent_alerts_for_dedup(self, camera_id: str, since: str) -> list[dict[str, Any]]:
         return self._query("SELECT * FROM alerts WHERE camera_id=? AND last_seen_ts>=? AND status!='false_positive'"

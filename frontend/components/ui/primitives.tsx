@@ -80,10 +80,10 @@ const STATUS_TONE: Record<string, Tone> = {
   connecting: 'info', running: 'info', queued: 'info', acknowledged: 'info', candidate: 'warn', new: 'crit',
   reconnecting: 'warn', degraded: 'warn', weak: 'warn', pending: 'warn', stopped: 'neutral', disabled: 'neutral',
   not_configured: 'neutral', not_available: 'neutral', ignored: 'neutral', rejected: 'neutral',
-  error: 'crit', offline: 'crit', failed: 'crit', false_positive: 'neutral',
+  error: 'crit', offline: 'crit', failed: 'crit', false_positive: 'neutral', review: 'info', dismissed: 'neutral',
   HIGH: 'crit', MEDIUM: 'warn', LOW: 'info',
 }
-const STATUS_LABEL: Record<string, string> = { false_positive: 'rejected', not_configured: 'not configured', not_available: 'n/a' }
+const STATUS_LABEL: Record<string, string> = { false_positive: 'rejected', review: 'review list', not_configured: 'not configured', not_available: 'n/a' }
 
 /** Status badge: colour + text (never colour alone). */
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

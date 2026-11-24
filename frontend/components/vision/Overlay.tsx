@@ -1,8 +1,72 @@
 'use client'
 
-import { useMemo, useRef, type ReactNode } from 'react'
+import { useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { Bbox } from '../../api/types'
 import { cx } from '../../lib/format'
+
+// ------------------------------------------------------------------ "Show monitored region" (one switch, every page)
+const REGION_KEY = 'ldm.showMonitoredRegion'
+const regionListeners = new Set<() => void>()
+function readShowRegion(): boolean {
+  try { return window.localStorage.getItem(REGION_KEY) !== 'off' } catch { return true }
+}
+let showRegionValue: boolean | null = null
+export function setShowRegion(on: boolean) {
+  showRegionValue = on
+  try { window.localStorage.setItem(REGION_KEY, on ? 'on' : 'off') } catch { /* private mode: in-memory only */ }
+  regionListeners.forEach((l) => l())
+}
+/** On by default; remembered per browser; shared by every page (Image, Video, Live). */
+export function useShowRegion(): boolean {
+  return useSyncExternalStore(
+    (l) => { regionListeners.add(l); return () => { regionListeners.delete(l) } },
+    () => (showRegionValue ??= readShowRegion()),
+    () => true,
+  )
+}
+export function RegionToggle({ className }: { className?: string }) {
+  const on = useShowRegion()
+  return (
+    <label className={cx('inline-flex cursor-pointer select-none items-center gap-1.5 text-[12px] text-fg-2', className)}>
+      <input type="checkbox" checked={on} onChange={(e) => setShowRegion(e.target.checked)} />
+      <span className="inline-block size-2.5 rounded-sm" style={{ background: 'rgb(135 206 250)' }} aria-hidden />
+      Show monitored region
+    </label>
+  )
+}
+
+/** The region polygons (with holes) + "Monitored region" label, in a width x height pixel space. */
+function RegionShapes({ regions, width, height, needsReview }: { regions?: OverlayRegion[]; width: number; height: number; needsReview?: boolean }) {
+  if (!regions?.length || !width || !height) return null
+  const fs = Math.max(12, Math.round(width / 55))                    // label scaled to the image width
+  const lx = regions[0].points.reduce((m, p) => Math.min(m, p[0]), 1) * width + fs * 0.5
+  const ly = regions[0].points.reduce((m, p) => Math.min(m, p[1]), 1) * height + fs * 1.4
+  const label = `Monitored region${needsReview ? ' (needs review)' : ''}`
+  return (
+    <g>
+      {regions.map((r, i) => {
+        const path = [r.points, ...(r.holes ?? [])].map((ring) => 'M' + ring.map(([x, y]) => `${x * width} ${y * height}`).join('L') + 'Z').join(' ')
+        return <path key={`roi${i}`} d={path} fillRule="evenodd" fill={REGION_COLOR} fillOpacity={0.2} stroke={REGION_COLOR} strokeWidth={3} strokeLinejoin="round" vectorEffect="non-scaling-stroke"><title>Monitored region</title></path>
+      })}
+      <rect x={lx - fs * 0.3} y={ly - fs * 1.05} width={label.length * fs * 0.56 + fs * 0.6} height={fs * 1.45} rx={fs * 0.2} fill={REGION_COLOR} />
+      <text x={lx} y={ly} fontSize={fs} fill="#14202b" fontWeight={600}>{label}</text>
+    </g>
+  )
+}
+
+/** Region overlay for a plain <img>/<video> shown with object-contain in a box (pixel viewBox, so letterboxing matches). */
+export function RegionOverlay({ regions, width, height, needsReview, className }: {
+  regions?: OverlayRegion[] | null; width?: number | null; height?: number | null; needsReview?: boolean; className?: string
+}) {
+  const show = useShowRegion()
+  const w = width || 1920, h = height || 1080
+  if (!show || !regions?.length) return null
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className={cx('pointer-events-none absolute inset-0 size-full', className)} aria-hidden>
+      <RegionShapes regions={regions} width={w} height={h} needsReview={needsReview} />
+    </svg>
+  )
+}
 
 export interface OverlayBox {
   key: string | number
@@ -25,11 +89,18 @@ export const STATUS_COLOR: Record<string, string> = {
  * Image + SVG overlay in the image's own pixel space (viewBox), so boxes stay
  * aligned at any display size. Labels avoid overlapping by stacking.
  */
-export function ImageOverlay({ src, width, height, boxes = [], showLabels = true, className, children, fit = 'contain', onImageClick, alt }: {
+/** Monitored region (automatic pavement ROI): normalised polygons with holes, drawn light blue (RGB 135,206,250). */
+export type OverlayRegion = { points: [number, number][]; holes?: [number, number][][] }
+export const REGION_COLOR = 'rgb(135 206 250)'
+
+export function ImageOverlay({ src, width, height, boxes = [], showLabels = true, className, children, fit = 'contain', onImageClick, alt, regions }: {
+  regions?: OverlayRegion[]
   src: string | null; width: number; height: number; boxes?: OverlayBox[]; showLabels?: boolean
   className?: string; children?: ReactNode; fit?: 'contain' | 'cover'; onImageClick?: (x: number, y: number) => void; alt: string
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const showRegion = useShowRegion()
+  regions = showRegion ? regions : undefined
   const fontSize = Math.max(11, Math.round(Math.max(width, height) / 70))
   const labels = useMemo(() => {
     const placed: [number, number, number, number][] = []
@@ -75,6 +146,7 @@ export function ImageOverlay({ src, width, height, boxes = [], showLabels = true
               onImageClick(Math.min(1, Math.max(0, p.x / width)), Math.min(1, Math.max(0, p.y / height)))
             }
           }}>
+          <RegionShapes regions={regions} width={width} height={height} />
           {showLabels && labels.map((l, i) => l && (
             <g key={i}>
               <rect x={l.x} y={l.y} width={l.w} height={l.h} fill={boxes[i].color} opacity={0.92} rx={2} />

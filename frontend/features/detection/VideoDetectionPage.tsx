@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, FileVideo, Layers, Play, RotateCcw } from 'lucide-react'
 import { url } from '../../api/client'
 import { Api } from '../../api/endpoints'
-import type { Job, VideoResult } from '../../api/types'
+import type { Job, RoiBlock, VideoResult } from '../../api/types'
+import { RegionOverlay, RegionToggle } from '../../components/vision/Overlay'
 import { invalidate, useQuery } from '../../hooks/useQuery'
 import { dateTime, duration, num, pct } from '../../lib/format'
 import { INTERVAL_OPTIONS, intervalSeconds, recordingStartValue, type IntervalChoice } from '../../lib/litter'
@@ -116,7 +117,8 @@ export default function VideoDetectionPage({ embedded = false }: { embedded?: bo
               {file && <Button icon={Play} className="self-start" disabled={!canOperate} title={opLock} loading={submitting} onClick={submit}>Try again</Button>}
             </div>
           ) : done ? (
-            <ProcessedVideo jobId={j!.id} src={jobFile(j!, 'video')} />
+            <ProcessedVideo jobId={j!.id} src={jobFile(j!, 'video')} roi={j!.result?.stats?.roi ?? null}
+              size={j!.result?.stats?.video ? [j!.result.stats.video.width, j!.result.stats.video.height] : null} />
           ) : jobId ? (
             <div className="py-16 text-center text-[13px] text-fg-3">Loading analysis…</div>
           ) : (
@@ -189,7 +191,7 @@ function AnalysisStatus({ running, done, failed }: { running: boolean; done: boo
 }
 
 /** The annotated MP4, loaded and started as soon as the job is done (muted: browsers only autoplay muted video). */
-function ProcessedVideo({ jobId, src: path }: { jobId: string; src: string | null }) {
+function ProcessedVideo({ jobId, src: path, roi, size }: { jobId: string; src: string | null; roi?: RoiBlock | null; size?: [number, number] | null }) {
   const ref = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState(false)
   const src = path ? url(path) : null
@@ -206,10 +208,17 @@ function ProcessedVideo({ jobId, src: path }: { jobId: string; src: string | nul
       </div>
     )
   }
+  const region = roi?.applied ? roi : null
   return (
-    // eslint-disable-next-line jsx-a11y/media-has-caption
-    <video key={jobId} ref={ref} data-job={jobId} src={src} controls autoPlay muted playsInline preload="auto" onError={() => setError(true)}
-      onLoadedData={(e) => { void e.currentTarget.play().catch(() => {}) }} className="aspect-video w-full rounded-md bg-video" />
+    <div className="flex flex-col gap-1.5">
+      <div className="relative">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video key={jobId} ref={ref} data-job={jobId} src={src} controls autoPlay muted playsInline preload="auto" onError={() => setError(true)}
+          onLoadedData={(e) => { void e.currentTarget.play().catch(() => {}) }} className="aspect-video w-full rounded-md bg-video" />
+        {region && <RegionOverlay regions={region.polygons} width={size?.[0]} height={size?.[1]} needsReview={region.needs_review} className="bottom-12" />}
+      </div>
+      {region && <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-fg-3">The annotated MP4 also carries the region outline drawn by the server.</span><RegionToggle /></div>}
+    </div>
   )
 }
 

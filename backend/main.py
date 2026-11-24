@@ -36,6 +36,9 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
         st.db.log_event("info", "system", "backend started",
                         data={"model": st.engine.version if st.engine else None})
         st.sync_cameras()
+        # monitored region: load the segmenter + build missing camera ROIs in the background (never blocks start-up)
+        import threading
+        threading.Thread(target=st.warmup_roi, daemon=True, name="roi-warmup").start()
         yield
         st.shutdown()
         st.db.log_event("info", "system", "backend stopped")

@@ -2,7 +2,15 @@
 
 export type DetStatus = 'rejected' | 'weak' | 'candidate' | 'confirmed'
 export type Severity = 'LOW' | 'MEDIUM' | 'HIGH'
-export type AlertStatus = 'new' | 'acknowledged' | 'resolved' | 'false_positive'
+export type AlertStatus = 'new' | 'review' | 'confirmed' | 'dismissed' | 'acknowledged' | 'resolved' | 'false_positive'
+/** Pilot dismissal reasons (backend DISMISS_REASONS). */
+export type DismissReason = 'shadow' | 'carton' | 'stock' | 'puddle' | 'person_vehicle' | 'duplicate' | 'already_cleaned' | 'other'
+export interface AlertDismissal {
+  id: number; alert_id: number; ts: string; actor: string | null; reason: DismissReason; note: string | null
+  camera_id: string; class: string; confidence: number; severity: string; bbox: Bbox; alert_ts: string
+  job_id: string | null; source_type: string | null; video_time_sec: number | null; model_version: string | null
+  crop_url: string | null; full_url: string | null
+}
 export type Bbox = [number, number, number, number]
 
 /** Litter-focus vocabulary (docs/ldm_litter_focus/API_CONTRACT.md). VERIFIED / RESOLVED are set by an operator only. */
@@ -169,6 +177,8 @@ export interface LiveFrame {
   camera_id: string
   state: CameraStatus['state']
   frame: null | {
+    /** monitored region of the live stream (polygons empty when drawing is switched off) */
+    roi?: RoiBlock | null
     seq: number
     ts: number
     width: number
@@ -206,6 +216,9 @@ export interface Alert {
   notes: string | null
   snapshot_url: string | null
   crop_url: string | null
+  decided_at?: string | null
+  decided_by?: string | null
+  decision_reason?: string | null
 }
 
 export interface DetectionRow {
@@ -247,7 +260,33 @@ export interface ModelInfo {
   latest_evaluation: null | { id: string; dataset: string; split: string; finished_at: string; overall: Prf & { mAP50: number | null; mAP50_95: number | null } }
 }
 
+/** settings.roi - automatic monitored region (backend/services/roi_service.py). */
+export interface RoiSettings {
+  enabled: boolean; model: string; ground_classes: string[]; work_width: number; ground_prob_threshold: number
+  vote_frames: number; vote_seconds: number; vote_majority: number
+  min_component_frac: number; open_frac: number; close_frac: number; fill_hole_frac: number; poly_epsilon_frac: number; max_vertices: number
+  min_area_frac: number; max_area_frac: number; on_failure: 'full_frame' | 'skip'; signature_threshold: number; recheck_sec: number
+  image_size: number; tiling: 'auto' | 'on' | 'off'; min_mask_overlap: number
+  gate_enabled: boolean; gate_width: number; tile_px: number; chroma_k: number; chroma_min: number; luma_k: number; luma_min: number
+  edge_threshold: number; min_blob_px: number; max_blob_frac: number; max_weak_candidates: number; gate_chroma_std: number; gate_l_std: number; gate_edge_density: number
+  exclude_people: boolean; people_model: string; static_confirm_sec: number; draw_overlay: boolean
+  video_whole?: boolean; unknown_classes?: string[]; unknown_prob?: number
+  outline_frac?: number; outline_min_px?: number; fill_alpha?: number
+}
+
+/** Per-result monitored-region block (``roi`` on image results, screenshots, video stats, live frames). */
+export interface RoiCandidate { bbox: number[]; kind: 'chroma' | 'luma'; area_px: number; score: number; state: 'possible' | 'confirmed'; confirmed_by: 'detector' | 'static' | null }
+export interface RoiBlock {
+  applied: boolean; source: string; confidence?: number | null; needs_review?: boolean; area_frac?: number | null
+  approved?: boolean; approved_at?: string | null; frame_size?: [number, number] | null; camera_id?: string | null
+  polygons?: { points: [number, number][]; holes: [number, number][][] }[]
+  status?: 'clean' | 'litter' | 'checked' | 'roi_not_determined' | 'roi_pending'; message?: string | null; warning?: string | null
+  candidates?: RoiCandidate[]; remark_tags?: string[]; notes?: string[]
+  frames_by_status?: Record<string, number>; possible_candidates?: number; static_confirmed?: number
+}
+
 export interface Settings {
+  roi: RoiSettings
   confidence: { weak_threshold: number; candidate_threshold: number; confirmed_threshold: number }
   inference: { image_size: number; iou_threshold: number; max_detections: number; device: string; half: boolean; agnostic_nms: boolean }
   tiling: { enabled: boolean; mode: 'auto' | 'always'; tile_size: number; overlap: number; auto_min_ratio: number; include_full_frame: boolean; merge_iou: number; cross_tile_ios: number }
@@ -287,6 +326,8 @@ export interface AnalysisInfo {
 }
 
 export interface ImageDetectResult {
+  /** monitored region of this image (null when ROI is switched off) */
+  roi?: RoiBlock | null
   detections: Detection[]
   count: number
   counts: { confirmed: number; candidate: number; weak: number; rejected: number; raw: number }
@@ -371,6 +412,7 @@ export interface VideoLitter {
 export interface VideoResult {
   progress?: VideoProgress
   stats?: {
+    roi?: RoiBlock | null
     video: { fps: number; frames: number; width: number; height: number; duration_sec: number; output_codec: string }
     frames_analysed: number
     sample_every_n_frames: number
@@ -416,6 +458,7 @@ export interface VideoScreenshot {
   analysed_frame: boolean
   litter_detected: number
   under_review: number
+  roi?: RoiBlock | null
   detections: { class: string; confidence: number; bbox: Bbox; detection_status: 'DETECTED' | 'UNDER_REVIEW'; event_id: string | null }[]
 }
 

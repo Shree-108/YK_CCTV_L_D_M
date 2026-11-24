@@ -17,6 +17,7 @@ from typing import Any, Iterable, Optional
 
 from backend.core.csv_safety import safe_cell, safe_rows
 from backend.sampling.plan import clock_time, hhmmss, parse_recording_start
+from backend.services.roi_service import roi_remarks
 
 FIELDS = ["video_name", "store_id", "camera_id", "recording_date", "video_timestamp", "recording_timestamp",
           "screenshot", "frame_idx", "class", "confidence", "x1", "y1", "x2", "y2", "status", "detection_count",
@@ -64,7 +65,8 @@ def rows_for_job(job: dict[str, Any], media: dict[str, Any], frames: Iterable[di
             "video_timestamp": hhmmss(t, millis=True), "recording_timestamp": clock.isoformat(timespec="milliseconds") if clock else "",
             "screenshot": Path(f["original_path"]).name if f.get("original_path") else "",
             "frame_idx": f.get("frame_idx"), "detection_count": len(confirmed), "outcome": f.get("outcome") or "",
-            "remark": remark(f.get("outcome"), len(confirmed), f.get("error")),
+            "remark": " ".join([remark(f.get("outcome"), len(confirmed), f.get("error")),
+                                *[f"[{p}]" for p in roi_remarks(res.get("roi"))]]),
             "evidence_image": _rel(f.get("annotated_path") or f.get("original_path"), storage_dir),
             "job_id": job["id"], "model_version": res.get("model_version") or job.get("model_version") or "",
         }

@@ -157,11 +157,12 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
   const settings = useQuery('settings', Api.settings)
   const health = useQuery('health', Api.health)
   const [f, setF] = useState<Form>(toForm(cam))
-  const [sec, setSec] = useState<Section>('general')
+  const tabParam = useSearchParams().get('tab') === 'roi' ? 'roi' as Section : null   // RoiNotice link: open the region tab
+  const [sec, setSec] = useState<Section>(tabParam ?? 'general')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const { stores } = useStoresAndCameras()
-  useEffect(() => { if (open) { setF(toForm(cam)); setSec('general'); setErr(null) } }, [open, cam?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) { setF(toForm(cam)); setSec(tabParam ?? 'general'); setErr(null) } }, [open, cam?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const g = settings.data?.settings
   const isNew = !cam
   const idOk = /^[A-Za-z0-9_-]{1,40}$/.test(f.id) && (!isNew || !existingIds.includes(f.id))
@@ -190,7 +191,7 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
     { value: 'general', label: 'General' }, { value: 'stream', label: 'Stream' }, { value: 'model', label: 'AI model' }, { value: 'detection', label: 'Detection' },
     { value: 'tracking', label: 'Tracking' }, { value: 'alerts', label: 'Alerts' },
     // the ground ROI needs a saved camera (its frames): not a step of the "Add camera" wizard
-    ...(cam ? [{ value: 'roi' as Section, label: 'Ground ROI' }] : []),
+    ...(cam ? [{ value: 'roi' as Section, label: 'Monitored region' }] : []),
   ]
   const idx = SECTIONS.findIndex((s) => s.value === sec)
   const inherit = (v: unknown) => `inherit (${v ?? '—'})`

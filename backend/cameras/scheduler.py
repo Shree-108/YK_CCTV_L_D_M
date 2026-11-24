@@ -301,8 +301,9 @@ class CaptureScheduler:
                 window = max(settings.alerts.dedup_window_sec, cfg["max_minutes"] * 60 * 2)
                 settings = settings.model_copy(update={"alerts": settings.alerts.model_copy(update={
                     "dedup_window_sec": window, "alert_on_image_uploads": True})})
+                roi = st.roi_for_frames(cam_id, [frame], settings)      # monitored region (cached per camera)
                 res = detect_image(engine, frame, settings, st.meta, st.db, st.alerts, cam_id, f"capture {cap_id}",
-                                   job_id=f"schedule:{cam_id}")
+                                   job_id=f"schedule:{cam_id}", roi=roi)
                 cv2.imwrite(str(out / "annotated.jpg"), res.pop("annotated"), [cv2.IMWRITE_JPEG_QUALITY, 90])
                 fields.update(status="done", model_version=res["model_version"], annotated_path=str(out / "annotated.jpg"),
                               counts={**res["counts"], "by_class": res["by_class"],

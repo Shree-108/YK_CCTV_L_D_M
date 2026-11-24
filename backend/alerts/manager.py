@@ -1,5 +1,11 @@
 """Alert creation for CONFIRMED litter only: severity, dedup, snapshots, notification.
 
+Pilot mode (phase 2, ``alerts.pilot_mode``): an alert reaches the CCTV room (status ``new``) only for a CONFIRMED
+detection INSIDE the applied monitored region (``require_roi``) with severity >= ``min_alert_severity``; lower severity
+goes to the review list (status ``review``); one CCTV-room alert per location (camera + grid cell) per
+``cooldown_sec``; owner notifications only when ``notify_owner``. The video/live stationary rule lives in
+backend/services/pipeline.py (StreamPipeline).
+
 Dedup layers (one physical object -> one logical alert):
   1. track: a confirmed track creates at most one alert per pipeline session;
   2. time + space + class: a new confirmation on the same camera within
@@ -89,6 +95,21 @@ class ConfirmedEvent:
     source_type: str = "live"
     model_version: str = ""
     live_track_ids: frozenset = frozenset()   # other tracks visible right now in this session
+    in_roi: Optional[bool] = None             # True: inside an applied monitored region; False: region not
+                                              # determined (full-frame fallback); None: ROI feature switched off
+
+
+SEVERITY_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+
+def location_cell(bbox: list[float], frame_shape: tuple[int, ...], grid: int) -> str:
+    """Pilot cooldown location: the grid cell (row, col) of the box's bottom-centre (where it lies on the ground)."""
+    h, w = frame_shape[:2]
+    g = max(1, int(grid))
+    cx, by = (bbox[0] + bbox[2]) / 2, bbox[3]
+    col = min(g - 1, max(0, int(cx / max(1, w) * g)))
+    row = min(g - 1, max(0, int(by / max(1, h) * g)))
+    return f"{g}:{row}:{col}"
 
 
 class AlertManager:
@@ -166,6 +187,12 @@ class AlertManager:
                 "video_time_sec": ev.video_time_sec, "hits": ev.hits})
             if not s.alerts.enabled:
                 return None
+            a = s.alerts
+            if a.pilot_mode and a.require_roi and ev.in_roi is False:
+                # the monitored region was not determined (full-frame fallback): recorded, never a CCTV-room alert
+                self.db.log_event("info", "alerts", f"{ev.cls_name} confirmed outside a determined monitored region: "
+                                  "no alert (pilot: alerts only inside the ROI)", ev.camera_id)
+                return None
             dup = self.find_duplicate(ev, s, ev.frame.shape)
             if dup is not None:
                 self.db.update_alert(dup["id"], occurrences=dup["occurrences"] + 1, last_seen_ts=now)
@@ -173,13 +200,24 @@ class AlertManager:
                 self._track_alerts[(ev.session_id, ev.track_id)] = dup["id"]
                 return None
             severity = compute_severity(ev.cls_name, ev.confidence, ev.active_objects, s, self.meta)
+            cell = location_cell(ev.bbox, ev.frame.shape, a.cooldown_grid)
+            status = "new"
+            if a.pilot_mode and SEVERITY_RANK.get(severity, 0) < SEVERITY_RANK[a.min_alert_severity]:
+                status = "review"                            # low severity: review list, no CCTV-room alert
+            elif a.pilot_mode and a.cooldown_sec > 0:
+                held = self._cooldown_holder(ev, cell, a.cooldown_sec)
+                if held is not None:                         # same location within 10 min: counted on that alert
+                    self.db.update_alert(held["id"], occurrences=held["occurrences"] + 1, last_seen_ts=now)
+                    self.db.update_confirmed(obj_id, alert_id=held["id"])
+                    self._track_alerts[(ev.session_id, ev.track_id)] = held["id"]
+                    return None
             alert_id = self.db.insert_alert({
                 "ts": now, "camera_id": ev.camera_id, "class": ev.cls_name, "confidence": round(ev.confidence, 4),
                 "track_id": ev.track_id, "session_id": ev.session_id,
                 "x1": ev.bbox[0], "y1": ev.bbox[1], "x2": ev.bbox[2], "y2": ev.bbox[3],
-                "location": ev.location, "video_time_sec": ev.video_time_sec, "severity": severity, "status": "new",
+                "location": ev.location, "video_time_sec": ev.video_time_sec, "severity": severity, "status": status,
                 "occurrences": 1, "last_seen_ts": now, "job_id": ev.job_id, "model_version": ev.model_version,
-                "source_type": ev.source_type})
+                "source_type": ev.source_type, "location_cell": cell})
             try:
                 snap, crop = self._save_snapshots(alert_id, ev, s)
                 self.db.update_alert(alert_id, snapshot_path=snap, crop_path=crop)
@@ -189,9 +227,76 @@ class AlertManager:
             self.db.update_confirmed(obj_id, alert_id=alert_id)
             self._track_alerts[(ev.session_id, ev.track_id)] = alert_id
             alert = self.db.get_alert(alert_id)
-        if self.notifier is not None and alert is not None:
+        owner = s.alerts.notify_owner or not s.alerts.pilot_mode
+        if self.notifier is not None and alert is not None and owner and alert.get("status") == "new":
             self.notifier.dispatch(alert)
         return alert
+
+    def _cooldown_holder(self, ev: ConfirmedEvent, cell: str, cooldown: float) -> Optional[dict]:
+        """The CCTV-room alert (not a review-list one) of the same camera and location cell within ``cooldown`` s.
+        Same video job: measured in video time; otherwise (live, scheduled captures) in wall-clock time."""
+        since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=cooldown)).isoformat()
+        for r in self.db.recent_alerts_for_dedup(ev.camera_id, since if ev.video_time_sec is None else "0"):
+            if r.get("status") == "review" or r.get("location_cell") != cell or r.get("job_id") != ev.job_id:
+                continue
+            if ev.video_time_sec is not None and r.get("video_time_sec") is not None:
+                if abs(ev.video_time_sec - r["video_time_sec"]) < cooldown:
+                    return r
+            elif r.get("last_seen_ts", "") >= since:
+                return r
+        return None
+
+    # ------------------------------------------------------------------ CCTV room decisions (pilot)
+    def dismiss(self, alert_id: int, reason: str, note: str = "", actor: str = "",
+                dismissals_dir: Optional[Path] = None) -> Optional[dict[str, Any]]:
+        """Dismiss an alert and log it (crop, full frame, reason, time). The crop and full frame are COPIED under
+        ``dismissals_dir`` so the log survives alert clean-ups (and serves as hard-negative material)."""
+        import shutil
+        a = self.db.get_alert(alert_id)
+        if a is None:
+            return None
+        now = utcnow()
+        crop_copy = full_copy = None
+        if dismissals_dir is not None:
+            folder = Path(dismissals_dir) / now[:10]
+            folder.mkdir(parents=True, exist_ok=True)
+            for key, suffix in (("crop_path", "crop"), ("snapshot_path", "full")):
+                src = a.get(key)
+                if src and Path(src).is_file():
+                    dst = folder / f"alert_{alert_id:05d}_{suffix}.jpg"
+                    try:
+                        shutil.copyfile(src, dst)
+                        if suffix == "crop":
+                            crop_copy = str(dst)
+                        else:
+                            full_copy = str(dst)
+                    except OSError as exc:
+                        log.warning("could not copy %s of alert %s: %s", key, alert_id, exc)
+        self.db.insert_dismissal({
+            "alert_id": alert_id, "ts": now, "actor": actor or None, "reason": reason, "note": note or None,
+            "camera_id": a["camera_id"], "class": a["class"], "confidence": a["confidence"], "severity": a["severity"],
+            "x1": a["x1"], "y1": a["y1"], "x2": a["x2"], "y2": a["y2"], "alert_ts": a["ts"], "job_id": a.get("job_id"),
+            "source_type": a.get("source_type"), "video_time_sec": a.get("video_time_sec"),
+            "model_version": a.get("model_version"), "crop_path": crop_copy or a.get("crop_path"),
+            "full_path": full_copy or a.get("snapshot_path")})
+        self.db.update_alert(alert_id, status="dismissed", decided_at=now, decided_by=actor or None,
+                             decision_reason=reason, updated_at=now)
+        return self.db.get_alert(alert_id)
+
+    def confirm(self, alert_id: int, actor: str = "", note: str = "") -> Optional[dict[str, Any]]:
+        if self.db.get_alert(alert_id) is None:
+            return None
+        now = utcnow()
+        fields: dict[str, Any] = {"status": "confirmed", "decided_at": now, "decided_by": actor or None,
+                                  "decision_reason": None, "updated_at": now}
+        if note:
+            fields["notes"] = note
+        self.db.update_alert(alert_id, **fields)
+        return self.db.get_alert(alert_id)
+
+    def linked_alert(self, session_id: str, track_id: int) -> Optional[int]:
+        """The alert this object was counted on (its own, or the one a dedup / cooldown merge added it to)."""
+        return self._track_alerts.get((session_id, track_id))
 
     def on_lost(self, session_id: str, track_id: int) -> None:
         """A confirmed object disappeared (e.g. picked up). Alerts are NOT auto-resolved:

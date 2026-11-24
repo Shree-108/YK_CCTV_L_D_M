@@ -49,6 +49,7 @@ from backend.core.settings import DetectionSettings
 from backend.detection.filters import apply_filters
 from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, Detection
 from backend.services import litter_reports as lr
+from backend.services.roi_service import NO_LITTER_MSG, resolve_candidates, roi_detect
 from backend.services.visualization import FONT, annotate_litter
 
 log = logging.getLogger(__name__)
@@ -184,11 +185,15 @@ def _banner(img: np.ndarray, text: str) -> None:
     cv2.putText(img, text, (x, y + th), FONT, fs, (255, 255, 255), thick, cv2.LINE_AA)
 
 
-def render(frame: np.ndarray, dets: list[Detection], header: Sequence[str], analysed: bool) -> np.ndarray:
-    img = annotate_litter(frame, dets, header, show_rejected=False, label_rejected=False)
+def render(frame: np.ndarray, dets: list[Detection], header: Sequence[str], analysed: bool,
+           roi: Optional[dict[str, Any]] = None, draw_roi: bool = True) -> np.ndarray:
+    """``roi``: roi_service block of this frame (monitored region drawn when ``draw_roi``)."""
+    img = annotate_litter(frame, dets, header, show_rejected=False, label_rejected=False,
+                          roi=roi if draw_roi else None, roi_text=roi)
     if not any(d.status == CONFIRMED for d in dets):
         n_review = sum(1 for d in dets if d.status == CANDIDATE)
-        _banner(img, "No litter detected" + (f" - {n_review} under review" if n_review else ""))
+        base = NO_LITTER_MSG if roi and roi.get("applied") else "No litter detected"
+        _banner(img, base + (f" - {n_review} under review" if n_review else ""))
     if not analysed:
         h = img.shape[0]
         cv2.putText(img, "Frame outside the sampled analysis: boxes are unconfirmed", (12, h - 12), FONT,
@@ -199,7 +204,8 @@ def render(frame: np.ndarray, dets: list[Detection], header: Sequence[str], anal
 # ----------------------------------------------------------------------------------------------- build
 def build_screenshots(*, engine: Any, settings: DetectionSettings, video_path: Path, res: dict[str, Any],
                       analysis_id: str, out_dir: Path, header: Sequence[str],
-                      recording_start: Optional[dt.datetime], seed: Optional[int] = None) -> dict[str, Any]:
+                      recording_start: Optional[dt.datetime], seed: Optional[int] = None,
+                      roi: Any = None) -> dict[str, Any]:
     """Write the four screenshots + screenshots.json for a finished detect_video() result ``res``. Must run while
     the uploaded video still exists (before it is moved into LDM_OUTPUT/.../input)."""
     out_dir = Path(out_dir) / "screenshots"
@@ -231,22 +237,28 @@ def build_screenshots(*, engine: Any, settings: DetectionSettings, video_path: P
     for n, (idx, analysed) in enumerate(picks, start=1):
         frame = images[idx]
         vt = round(idx / fps, 3)
+        block = None
         if analysed:
             f = by_idx[idx]
             dets = _dets_for_frame(f["detections"], set(event_ids), review)
             processed = f.get("processed_at")
+            if roi is not None:
+                block = {**roi.summary(), **(f.get("roi") or {})}
         else:
-            raw, _ = engine.detect_many([frame], settings, False if not settings.video.tiling else None)[0]
+            raw, _, block = roi_detect(engine, frame, settings, roi, False if not settings.video.tiling else None)
             apply_filters(raw, frame.shape, settings)
             dets = [Detection(d.bbox, d.cls_id, d.cls_name, d.confidence, status=CANDIDATE)
                     for d in raw if d.status != REJECTED and d.confidence >= settings.confidence.candidate_threshold]
+            resolve_candidates(block, [])          # no temporal confirmation outside the sampled analysis
             processed = lr.iso(lr.local_now())
+        if block is not None and block.get("applied") and block.get("status") in ("checked", "litter", "clean"):
+            block["status"] = "litter" if any(d.status == CONFIRMED for d in dets) else "clean"
         when = recording_start + dt.timedelta(seconds=vt) if recording_start else None
         ts = lr.iso(when) if when else processed
         clock = f"{int(vt // 60)}:{vt % 60:04.1f}"
         hud = (*header, f"Screenshot {n} of {N_SCREENSHOTS} - video time {clock} (frame {idx})",
                *( [f"Recorded: {report_time(ts)}"] if when else []))
-        img = render(frame, dets, hud, analysed)
+        img = render(frame, dets, hud, analysed, block, settings.roi.draw_overlay)
         name = f"screenshot_{n:02d}.png"
         if not cv2.imwrite(str(out_dir / name), img):
             raise RuntimeError(f"could not write {name}")
@@ -257,6 +269,9 @@ def build_screenshots(*, engine: Any, settings: DetectionSettings, video_path: P
             "timestamp_source": "RECORDING_TIME" if when else "PROCESSING_TIME", "analysed_frame": analysed,
             "litter_detected": len(litter),
             "under_review": sum(1 for d in dets if d.status == CANDIDATE),
+            **({} if block is None else {"roi": {k: block.get(k) for k in (
+                "applied", "source", "confidence", "needs_review", "approved", "status", "message", "warning",
+                "candidates", "remark_tags", "polygons", "camera_id")}}),
             "detections": [{"class": d.cls_name, "confidence": round(d.confidence, 4),
                             "bbox": [round(v, 1) for v in d.bbox],
                             "detection_status": lr.DETECTED if d.status == CONFIRMED else lr.UNDER_REVIEW,

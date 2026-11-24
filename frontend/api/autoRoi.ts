@@ -6,8 +6,11 @@ const cam = (id: string) => `/api/cameras/${encodeURIComponent(id)}/auto-roi`
 
 export const AutoRoiApi = {
   get: (id: string) => api<AutoRoiResponse>(cam(id)),
-  /** Median of `frames` frames -> segmentation -> polygon (needs_review). Slow on CPU: ~10-30 s. */
-  compute: (id: string, frames = 5) => api<AutoRoiResponse>(cam(id), { method: 'POST', body: { frames } }),
+  /** Re-run: `frames` frames (default settings.roi.vote_frames = 40; a file source is sampled over the whole video)
+   * -> segmentation -> majority vote -> polygons (needs_review until approved). About 1-2 min on CPU. */
+  compute: (id: string, frames?: number) => api<AutoRoiResponse>(cam(id), { method: 'POST', body: frames ? { frames } : {} }),
+  /** Save every region (the edited first one + the others unchanged). Saved as needs_review until approved. */
+  editAll: (id: string, polygons: { points: Point[]; holes?: Point[][] }[]) => api<AutoRoiResponse>(cam(id), { method: 'PUT', body: { polygons } }),
   approve: (id: string) => api<AutoRoiResponse>(`${cam(id)}/approve`, { method: 'POST' }),
   edit: (id: string, polygon: Point[], holes: Point[][] = []) => api<AutoRoiResponse>(cam(id), { method: 'PUT', body: { polygon, holes } }),
   clear: (id: string) => api<{ cleared: boolean }>(cam(id), { method: 'DELETE' }),

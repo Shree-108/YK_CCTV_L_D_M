@@ -24,8 +24,10 @@ with tracking, temporal confirmation, deduplicated alerts, snapshots, and a REST
 pip install -r requirements.txt
 cp .env.example .env              # set ADMIN_API_TOKEN
 ```
-Normal instance (API :8000 + UI :3010, cameras off): `deploy\start-ldm.cmd`, stop with `deploy\stop-ldm.cmd`
-(details: `deploy/README.md`, `deploy/SETUP.md`, `deploy/TROUBLESHOOTING.md`).
+**Run the project:** `deploy\start-ldm.cmd` (API :8000 + UI :3010, cameras off), stop with `deploy\stop-ldm.cmd`
+(details: `deploy/README.md`, `deploy/SETUP.md`, `deploy/TROUBLESHOOTING.md`). That is the only step: on the first run
+the script also downloads the monitored-region segmentation model (~105 MB, once) into `models/roi_segmenter/`, and
+the backend builds each camera's monitored region by itself (see "Monitored region" below).
 Backend only: `uvicorn backend.main:app --host 127.0.0.1 --port 8000`.
 
 **Demo instance (separate data):** `deploy\start-ldm-demo.ps1` / `deploy\stop-ldm-demo.ps1` (API :8100 + UI :3110). It uses its
@@ -127,11 +129,47 @@ contains five or more confirmed objects, **every** object in it is HIGH, includi
 describes each object, while the five-object rule really measures how much litter is in the scene. This is kept as is
 for this release; separating object severity from a scene-level litter-volume indicator is a future enhancement.
 
-## ROI zones
-Per camera, a list of normalized polygons: `{"name","type": sidewalk|road_edge|ground|parking|entrance|custom,
-"mode": include|exclude, "polygon": [[x,y],...]}`. The foot-point (bottom-centre) of each box is tested;
-exclude zones win; with no include zones the whole frame is allowed; `roi_margin_frac` (2%) keeps litter
-on the zone border from being dropped.
+## Monitored region (automatic pavement ROI)
+Owner brief 2026-11-24 (`backend/services/roi_service.py`). Litter is searched **only on the outdoor ground** of each
+camera; the shop interior is never given to the detector. Nothing has to be drawn or approved: it runs automatically on
+image upload, video upload, four-screenshot video analysis, scheduled captures, live streams, and at app start for
+configured cameras.
+
+- **Region:** ADE20K SegFormer-B2 (`settings.roi.model`, local weights in `models/roi_segmenter/`), classes road,
+  sidewalk, path and earth only (never `floor`). Videos: 40 frames spread over the **whole** video; live streams: 40
+  frames over ~10 s. Per-pixel majority vote over the frames in which the pixel is known: person / vehicle pixels are
+  *unknown* in that frame (not non-ground). Clean-up (open/close, small components out, holes < 2 % of the frame
+  filled) -> polygons (any shape, holes, <= 12 vertices each).
+- **Store:** `config/camera_roi.json` `{camera_id: {polygons, source: auto|manual|sam_click, confidence, needs_review,
+  approved, frame_signature, ...}}` (runtime file, git-ignored). Every computed or edited region stays `needs_review`
+  (remark tag) until an operator approves it: Cameras -> camera -> Monitored region -> Edit / Re-run / Approve. A moved camera (frame signature) recomputes its auto ROI; a manual
+  one is kept and flagged `needs_review`. Precedence: request (`roi_polygons` form field) > manual > auto > global.
+  Area < 3 % or > 95 % -> low confidence + `needs_review`. Unknown-camera uploads are computed per file, not stored.
+- **Detection:** uniform gate (Lab, per 64 px tile median/MAD) -> outside pixels filled with the region's median colour
+  -> crop -> detector with tiling at `roi.image_size` -> a box is kept only if its bottom-centre is inside and >= 50 % of
+  it lies inside the region. Colour/light anomalies are *possible* only; they never make `litter_detected` alone.
+- **Failure:** `roi.on_failure` (default `full_frame`) with a visible warning and `roi_not_determined` in the remark.
+- **Output:** the CSV / dashboard columns are unchanged; the remark gains `roi=auto`, `needs_review`, ... Colour /
+  light-dark candidates are **not** listed in the remark (they stay in the job JSON). Annotated images: light blue
+  (RGB 135,206,250) outline max(4 px, 0.4 % of the width), 20 % fill, label "Monitored region" scaled to the width
+  (toggle `roi.draw_overlay`). The job JSON carries the polygons; the browser draws them as an SVG overlay on the Image,
+  Video (four-screenshot and full-video) and Live pages, with a "Show monitored region" switch (on by default).
+- **Settings:** every threshold is under `roi` (Settings -> Detection -> Monitored region). `LDM_ROI=off` is a
+  process-wide kill switch. Corrections: Cameras -> Monitored region tab (`/api/cameras/{id}/auto-roi`).
+- **Cost:** about 3-5 s per segmented frame on a 4-core CPU, so a 40-frame region takes 2-4 min once per camera
+  (live streams build it in the background and start detecting when it is ready). Pick the camera on the upload form
+  so the region is saved and reused; unknown-camera uploads recompute it every time.
+
+## Pilot mode alerts (phase 2)
+`settings.alerts` (defaults): `pilot_mode=true`, `notify_owner=false` (no email / webhook / Telegram), an alert reaches
+the **CCTV room** (Alerts -> "CCTV room (new)") only for a CONFIRMED detection **inside an applied monitored region**
+with severity >= `min_alert_severity` (MEDIUM); LOW severity is stored with status `review` (Alerts -> "Review list").
+One CCTV-room alert per location (camera + cell of a 3 x 3 grid, by the box's bottom-centre) per `cooldown_sec` (600 s;
+video jobs measure it in video time); later objects there increase its occurrences. Video and live: the object must
+stay within half its box diagonal for `stationary_sec` (30 s) before the alert is raised. The CCTV room presses
+**Confirm** or **Dismiss** (reason: shadow, carton, stock, puddle, person/vehicle, duplicate, already cleaned, other);
+each dismissal is logged in `alert_dismissals` with copies of the crop and full frame under `storage/dismissals/<date>/`
+(Alerts -> "Dismissal log", `GET /api/alerts/dismissals`).
 
 ## API (JSON)
 | method | path | notes |

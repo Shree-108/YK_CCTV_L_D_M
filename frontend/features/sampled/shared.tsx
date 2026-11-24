@@ -10,6 +10,7 @@ import { cx, pct } from '../../lib/format'
 import { useApp } from '../../stores/app'
 import { Badge, Button, Segmented, type Tone } from '../../components/ui/primitives'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
+import { RegionOverlay } from '../../components/vision/Overlay'
 import { litterName } from '../detection/common'
 
 export const OUTCOME: Record<FrameOutcome, { label: string; tone: Tone; hint: string }> = {
@@ -81,6 +82,7 @@ export function FrameCard({ frame, compact }: { frame: SampledFrame; compact?: b
             <CircleSlash className="size-5" aria-hidden />{frame.status === 'planned' ? 'Not extracted yet' : 'No picture'}
           </div>
         )}
+        {src && view === 'original' && frame.roi?.applied && <RegionOverlay regions={frame.roi.polygons} width={frame.image_size?.[0]} height={frame.image_size?.[1]} needsReview={frame.roi.needs_review} />}
         <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white">#{frame.idx} · {frame.video_timestamp.slice(0, 8)}</span>
         {o && <Badge tone={o.tone} dot className="absolute right-2 top-2 bg-black/70 backdrop-blur">{o.label}</Badge>}
       </div>

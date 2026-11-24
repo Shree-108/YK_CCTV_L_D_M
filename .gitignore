@@ -66,3 +66,7 @@ docs/poc_audit/evidence/**/*.jpg
 docs/poc_audit/evidence/**/*.png
 # real clean CCTV frames for tests (tests/conftest.py CLEAN_FRAMES) stay local (privacy)
 tests/fixtures/clean/
+
+# monitored-region store (runtime, written by backend/services/roi_service.py)
+config/camera_roi.json
+config/camera_roi.json.tmp

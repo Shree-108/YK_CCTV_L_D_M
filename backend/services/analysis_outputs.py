@@ -112,7 +112,8 @@ def image_analysis(db: Database, storage_dir: Path, *, result: dict[str, Any], i
                                            "original_sha256": _sha(original), "image_size": result["image_size"],
                                            "timestamp_source": PROCESSING_TIME, "settings": settings_summary,
                                            "counts": result["counts"], "inference_ms": result["inference_ms"],
-                                           "tiled": result["tiled"]})
+                                           "tiled": result["tiled"],
+                                           **({"roi": result["roi"]} if result.get("roi") else {})})
         files.update(original=str(original), annotated=str(annotated))
         ls.insert_events(db, aid, source_type, ident, events, job_id=None, model_version=result["model_version"],
                          timestamp_source=PROCESSING_TIME)

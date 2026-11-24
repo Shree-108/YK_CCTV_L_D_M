@@ -2,6 +2,7 @@
 
 // Results of a finished full-video analysis. "Unique litter events" (one per DETECTED track) and "frame
 // observations" (every analysed frame the object was seen in) are different numbers and are never added together.
+import { RoiNotice } from './RoiNotice'
 import Link from 'next/link'
 import { Activity, FileDown, ListChecks, ScanSearch } from 'lucide-react'
 import { url } from '../../api/client'
@@ -47,6 +48,7 @@ export function VideoLitterResults({ job }: { job: Job<VideoResult> }) {
           <ProcessingBanner status={r.analysis?.processing_status ?? (lit ? (lit.unique_events ? 'COMPLETED_LITTER_DETECTED' : 'COMPLETED_NO_LITTER_DETECTED') : null)} />
           <IdentityBlock identity={r.identity} />
           <Warnings title="Video validation" items={validation} />
+          <RoiNotice roi={r.stats?.roi} litter={lit?.unique_events ?? 0} />
           {!lit ? (
             <EmptyState compact title="No litter event data" body="This analysis was made before litter events were recorded. Analyse the video again to get unique events and frame observations." />
           ) : (

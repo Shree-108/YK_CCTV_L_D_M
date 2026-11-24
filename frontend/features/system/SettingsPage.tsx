@@ -99,6 +99,32 @@ export default function SettingsPage() {
                   </div>
                   <div className="mt-3"><Toggle label="Class-agnostic NMS" checked={draft.inference.agnostic_nms} onChange={(v) => set('inference', { agnostic_nms: v })} description="Off: a packet lying on cardboard can keep both boxes." /></div>
                 </Section>
+                <Section title="Monitored region (automatic pavement ROI)" hint="Detection runs only inside the outdoor ground (road, sidewalk, path, earth) found automatically for each camera; the shop interior is never scanned. A colour anomaly alone is never litter.">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <div className="md:col-span-2"><Toggle label="Enabled" checked={draft.roi.enabled} onChange={(v) => set('roi', { enabled: v })} description="Off: the full frame is analysed, as before." /></div>
+                    <div className="md:col-span-2"><Toggle label="Draw the monitored region" checked={draft.roi.draw_overlay} onChange={(v) => set('roi', { draw_overlay: v })} description="Light-blue outline and 12 % fill on annotated images, videos and the live view." /></div>
+                    <div className="md:col-span-2"><Toggle label="Uniform-region gate" checked={draft.roi.gate_enabled} onChange={(v) => set('roi', { gate_enabled: v })} description="A flat region with no colour or texture anomaly is reported clean without running the detector." /></div>
+                    <div className="md:col-span-2"><Toggle label="Ignore people and vehicles" checked={draft.roi.exclude_people} onChange={(v) => set('roi', { exclude_people: v })} description="Colour candidates on a person or vehicle are dropped." /></div>
+                    <Field label="If no region is found"><Select value={draft.roi.on_failure} onChange={(e) => set('roi', { on_failure: e.target.value as 'full_frame' | 'skip' })}><option value="full_frame">analyse the full frame (warning)</option><option value="skip">skip detection (warning)</option></Select></Field>
+                    <Field label="Segmentation model" hint="models/roi_segmenter/"><Input value={draft.roi.model} onChange={(e) => set('roi', { model: e.target.value })} /></Field>
+                    <Field label="Region image size"><Select value={draft.roi.image_size} onChange={(e) => set('roi', { image_size: Number(e.target.value) })}>{[640, 960, 1280, 1600, 1920].map((v) => <option key={v} value={v}>{v}px</option>)}</Select></Field>
+                    <Field label="Region tiling"><Select value={draft.roi.tiling} onChange={(e) => set('roi', { tiling: e.target.value as 'auto' | 'on' | 'off' })}>{['on', 'auto', 'off'].map((v) => <option key={v}>{v}</option>)}</Select></Field>
+                    <Field label="Frames voted" hint="per stream/video"><Input type="number" min={1} max={120} value={draft.roi.vote_frames} onChange={(e) => set('roi', { vote_frames: Number(e.target.value) })} /></Field>
+                    <Field label="Vote window" hint="seconds"><Input type="number" min={1} max={600} value={draft.roi.vote_seconds} onChange={(e) => set('roi', { vote_seconds: Number(e.target.value) })} /></Field>
+                    <Field label="Ground probability ≥"><Input type="number" step={0.05} min={0.05} max={0.95} value={draft.roi.ground_prob_threshold} onChange={(e) => set('roi', { ground_prob_threshold: Number(e.target.value) })} /></Field>
+                    <Field label="Review if area <" hint="fraction"><Input type="number" step={0.01} min={0} max={0.5} value={draft.roi.min_area_frac} onChange={(e) => set('roi', { min_area_frac: Number(e.target.value) })} /></Field>
+                    <Field label="Review if area >" hint="fraction"><Input type="number" step={0.01} min={0.5} max={1} value={draft.roi.max_area_frac} onChange={(e) => set('roi', { max_area_frac: Number(e.target.value) })} /></Field>
+                    <Field label="Box inside region ≥" hint="fraction"><Input type="number" step={0.05} min={0} max={1} value={draft.roi.min_mask_overlap} onChange={(e) => set('roi', { min_mask_overlap: Number(e.target.value) })} /></Field>
+                    <Field label="Colour k × MAD"><Input type="number" step={0.5} min={0.5} value={draft.roi.chroma_k} onChange={(e) => set('roi', { chroma_k: Number(e.target.value) })} /></Field>
+                    <Field label="Colour minimum" hint="Lab units"><Input type="number" step={1} min={0} value={draft.roi.chroma_min} onChange={(e) => set('roi', { chroma_min: Number(e.target.value) })} /></Field>
+                    <Field label="Light/dark minimum" hint="L units"><Input type="number" step={1} min={0} value={draft.roi.luma_min} onChange={(e) => set('roi', { luma_min: Number(e.target.value) })} /></Field>
+                    <Field label="Edge threshold"><Input type="number" step={5} min={0} value={draft.roi.edge_threshold} onChange={(e) => set('roi', { edge_threshold: Number(e.target.value) })} /></Field>
+                    <Field label="Gate: colour std <"><Input type="number" step={0.5} min={0} value={draft.roi.gate_chroma_std} onChange={(e) => set('roi', { gate_chroma_std: Number(e.target.value) })} /></Field>
+                    <Field label="Gate: L std <"><Input type="number" step={0.5} min={0} value={draft.roi.gate_l_std} onChange={(e) => set('roi', { gate_l_std: Number(e.target.value) })} /></Field>
+                    <Field label="Gate: edge density <"><Input type="number" step={0.005} min={0} max={1} value={draft.roi.gate_edge_density} onChange={(e) => set('roi', { gate_edge_density: Number(e.target.value) })} /></Field>
+                    <Field label="Video: static for" hint="seconds"><Input type="number" step={1} min={1} value={draft.roi.static_confirm_sec} onChange={(e) => set('roi', { static_confirm_sec: Number(e.target.value) })} /></Field>
+                  </div>
+                </Section>
                 <Section title="Tiled inference (small objects)">
                   <div className="grid gap-3 md:grid-cols-4">
                     <div className="md:col-span-4"><Toggle label="Enabled" checked={draft.tiling.enabled} onChange={(v) => set('tiling', { enabled: v })} /></div>

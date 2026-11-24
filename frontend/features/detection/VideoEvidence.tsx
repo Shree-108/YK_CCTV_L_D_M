@@ -13,6 +13,7 @@ import { Badge, Button, Panel } from '../../components/ui/primitives'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/states'
 import { litterName } from './common'
+import { RegionOverlay, RegionToggle } from '../../components/vision/Overlay'
 
 const clock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`
 const unknown = (v: string | null | undefined) => !v || v === 'UNKNOWN'
@@ -71,20 +72,23 @@ export function ScreenshotGallery({ job }: { job: Job<VideoResult> }) {
       </Panel>
     )
   }
+  const v = job.result?.stats?.video
   return (
     <Panel title="Visual evidence" icon={Camera}
-      subtitle={`${shots.length} screenshots at random times across the video${sel ? ` · seed ${sel.seed}` : ''} · the whole video was still analysed at the sampling interval`}>
+      subtitle={`${shots.length} screenshots at random times across the video${sel ? ` · seed ${sel.seed}` : ''} · the whole video was still analysed at the sampling interval`}
+      actions={shots.some((s) => s.roi?.applied) ? <RegionToggle /> : undefined}>
       <div className="grid gap-3 sm:grid-cols-2">
-        {shots.map((s) => <Shot key={s.kind} s={s} busy={busy === s.kind} onDownload={() => get(s.kind, s.url, `${id}_${s.file}`)} />)}
+        {shots.map((s) => <Shot key={s.kind} s={s} size={v ? [v.width, v.height] : null} busy={busy === s.kind} onDownload={() => get(s.kind, s.url, `${id}_${s.file}`)} />)}
       </div>
     </Panel>
   )
 }
 
-function Shot({ s, busy, onDownload }: { s: VideoScreenshot; busy: boolean; onDownload: () => void }) {
+function Shot({ s, size, busy, onDownload }: { s: VideoScreenshot; size: [number, number] | null; busy: boolean; onDownload: () => void }) {
   return (
     <figure className="flex flex-col overflow-hidden rounded-lg border border-line bg-panel-2">
-      <a href={url(s.url)} target="_blank" rel="noreferrer" className="block bg-video" title="Open full size">
+      <a href={url(s.url)} target="_blank" rel="noreferrer" className="relative block bg-video" title="Open full size">
+        {s.roi?.applied && <RegionOverlay regions={s.roi.polygons} width={size?.[0]} height={size?.[1]} needsReview={s.roi.needs_review} />}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={url(s.url)} alt={`Screenshot ${s.index} at video time ${clock(s.video_time_sec)}: ${s.litter_detected ? `${s.litter_detected} litter object(s)` : 'no litter detected'}`}
           loading="lazy" className="aspect-video w-full object-contain" />

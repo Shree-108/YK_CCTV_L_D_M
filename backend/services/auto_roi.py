@@ -1,4 +1,8 @@
-"""Automatic ground ROI (floor / road / sidewalk) per camera, proposed by a segmentation model.
+"""Earlier automatic ground ROI helpers (UperNet, single polygon). SUPERSEDED for the app by
+backend/services/roi_service.py (owner brief 2026-11-24: outdoor ground only, majority vote, config/camera_roi.json);
+kept because training/negative mining uses ``detection_in_roi``. The /api/auto-roi routes no longer use this module.
+
+Automatic ground ROI (floor / road / sidewalk) per camera, proposed by a segmentation model.
 
 Owner request 2026-11-24 (reverses the 2026-11-19 "no ROI" decision for this feature only).
 

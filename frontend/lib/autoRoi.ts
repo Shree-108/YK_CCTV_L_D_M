@@ -5,8 +5,14 @@ export type Point = [number, number]
 export interface AutoRoi {
   polygon: Point[]
   holes?: Point[][]
-  source: 'auto' | 'auto_edited' | 'manual' | 'request'
+  source: 'auto' | 'auto_edited' | 'manual' | 'request' | 'sam_click'
   needs_review: boolean
+  /** every region of the record (the editor edits the first = largest; the others are kept) */
+  polygons?: { points: Point[]; holes?: Point[][] }[]
+  /** phase 2: false until an operator approves (needs_review stays on until then) */
+  approved?: boolean
+  confidence?: number | null
+  area_frac?: number | null
   created_at?: string
   updated_at?: string
   approved_at?: string | null
@@ -32,7 +38,9 @@ export type Tone = 'ok' | 'warn' | 'crit' | 'info' | 'exp' | 'neutral'
 export function roiStatus(r: Pick<AutoRoiResponse, 'roi' | 'resolved_from'> | undefined): { label: string; tone: Tone } {
   if (!r || !r.roi) return { label: 'No ROI · full frame', tone: 'neutral' }
   if (r.resolved_from === 'global') return { label: 'Global ROI (fallback)', tone: 'info' }
-  if (r.roi.needs_review) return { label: 'Auto · needs review', tone: 'warn' }
+  if (r.roi.needs_review || r.roi.approved === false) {
+    return { label: r.roi.source === 'auto' ? 'Auto · needs review' : 'Edited · needs approval', tone: 'warn' }
+  }
   return { label: r.roi.source === 'manual' ? 'Manual · approved' : 'Approved', tone: 'ok' }
 }
 

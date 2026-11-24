@@ -1,4 +1,4 @@
-"""Readable litter annotation with label-collision avoidance. Full-frame only: nothing about regions is drawn.
+"""Readable litter annotation with label-collision avoidance. The monitored region (roi_service) is drawn when given.
 
 Every detection the model returned (above the weak confidence floor) is drawn, styled by its status:
   DETECTED (pipeline ``confirmed``)        solid orange-red box, ``Plastic Bag 87%``
@@ -12,7 +12,7 @@ Results view (owner decision 2026-11-21); the ``weak`` count is kept in the resu
 """
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import cv2
 import numpy as np
@@ -136,10 +136,17 @@ def hud_counts(dets: Sequence[Detection]) -> dict[str, int]:
 
 
 def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequence[str] = (),
-                    show_rejected: bool = True, label_rejected: bool = True, max_listed: int = 5) -> np.ndarray:
+                    show_rejected: bool = True, label_rejected: bool = True, max_listed: int = 5,
+                    roi: Optional[dict] = None, roi_text: Optional[dict] = None) -> np.ndarray:
     """Operator view of one frame: every detection by status (see module doc) and a HUD with the counts.
-    ``header``: extra first HUD lines (camera / store / time). Labels never cover a DETECTED box."""
+    ``header``: extra first HUD lines (camera / store / time). Labels never cover a DETECTED box.
+    ``roi``: roi_service block drawn under the boxes (monitored region, candidates; settings.roi.draw_overlay);
+    ``roi_text``: the block whose status lines (warning, "No litter found in the monitored region") join the HUD -
+    shown even when the overlay drawing is switched off."""
     img = frame.copy()
+    if roi:
+        from backend.services.roi_service import draw_roi
+        draw_roi(img, roi)
     h, w = img.shape[:2]
     s = float(np.clip(w / 900, 0.6, 1.4))
     thick = max(2, int(round(2 * s)))
@@ -183,6 +190,9 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequen
     lines += [(f"{display_name(d.cls_name)} - {d.confidence * 100:.0f}%", (200, 200, 200)) for d in litter[:max_listed]]
     if len(litter) > max_listed:
         lines.append((f"+{len(litter) - max_listed} more", (170, 170, 170)))
+    if roi_text:
+        from backend.services.roi_service import ROI_BGR, banner_lines
+        lines += [(t, (80, 170, 255) if t.startswith("WARNING") else ROI_BGR) for t in banner_lines(roi_text)]
     hs = 0.52 * s
     sizes = [cv2.getTextSize(t, FONT, hs, 1) for t, _ in lines]
     lh = max(th + base for (_, th), base in sizes) + 8

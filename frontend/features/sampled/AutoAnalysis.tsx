@@ -23,6 +23,8 @@ import { Downloads, IdentityBlock, ProcessingBanner } from '../detection/Analysi
 import { OUTCOME } from './shared'
 import { DashboardTable } from './DashboardTable'
 import { StoreCameraSelect } from '../stores/StoreCameraSelect'
+import { RoiNotice } from '../detection/RoiNotice'
+import { RegionOverlay, RegionToggle } from '../../components/vision/Overlay'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v,.mov,.mp4,.webm'
 const SEVERITY_TONE: Record<string, Tone> = { HIGH: 'crit', MEDIUM: 'warn', LOW: 'neutral' }
@@ -167,6 +169,7 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
   const current = stepIndex(l, stopped ? stageLifecycle(job.stage) : undefined)
   const ready = resultsReady(job)
   const s = job.summary
+  const jobRoi = job.frames.find((f) => f.roi)?.roi ?? null
   const overall = overallLabel(s?.overall_analysis_status)
   const cancel = async () => {
     setCancelling(true)
@@ -243,7 +246,9 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
       )}
 
       {job.frames.some((f) => f.status !== 'planned') && (
-        <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}>
+        <Panel title="Four screenshots" icon={ScanSearch} subtitle={ready ? 'Original and annotated; boxes show the model’s detections and confidence' : 'Screenshots appear as they are extracted and analysed'}
+          actions={jobRoi?.applied ? <RegionToggle /> : undefined}>
+          {jobRoi && <div className="mb-3"><RoiNotice roi={jobRoi} litter={job.frames.reduce((n, f) => n + (f.counts?.confirmed ?? 0), 0)} /></div>}
           <div className="grid gap-3 lg:grid-cols-2">{job.frames.map((f) => <AutoFrameCard key={f.idx} frame={f} done={isTerminal(l)} />)}</div>
         </Panel>
       )}
@@ -258,13 +263,15 @@ export function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: bool
   const o = frame.outcome ? OUTCOME[frame.outcome] : null
   const pending = !done && !frame.outcome
   const [showDiag, setShowDiag] = useState(false)
-  const image = (src: string | null, label: string, dl: string | null) => (
+  const roi = frame.roi?.applied ? frame.roi : null
+  const image = (src: string | null, label: string, dl: string | null, overlay = false) => (
     <figure className="flex min-w-0 flex-col gap-1">
       <div className="relative aspect-video overflow-hidden rounded-md bg-video">
-        {src ? (
-          // eslint-disable-next-line @next/next/no-img-element
+        {src ? (<>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={url(src)} alt={`Screenshot ${frame.idx}, ${label.toLowerCase()}, at ${frame.video_timestamp}`} loading="lazy" className="size-full object-contain" />
-        ) : (
+          {overlay && roi && <RegionOverlay regions={roi.polygons} width={frame.image_size?.[0]} height={frame.image_size?.[1]} needsReview={roi.needs_review} />}
+        </>) : (
           <div className="flex size-full flex-col items-center justify-center gap-1.5 p-3 text-center text-[12px] text-fg-3">
             {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CircleSlash className="size-4" aria-hidden />}
             {pending ? 'Processing…' : 'Not available'}
@@ -289,7 +296,7 @@ export function AutoFrameCard({ frame, done }: { frame: SampledFrame; done: bool
         </div>
       </header>
       <div className="grid grid-cols-2 gap-2">
-        {image(frame.original_url, 'Original', frame.download_original_url)}
+        {image(frame.original_url, roi ? 'Original + monitored region (browser overlay)' : 'Original', frame.download_original_url, true)}
         {image(showDiag && frame.diagnostic_url ? frame.diagnostic_url : frame.annotated_url,
           showDiag && frame.diagnostic_url ? 'Diagnostic (incl. rejected)' : 'Annotated', frame.download_annotated_url)}
       </div>

@@ -106,7 +106,8 @@ Ok "Python $pyver ($Python)"
 $missing = (& $Python -c @"
 import importlib.util as u
 mods = {'fastapi':'fastapi','uvicorn':'uvicorn[standard]','multipart':'python-multipart','ultralytics':'ultralytics','torch':'torch',
-        'cv2':'opencv-python','numpy':'numpy','yaml':'pyyaml','dotenv':'python-dotenv','psutil':'psutil','pydantic':'pydantic'}
+        'cv2':'opencv-python','numpy':'numpy','yaml':'pyyaml','dotenv':'python-dotenv','psutil':'psutil','pydantic':'pydantic',
+        'transformers':'transformers','huggingface_hub':'huggingface_hub'}
 print(' '.join(p for m, p in mods.items() if u.find_spec(m) is None))
 "@).Trim()
 if ($missing) { Fail "Missing Python packages: $missing`n         Install with:  `"$Python`" -m pip install -r requirements.txt" }
@@ -134,6 +135,19 @@ $models = @(Get-ChildItem $YoloDir -Directory -ErrorAction SilentlyContinue |
   Where-Object { (Test-Path (Join-Path $_.FullName 'best.pt')) -and (Test-Path (Join-Path $_.FullName 'model_meta.json')) })
 if ($models.Count -eq 0) { Fail "No model weights found in $YoloDir\<version>\best.pt (with model_meta.json). Restore v3_store_cctv or fix LM_MODELS_DIR (see deploy\TROUBLESHOOTING.md)." }
 Ok ("Model weights found: " + (($models | ForEach-Object Name) -join ', ') + "  (the app loads the version marked active)")
+
+# Monitored region (automatic pavement ROI, backend/services/roi_service.py): the segmentation weights are fetched once
+# into models\roi_segmenter\ so that "run the project" stays the only step. LDM_ROI=off skips the ROI entirely.
+if (([Environment]::GetEnvironmentVariable('LDM_ROI') + '') -ne 'off') {
+  & $Python -m backend.services.roi_service check *> $null
+  if ($LASTEXITCODE -eq 0) { Ok "Monitored-region model present (models\roi_segmenter)" }
+  else {
+    Info "Monitored-region model missing: downloading it once (~105 MB, needs internet)..."
+    & $Python -m backend.services.roi_service fetch
+    if ($LASTEXITCODE -eq 0) { Ok "Monitored-region model installed" }
+    else { Warn "Could not download the monitored-region model. Detection runs with roi.on_failure (full frame + a visible warning) until it is installed:  `"$Python`" -m backend.services.roi_service fetch" }
+  }
+}
 
 $envFile = Join-Path $Root '.env'
 if (-not (Test-Path $envFile)) {

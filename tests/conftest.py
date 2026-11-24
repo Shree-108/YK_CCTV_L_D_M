@@ -75,6 +75,10 @@ def _isolated_export_folder(tmp_path: Path, monkeypatch) -> None:
     finished four-screenshot jobs now always produce a bundle, which must never land in the real storage/exports."""
     monkeypatch.setenv("LDM_GARBAGE_EXPORT_DIR", str(tmp_path / "exports" / "ai_garbage_detection"))
     monkeypatch.setenv("LDM_GARBAGE_EXPORT_LEDGER", str(tmp_path / "exports" / "ledger.db"))
+    # monitored region (roi_service): off for existing tests (full-frame behaviour); the ROI store never touches the
+    # real config/camera_roi.json. tests/test_roi_service.py switches it on.
+    monkeypatch.setenv("LDM_ROI", "off")
+    monkeypatch.setenv("LDM_ROI_STORE", str(tmp_path / "config" / "camera_roi.json"))
 
 
 @pytest.fixture

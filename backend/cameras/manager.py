@@ -232,7 +232,9 @@ class CameraWorker:
                     st.fps = round((len(self._times) - 1) / max(self._times[-1] - self._times[0], 1e-6), 2)
                 img = annotate_litter(frame, res.detections, [f"LIVE  {self.cam.get('name', self.id)}",
                                                               f"FPS {st.fps:.1f}  |  {st.inference_ms:.0f} ms"],
-                                      label_rejected=False)
+                                      label_rejected=False,
+                                      roi=res.roi if self.pipeline.settings.roi.draw_overlay else None,
+                                      roi_text=res.roi)
                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 ok_raw, raw = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok and ok_raw:
@@ -243,7 +245,10 @@ class CameraWorker:
                         self._live = {"seq": self._seq, "ts": ts, "width": frame.shape[1], "height": frame.shape[0],
                                       "detections": [d.to_dict() for d in res.detections],
                                       "summary": res.summary, "inference_ms": st.inference_ms, "fps": st.fps,
-                                      "model_version": self.pipeline.engine.version}
+                                      "model_version": self.pipeline.engine.version,
+                                      # monitored region (polygons normalised 0..1, status, candidates) for the overlay
+                                      "roi": res.roi if res.roi is None or self.pipeline.settings.roi.draw_overlay
+                                      else {**res.roi, "polygons": []}}
             except Exception as exc:  # noqa: BLE001
                 log.exception("camera %s processing error", self.id)
                 self.status.last_error = f"processing: {exc}"

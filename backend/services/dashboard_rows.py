@@ -49,6 +49,7 @@ from typing import Any, Callable, Optional
 
 import cv2
 
+from backend.services.roi_service import roi_remarks
 from backend.sampling import frame_quality
 from backend.sampling.plan import recording_start_from_name
 from backend.services import garbage_export as ge
@@ -243,6 +244,8 @@ def build_dashboard_rows(job: dict[str, Any], *, query: Query, view_quality: Any
             tail.append(f"view blocked: {reason}" if status == BLOCKED else f"view quality: {reason}")
         if rs.estimated:
             tail.append(ESTIMATED)
+        if outcome in ("LITTER_DETECTED", "NO_LITTER"):
+            tail.extend(roi_remarks(res.get("roi")))   # roi=auto, needs_review, roi_not_determined, gate/candidates
 
         def row(status_: str, cls: str, conf: str, kind: str, remark: str) -> dict[str, Any]:
             return {**base, "row_kind": kind, "detection_status": status_, "litter_class": cls,

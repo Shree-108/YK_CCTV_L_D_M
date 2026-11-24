@@ -12,9 +12,10 @@ import { Button, PageHeader, Panel, Segmented, Toggle } from '../../components/u
 import { MetricCard } from '../../components/ui/kpi'
 import { DataTable } from '../../components/ui/table'
 import { EmptyState, ErrorState } from '../../components/ui/states'
-import { AspectBox, ImageOverlay, type OverlayBox } from '../../components/vision/Overlay'
+import { AspectBox, ImageOverlay, RegionToggle, type OverlayBox } from '../../components/vision/Overlay'
 import { StoreCameraSelect, type StoreCamera } from '../stores/StoreCameraSelect'
 import { ConfidenceCell, DetectionStatusBadge, Downloads, IdentityBlock, ProcessingBanner } from './AnalysisOutputs'
+import { RoiNotice } from './RoiNotice'
 import { DetectionSettingsForm, DropZone, FileInfo, Steps, fileExt, fileSize, litterName, toForm, type DetectConfig } from './common'
 
 type View = 'annotated' | 'original' | 'compare'
@@ -89,17 +90,19 @@ export default function ImageDetectionPage() {
   const count = (s: string) => rows.filter((r) => r._status === s).length
 
   const [w, h] = result?.image_size ?? dims
+  const regions = result?.roi?.applied ? result.roi.polygons : undefined
   const a = result?.analysis
   const stamp = a?.analysis_id ?? 'image'
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="Image Analysis" description="The whole image is analysed. Every detection the model returns is listed with its confidence and status: only DETECTED objects count as litter events; UNDER REVIEW and REJECTED are shown for transparency." />
+      <PageHeader title="Image Analysis" description="Litter is searched only inside the monitored region (the outdoor pavement found automatically, outlined in light blue). Every detection the model returns is listed with its confidence and status: only DETECTED objects count as litter events; UNDER REVIEW and REJECTED are shown for transparency." />
       <div className="rounded-xl border border-line bg-panel px-4 py-3">
         <Steps steps={['Upload image', 'Store & camera', 'Analyze', 'Review results']} current={!file ? 0 : result ? 3 : pending ? 2 : 1} />
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Panel title={file ? file.name : 'Image'} icon={ImageIcon} noPad
           actions={file && <>
+            {result?.roi?.applied && <RegionToggle />}
             <Segmented size="sm" label="Image view" value={view} onChange={setView} options={[
               { value: 'annotated', label: 'Annotated', icon: ScanSearch }, { value: 'original', label: 'Original', icon: Eye }, { value: 'compare', label: 'Compare', icon: Columns2 }]} />
             <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => { setFile(null); setSrc(null); setResult(null) }}>Clear</Button>
@@ -110,12 +113,12 @@ export default function ImageDetectionPage() {
               <div className={cx('grid gap-2', view === 'compare' && 'md:grid-cols-2')}>
                 {view !== 'annotated' && (
                   <AspectBox width={w} height={h} className="overflow-hidden rounded-md border border-line">
-                    <ImageOverlay src={src} width={w} height={h} className="absolute inset-0" alt="Original image" />
+                    <ImageOverlay src={src} width={w} height={h} className="absolute inset-0" alt="Original image" regions={regions} />
                   </AspectBox>
                 )}
                 {view !== 'original' && (
                   <AspectBox width={w} height={h} className="overflow-hidden rounded-md border border-line">
-                    <ImageOverlay src={src} width={w} height={h} boxes={result ? boxes : []} className="absolute inset-0" alt="Image with every detection" />
+                    <ImageOverlay src={src} width={w} height={h} boxes={result ? boxes : []} className="absolute inset-0" alt="Image with every detection" regions={regions} />
                   </AspectBox>
                 )}
               </div>
@@ -140,6 +143,7 @@ export default function ImageDetectionPage() {
           <div className="flex flex-col gap-3">
             <ProcessingBanner status={a?.processing_status ?? (count('DETECTED') ? 'COMPLETED_LITTER_DETECTED' : 'COMPLETED_NO_LITTER_DETECTED')} />
             <IdentityBlock identity={result.identity} />
+            <RoiNotice roi={result.roi} litter={count('DETECTED')} />
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
               <MetricCard label="Litter events (DETECTED)" value={a?.unique_events ?? count('DETECTED')} tone={count('DETECTED') ? 'crit' : undefined} />
               <MetricCard label="Under review" value={count('UNDER_REVIEW')} tone={count('UNDER_REVIEW') ? 'warn' : undefined} hint="not counted as events" />

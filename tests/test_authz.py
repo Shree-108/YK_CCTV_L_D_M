@@ -60,6 +60,9 @@ MATRIX = {
     ("GET", "/api/alerts"): "viewer", ("GET", "/api/alerts/{alert_id}"): "viewer",
     ("PATCH", "/api/alerts/{alert_id}"): "operator", ("GET", "/api/alerts/{alert_id}/snapshot"): "viewer",
     ("GET", "/api/alerts/{alert_id}/timeline"): "viewer",
+    # pilot mode (phase 2): CCTV room decisions + the dismissal log
+    ("GET", "/api/alerts/dismissals"): "viewer", ("GET", "/api/alerts/dismissals/{dismissal_id}/image"): "viewer",
+    ("POST", "/api/alerts/{alert_id}/confirm"): "operator", ("POST", "/api/alerts/{alert_id}/dismiss"): "operator",
     ("GET", "/api/analytics"): "viewer", ("GET", "/api/models"): "viewer", ("POST", "/api/models/activate"): "admin",
     ("POST", "/api/models/register"): "admin",
     ("GET", "/api/settings"): "viewer", ("PUT", "/api/settings"): "admin",
@@ -106,7 +109,7 @@ MATRIX = {
 AUTO_ROI_PATHS = {p for _, p in MATRIX if "/auto-roi" in p}
 STREAMS = {("GET", "/api/stream")}      # infinite responses: checked separately
 PARAMS = {"cam_id": "nocam", "camera_id": "nocam", "cap_id": "nocap", "job_id": "nojob", "kind": "video",
-          "alert_id": "999999", "action": "start", "table": "alerts", "name": "nodataset", "exp_id": "noexp",
+          "alert_id": "999999", "dismissal_id": "999999", "action": "start", "table": "alerts", "name": "nodataset", "exp_id": "noexp",
           "hid": "999999", "media_id": "0123456789abcdef", "idx": "1", "month": "2026-11",
           "analysis_id": "analysis_20261117T000000_abcdef", "store_id": "NOSTORE", "day": "2000-01-01",
           "event_id": "img_20261119T000000_abcdef-E001"}

@@ -755,6 +755,9 @@ def sampled_checks(query: Query, src: Source, camera_id: str, tb: Optional[TimeB
                 review.append((d["class"], float(d["confidence"])))
         if n_rej:
             notes.append(f"{n_rej} detection{'s' if n_rej != 1 else ''} excluded: rejected by an operator")
+        if status != BLOCKED:
+            from backend.services.roi_service import roi_remarks
+            notes.extend(roi_remarks(res.get("roi")))
         if status == LITTER and not litter:
             status = CLEAN
         if status == CLEAN and litter:
@@ -850,6 +853,8 @@ def video_checks(query: Query, src: Source, shots: dict[str, Any], camera_id: st
         notes = [f"{n_rej} detection{'s' if n_rej != 1 else ''} excluded: rejected by an operator"] if n_rej else []
         if not s.get("analysed_frame", True):
             notes.append("frame outside the analysis sampling: model run without temporal confirmation")
+        from backend.services.roi_service import roi_remarks
+        notes.extend(roi_remarks(s.get("roi")))
         checks.append(Check(camera_id, at, name, LITTER if litter else CLEAN, litter, review, notes=notes,
                             time_note=tnote))
     return checks, []

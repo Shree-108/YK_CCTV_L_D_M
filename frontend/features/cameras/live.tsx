@@ -119,6 +119,7 @@ export function CameraTile({ cam, overlay, paused, onOpen, compact, heightClass 
     <div ref={tileRef} className={cx('group relative overflow-hidden rounded-md border bg-video', offline ? 'border-crit/50' : 'border-line', heightClass)}>
       {f && image ? (
         <ImageOverlay src={image} width={f.width} height={f.height} boxes={boxes}
+          regions={f.roi?.applied ? f.roi.polygons : undefined}
           className="absolute inset-0" alt={`Live frame from ${cam.name}`} />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-[12px] text-fg-3">

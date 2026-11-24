@@ -11,6 +11,7 @@ import { cx } from '../../lib/format'
 import { Button, Dot, PageHeader, Segmented, Select, Toggle } from '../../components/ui/primitives'
 import { EmptyState, ErrorState, Skeleton } from '../../components/ui/states'
 import { CameraDrawer, CameraTile, DEFAULT_OVERLAY, camTone, type OverlayOpts } from './live'
+import { RegionToggle } from '../../components/vision/Overlay'
 
 const LAYOUTS = [1, 2, 4, 6, 9] as const
 type Layout = (typeof LAYOUTS)[number]
@@ -58,6 +59,7 @@ export default function LivePage() {
       <PageHeader title="Live CCTV"
         description="Every box is a real detection from the active model on the latest processed frame. Solid green = confirmed (temporal), dashed amber = candidate."
         actions={<>
+          <RegionToggle />
           {focus && <Button variant="ghost" onClick={() => router.push('/live')}>Show all cameras</Button>}
           <Segmented label="View" value={view} onChange={setView} options={[{ value: 'grid', label: 'Grid', icon: LayoutGrid }, { value: 'map', label: 'Map', icon: MapIcon }]} />
           {view === 'grid' && !focus && (

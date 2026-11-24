@@ -51,6 +51,8 @@ export interface SampledFrame {
   alert_ids: number[]
   inference_ms: number | null
   image_size: [number, number] | null
+  /** monitored region of this screenshot (polygons drawn as a browser overlay) */
+  roi?: import('./types').RoiBlock | null
   planned_frame_idx: number | null
   sampling_note: string | null
   download_original_url: string | null

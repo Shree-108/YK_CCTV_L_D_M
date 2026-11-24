@@ -77,6 +77,11 @@ class AppConfig:
     # MP4 container creation time as recording start. Off: the exports seen so far carry an encode time there.
     trust_container_time: bool = field(
         default_factory=lambda: os.getenv("LDM_TRUST_CONTAINER_TIME", "off").strip().lower() in ("on", "true"))
+    # Automatic monitored region (backend/services/roi_service.py). "off" is a process-wide kill switch (tests use it);
+    # the per-camera/global switch is settings.roi.enabled.
+    roi_mode: str = field(default_factory=lambda: os.getenv("LDM_ROI", "on").strip().lower())
+    roi_store_path: Path = field(
+        default_factory=lambda: _env_path("LDM_ROI_STORE", PROJECT_ROOT / "config" / "camera_roi.json"))
 
     @property
     def garbage_export_enabled(self) -> bool:
@@ -85,6 +90,8 @@ class AppConfig:
     def __post_init__(self) -> None:
         if self.garbage_export_mode not in ("off", "on"):
             raise ValueError(f"LDM_GARBAGE_EXPORT must be 'off' or 'on' (got {self.garbage_export_mode!r})")
+        if self.roi_mode not in ("off", "on"):
+            raise ValueError(f"LDM_ROI must be 'off' or 'on' (got {self.roi_mode!r})")
         if self.auth_mode not in ("off", "on"):
             raise ValueError(f"LM_AUTH_MODE must be 'off' or 'on' (got {self.auth_mode!r})")
         if self.auth_cookie_secure not in ("auto", "true", "false"):

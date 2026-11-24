@@ -265,6 +265,10 @@ class SampledRunner:
         totals = {"screenshots_planned": job["sample_count"], "screenshots_extracted": 0, "screenshots_analysed": 0,
                   "litter": 0, "by_class": {}, "alerts": 0, "outcomes": {}}
         annotated_frames: list[tuple[int, Any, Path]] = []
+        # monitored region: majority vote over the first seconds of the video (cached per camera); never fatal
+        roi = None
+        if media and media.get("path") and Path(media["path"]).is_file():
+            roi = self.state.roi.for_video(job.get("camera_id") or "upload", media["path"], settings)
         for f in self.repo.frames(job_id):
             if job_id in self._cancel:
                 raise Stopped()
@@ -284,12 +288,13 @@ class SampledRunner:
                                    location=location,
                                    header=(f"Store: {job.get('store_id') or 'UNKNOWN'}  Camera: "
                                            f"{job.get('camera_id') or 'UNKNOWN'}",
-                                           f"Screenshot {f['idx']}  video time {f['video_time_sec'] or 0:.1f} s"))
+                                           f"Screenshot {f['idx']}  video time {f['video_time_sec'] or 0:.1f} s"),
+                                   roi=roi)
                 annotated = res.pop("annotated")
                 alerts = res.pop("alerts")
                 res["alert_ids"] = [a["id"] for a in alerts]
                 n = res["counts"]["confirmed"]
-                alert_of = {a.get("track_id"): a["id"] for a in alerts}
+                alert_of = {**(res.pop("linked_alerts", None) or {}), **{a.get("track_id"): a["id"] for a in alerts}}
                 for d in res["detections"]:
                     if d.get("status") == "confirmed":        # existing severity rules (Settings -> severity)
                         d["severity"] = compute_severity(d["class"], d["confidence"], n, settings, meta)
