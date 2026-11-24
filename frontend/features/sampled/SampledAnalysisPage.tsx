@@ -8,9 +8,9 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
-  AlertTriangle, BarChart3, Camera, FileVideo, Info, Layers, Play, RotateCcw, ScanSearch, X,
+  AlertTriangle, BarChart3, Camera, Download, FileVideo, Info, Layers, Play, RotateCcw, ScanSearch, X,
 } from 'lucide-react'
-import { ApiError, url } from '../../api/client'
+import { ApiError, downloadAuthed, url } from '../../api/client'
 import { Api } from '../../api/endpoints'
 import type { SampledJob, SampledMedia } from '../../api/sampledTypes'
 import { invalidate, useQuery } from '../../hooks/useQuery'
@@ -21,7 +21,8 @@ import { MetricCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states'
 import { StoreCameraSelect } from '../stores/StoreCameraSelect'
 import { DropZone, FileInfo, Steps, fileSize, litterName } from '../detection/common'
-import { CsvPreview, FrameCard, STATE, StageList, isActive } from './shared'
+import { FrameCard, STATE, StageList, isActive } from './shared'
+import { DashboardTable } from './DashboardTable'
 import { AutoJobView, AutoUpload } from './AutoAnalysis'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v'
@@ -267,12 +268,13 @@ function JobView({ job, onNew }: { job: SampledJob; onNew: () => void }) {
       )}
 
       {job.state === 'done' && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <Panel title="CSV report" subtitle="One row per litter detection; screenshots without litter keep one row each">
-            {job.csv_url ? <CsvPreview path={job.csv_url} filename={`litter_report_${job.id}.csv`} /> : <EmptyState compact title="No CSV report" />}
-          </Panel>
+        <div className="flex flex-col gap-4">
+          <DashboardTable jobId={job.id} detailedCsv={job.reports?.detection_csv} />
           <Panel title="Detection summary" icon={Layers}
-            actions={<Link href="/results" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg"><BarChart3 className="size-3.5" aria-hidden />Results Dashboard</Link>}>
+            actions={<>
+              {job.csv_url && <Button size="sm" variant="ghost" icon={Download} onClick={() => downloadAuthed(job.csv_url!, `litter_report_${job.id}.csv`).catch((e) => toast({ tone: 'crit', title: 'Download failed', body: (e as Error).message }))}>Litter report CSV</Button>}
+              <Link href="/results" className="inline-flex items-center gap-1 text-[12px] font-medium text-fg-2 hover:text-fg"><BarChart3 className="size-3.5" aria-hidden />Results Dashboard</Link>
+            </>}>
             {Object.keys(c.by_class ?? {}).length === 0 ? <EmptyState compact title="No litter detected by the model" body="Nothing reached the confirmed threshold in the analysed screenshots. This is not a guarantee that the area is litter-free." /> : (
               <ul className="flex flex-col gap-2">
                 {Object.entries(c.by_class ?? {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => (

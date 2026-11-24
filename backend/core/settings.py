@@ -115,6 +115,23 @@ class VideoSettings(_M):
     screenshot_seed: Optional[int] = Field(None, ge=0)  # four evidence screenshots; None = derived from the analysis id
 
 
+class ViewQualitySettings(_M):
+    """When a screenshot counts as ``view_blocked`` in the dashboard import rows (backend/services/dashboard_rows.py).
+    Reporting only: detection never reads these. Measured on a 640-px-wide grey copy of the screenshot. Defaults
+    were set well clear of 156 real CCTV screenshots in storage/ (2026-11-24: Laplacian variance >= 1880, mean
+    brightness 63-129, grey std >= 45), so ordinary day and night views are never flagged."""
+    blur_min_laplacian_var: float = Field(100.0, ge=0)    # below -> "blurred" (out of focus, smeared lens, fog)
+    dark_max_mean: float = Field(30.0, ge=0, le=255)      # mean brightness below -> "too dark"
+    bright_min_mean: float = Field(230.0, ge=0, le=255)   # mean brightness above -> "too bright" (glare, overexposed)
+    uniform_max_std: float = Field(12.0, ge=0, le=255)    # grey std below -> "mostly uniform" (covered lens, no signal)
+
+    @model_validator(mode="after")
+    def _order(self) -> "ViewQualitySettings":
+        if self.dark_max_mean >= self.bright_min_mean:
+            raise ValueError("dark_max_mean must be below bright_min_mean")
+        return self
+
+
 class DetectionSettings(_M):
     confidence: ConfidenceSettings = ConfidenceSettings()
     inference: InferenceSettings = InferenceSettings()
@@ -124,6 +141,7 @@ class DetectionSettings(_M):
     severity: SeveritySettings = SeveritySettings()
     alerts: AlertSettings = AlertSettings()
     video: VideoSettings = VideoSettings()
+    view_quality: ViewQualitySettings = ViewQualitySettings()
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

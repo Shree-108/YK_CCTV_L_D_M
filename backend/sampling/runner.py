@@ -363,3 +363,10 @@ class SampledRunner:
                 safe_auto_export(self.state, kind="sampled", source_id=job_id, out_dir=rdir)
             except Exception:  # noqa: BLE001
                 log.exception("ai_garbage_detection export guard failed for %s", job_id)
+            # result bundle: 4 annotated images + import CSV + manifest (always; after the flat export above, so a
+            # check that export already wrote is not written again). Never fails the job.
+            try:
+                from backend.services.export_guard import safe_result_bundle
+                safe_result_bundle(self.state, job_id=job_id, out_dir=rdir)
+            except Exception:  # noqa: BLE001
+                log.exception("result bundle guard failed for %s", job_id)

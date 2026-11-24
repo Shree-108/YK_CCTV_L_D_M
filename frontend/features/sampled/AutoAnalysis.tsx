@@ -15,12 +15,13 @@ import {
   screenshotFacts, stepIndex, validateVideo, type Lifecycle, type UploadDefaults,
 } from '../../lib/autoAnalysis'
 import { lockedFor, useApp } from '../../stores/app'
-import { Badge, Button, Panel, type Tone } from '../../components/ui/primitives'
+import { Badge, Button, Field, Input, Panel, type Tone } from '../../components/ui/primitives'
 import { MetricCard } from '../../components/ui/kpi'
 import { EmptyState, ErrorState } from '../../components/ui/states'
 import { DropZone, litterName } from '../detection/common'
 import { Downloads, IdentityBlock, ProcessingBanner } from '../detection/AnalysisOutputs'
-import { CsvPreview, OUTCOME } from './shared'
+import { OUTCOME } from './shared'
+import { DashboardTable } from './DashboardTable'
 import { StoreCameraSelect } from '../stores/StoreCameraSelect'
 
 const ACCEPT = 'video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.mkv,.avi,.m4v,.mov,.mp4,.webm'
@@ -29,8 +30,6 @@ const LIFECYCLE_TONE: Record<Lifecycle, Tone> = {
   UPLOADING: 'info', QUEUED: 'neutral', PROCESSING: 'warn', EXTRACTING_SCREENSHOTS: 'warn', RUNNING_DETECTION: 'warn',
   GENERATING_REPORT: 'warn', COMPLETED: 'ok', FAILED: 'crit', CANCELLED: 'neutral',
 }
-const REPORT_COLS = ['record_type', 'screenshot_number', 'screenshot_timestamp_seconds', 'litter_class', 'confidence_score',
-  'severity', 'object_track_id', 'final_classification', 'review_required']
 
 /** Where a stopped job got to (for the progress strip of a FAILED / CANCELLED job). */
 function stageLifecycle(stage: SampledStage): Lifecycle {
@@ -77,10 +76,12 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
   const lock = lockedFor('operator', role, loginOn)
   const health = useQuery('health', Api.health)
   const [defaults, setDefaults] = useState<UploadDefaults>({ camera_id: '', store_id: '' })
+  // per video (not remembered): when the recording started; empty = taken from the video / file name / upload time
+  const [recordingStart, setRecordingStart] = useState('')
   const [uploading, setUploading] = useState<string | null>(null)
   const [error, setError] = useState<Error | null>(null)
-  const latest = useRef({ defaults, limits: health.data?.limits ?? null, onJob })
-  latest.current = { defaults, limits: health.data?.limits ?? null, onJob }
+  const latest = useRef({ defaults, recordingStart, limits: health.data?.limits ?? null, onJob })
+  latest.current = { defaults, recordingStart, limits: health.data?.limits ?? null, onJob }
   useEffect(() => { setDefaults(readDefaults()) }, [])
 
   // one uploader for the page's lifetime: it is what makes a doubled drop event upload once
@@ -88,10 +89,11 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
   if (!uploader.current) {
     uploader.current = createAutoUploader<File>({
       validate: (f) => validateVideo(f, latest.current.limits),
-      upload: (f) => Api.sampledAutoUpload(f, cleanDefaults(latest.current.defaults)),
+      upload: (f) => Api.sampledAutoUpload(f, { ...cleanDefaults(latest.current.defaults), recording_start: latest.current.recordingStart || undefined }),
       onStart: (f) => { setError(null); setUploading(f.name) },
       onJob: (id, r) => {
         setUploading(null)
+        setRecordingStart('')
         invalidate('sampled:')
         if (r.duplicate_of_active) toast({ tone: 'warn', title: 'Already being analysed', body: 'This video is already being analysed. Showing that analysis.' })
         latest.current.onJob(id)
@@ -126,14 +128,15 @@ export function AutoUpload({ onJob, onAdvanced }: { onJob: (jobId: string) => vo
             <DropZone accept={ACCEPT} onFile={drop} label="Drag and drop a CCTV video here"
               hint={`${exts}${health.data?.limits ? ` · up to ${health.data.limits.max_video_mb} MB` : ''} · analysis starts automatically`} />
           )}
+          <div className="flex flex-col gap-3 rounded-lg border border-line px-3 py-3">
+            <p className="text-[12.5px] text-fg-2">Camera and store (optional; remembered for the next video). Without a camera, results use camera ID “VIDEO-UPLOAD”.</p>
+            <StoreCameraSelect columns={2} value={defaults} onChange={(v) => update(v)} />
+            <Field label="Recording start (this video only)" hint="Optional. When the recording began, camera-local India time. Empty: taken from the video's creation time or its file name, else the upload time (marked “capturedAt estimated”).">
+              <Input type="datetime-local" step={1} value={recordingStart} disabled={!!uploading} onChange={(e) => setRecordingStart(e.target.value)} className="max-w-[260px]" aria-label="Recording start" />
+            </Field>
+          </div>
           {error && <ErrorState error={error} title="Analysis not started" compact />}
           {noModel && <p className="rounded-md bg-crit-bg px-3 py-2 text-[12.5px] text-crit">No detection model is loaded on the server; videos cannot be analysed.</p>}
-          <details className="rounded-lg border border-line px-3 py-2" open={!!(defaults.camera_id || defaults.store_id)}>
-            <summary className="cursor-pointer text-[12.5px] text-fg-2">Upload defaults (optional, applied to every dropped video)</summary>
-            <div className="mt-3">
-              <StoreCameraSelect columns={2} value={defaults} onChange={(v) => update(v)} />
-            </div>
-          </details>
         </div>
       </Panel>
       <Panel title="What happens automatically" icon={Info}>
@@ -213,7 +216,11 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
       )}
 
       {ready && s && (
-        <Panel title="Summary" icon={Layers} subtitle={s.note}>
+        <Panel title="Summary" icon={Layers} subtitle={s.note}
+          actions={job.reports ? <>
+            <Button size="sm" variant="ghost" icon={Download} onClick={() => download(job.reports!.summary_csv, `${job.id}_analysis_summary.csv`)}>Summary CSV</Button>
+            <Button size="sm" variant="ghost" icon={Download} onClick={() => download(job.reports!.summary_json, `${job.id}_analysis_summary.json`)}>Summary JSON</Button>
+          </> : undefined}>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
             <MetricCard label="Total detected objects" value={num(s.total_objects_detected)}
               tone={s.total_objects_detected ? 'crit' : undefined} hint="high confidence, all screenshots" />
@@ -226,7 +233,7 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
           </div>
           {(s.review_required === 'TRUE' || s.possible_litter_objects > 0 || s.sampling_adjustments > 0) && (
             <ul className="mt-3 flex flex-col gap-1 text-[12.5px] text-fg-2">
-              {s.review_required === 'TRUE' && <li>• Review needed: see the <span className="font-mono">review_required</span> column of the CSV.</li>}
+              {s.review_required === 'TRUE' && <li>• Review needed: see the <span className="font-mono">review_required</span> column of the Detailed CSV.</li>}
               {s.possible_litter_objects > 0 && <li>• {s.possible_litter_objects} possible litter object(s) below the confirmed threshold (not counted above).</li>}
               {s.sampling_adjustments > 0 && <li>• {s.sampling_adjustments} screenshot(s) taken from the nearest readable frame (planned frame unreadable).</li>}
               {s.alerts_created > 0 && <li>• {s.alerts_created} alert(s) created on the Alerts page.</li>}
@@ -241,16 +248,7 @@ export function AutoJobView({ job, onNew }: { job: SampledJob; onNew: () => void
         </Panel>
       )}
 
-      {ready && job.reports && (
-        <Panel title="CSV report" icon={FileText} subtitle="One row per screenshot plus one per detected object; totals are in the summary file"
-          actions={<>
-            <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_csv, `${job.id}_analysis_summary.csv`)}>Summary CSV</Button>
-            <Button size="sm" icon={Download} onClick={() => download(job.reports!.summary_json, `${job.id}_analysis_summary.json`)}>Summary JSON</Button>
-          </>}>
-          <CsvPreview path={job.reports.detection_csv} filename={`${job.id}_detection_report.csv`}
-            cols={REPORT_COLS} />
-        </Panel>
-      )}
+      {ready && job.state === 'done' && <DashboardTable jobId={job.id} detailedCsv={job.reports?.detection_csv} />}
     </>
   )
 }

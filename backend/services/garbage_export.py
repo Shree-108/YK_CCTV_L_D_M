@@ -34,6 +34,11 @@ CLI (read-only towards the detection DB; writes only the export folder + ledger)
     py -m backend.services.garbage_export export --sampled-job <id> --store-key <key> --camera-id <cam> [--recording-start ISO]
     py -m backend.services.garbage_export export --video-analysis <id> ...
     py -m backend.services.garbage_export validate <file.csv> [...]
+    py -m backend.services.garbage_export validate-bundle <bundle folder> [...]   (four-screenshot result bundles)
+
+Also used by backend/services/result_bundle.py (per-job bundles: 4 annotated images + this CSV + manifest.json) and
+backend/services/results_view.py (dashboard Results view and its importer CSV download): the row text is made by
+describe()/build_row() only, so all three always agree.
 """
 from __future__ import annotations
 
@@ -300,7 +305,7 @@ def resolve_time_base(*, video_path: Optional[Path], original_name: Optional[str
 @dataclass
 class Check:
     camera_id: str
-    captured_at: dt.datetime                         # aware
+    captured_at: Optional[dt.datetime]               # aware; None = no trustworthy recording time (never exported)
     image_name: str
     status: str                                      # clean | litter_detected | view_blocked
     litter: list[tuple[str, float]] = field(default_factory=list)        # (class, model confidence 0-1)
@@ -308,6 +313,7 @@ class Check:
     reason: str = ""                                 # why the view is blocked
     notes: list[str] = field(default_factory=list)
     time_note: str = ""
+    idx: Optional[int] = None                        # screenshot number (1-4) of a four-screenshot job
 
 
 def to_percent(conf: float) -> str:
@@ -323,13 +329,16 @@ def _objects(items: Sequence[tuple[str, float]]) -> str:
     return ", ".join(f"{c} {to_percent(p)}" for c, p in sorted(items, key=lambda x: -x[1]))
 
 
-def build_row(check: Check, store: Store, allowed_classes: Optional[set[str]] = None) -> dict[str, str]:
+def one_line(text: str) -> str:
+    """CSV cells of this format never contain line breaks (error texts from decoders sometimes do)."""
+    return re.sub(r"\s*[\r\n]+\s*", " ", text).strip()
+
+
+def describe(check: Check, allowed_classes: Optional[set[str]] = None) -> tuple[str, str, str]:
+    """(litter_class, confidence_score, remark) of one check - the same text in the import CSV and on the dashboard.
+    Raises ExportError when the check contradicts the status rules."""
     if check.status not in STATUSES:
         raise ExportError(f"detection_status {check.status!r} is not one of {', '.join(STATUSES)}")
-    if not check.camera_id:
-        raise ExportError("camera_id missing")
-    if check.camera_id not in store.camera_ids:
-        raise ExportError(f"camera {check.camera_id!r} is not listed for store {store.key}")
     for cls, _ in (*check.litter, *check.under_review):
         if allowed_classes is not None and cls not in allowed_classes:
             raise ExportError(f"class {cls!r} is not one of the model's class names")
@@ -354,9 +363,22 @@ def build_row(check: Check, store: Store, allowed_classes: Optional[set[str]] = 
     parts.extend(check.notes)
     if check.time_note:
         parts.append(check.time_note)
-    return {"timestamp": format_ts(check.captured_at), "camera_id": check.camera_id, "image_name": check.image_name,
-            "litter_class": cls_out, "confidence_score": conf_out, "detection_status": check.status,
-            "remark": "; ".join(parts), "cart_id": str(store.cart_id), "store_name": store.name}
+    return cls_out, conf_out, one_line("; ".join(parts))
+
+
+def build_row(check: Check, store: Store, allowed_classes: Optional[set[str]] = None) -> dict[str, str]:
+    """One import-ready row. Strict: store, camera and recording time must all be known."""
+    if not check.camera_id:
+        raise ExportError("camera_id missing")
+    if check.camera_id not in store.camera_ids:
+        raise ExportError(f"camera {check.camera_id!r} is not listed for store {store.key}")
+    if check.captured_at is None:
+        raise NoRecordingTime(f"{check.image_name}: no recording time ({check.time_note or 'unknown'})")
+    cls_out, conf_out, remark = describe(check, allowed_classes)
+    return {"timestamp": format_ts(check.captured_at), "camera_id": check.camera_id,
+            "image_name": check.image_name, "litter_class": cls_out, "confidence_score": conf_out,
+            "detection_status": check.status, "remark": remark, "cart_id": str(store.cart_id),
+            "store_name": store.name}
 
 
 def rows_to_csv(rows: Sequence[dict[str, str]]) -> str:
@@ -407,6 +429,8 @@ def validate_text(text: str, *, allowed_classes: Optional[set[str]] = None, stor
                 bad(col, f"value starts with a formula character: {v[:20]!r}")
             if v.strip().lower() in ("none", "null", "nan") :
                 bad(col, f"literal {v!r} instead of an empty value")
+            if "\n" in v or "\r" in v:
+                bad(col, "contains a line break")
         ts = r["timestamp"]
         if not TIMESTAMP_RE.match(ts):
             bad("timestamp", f"{ts!r} is not YYYY-MM-DDTHH:MM:SS+05:30")
@@ -472,6 +496,85 @@ def validate_file(path: Path, *, allowed_classes: Optional[set[str]] = None,
     store_key = p.parent.parent.name if folder_date else None
     return validate_text(text, allowed_classes=allowed_classes, stores=stores,
                          store_key=store_key if stores is not None else None, folder_date=folder_date)
+
+
+# ============================================================================================ result bundle
+BUNDLE_IMAGES = 4                 # one annotated image per screenshot of a four-screenshot job
+BUNDLE_MANIFEST = "manifest.json"
+
+
+def bundle_image_name(job_id: str, idx: int) -> str:
+    """image_name of a four-screenshot check - the same in the bundle, the flat export and the dashboard."""
+    return f"{job_id}_s{idx}_annotated.jpg"
+
+
+def validate_bundle(folder: Path, *, allowed_classes: Optional[set[str]] = None,
+                    stores: Optional[dict[str, Store]] = None, store_key: Optional[str] = None,
+                    folder_date: Optional[str] = None, job_id: Optional[str] = None) -> list[Issue]:
+    """Check a four-screenshot result bundle (backend/services/result_bundle.py): exactly 4 images, one import CSV
+    whose rows pass validate_text, one row per screenshot, every image_name a file in the folder, no image without
+    a row. ``store_key`` / ``folder_date`` / ``job_id`` default to the folder layout
+    <export_root>/<storeKey>/<YYYY-MM-DD>/<job_id>/. Empty list = import-ready."""
+    folder = Path(folder)
+    job_id = job_id or folder.name
+    if folder_date is None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", folder.parent.name):
+        folder_date = folder.parent.name
+    if store_key is None and folder_date:
+        store_key = folder.parent.parent.name
+    issues: list[Issue] = []
+    man_p = folder / BUNDLE_MANIFEST
+    try:
+        manifest = json.loads(man_p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [Issue(0, BUNDLE_MANIFEST, f"missing or not valid JSON: {exc}")]
+    if manifest.get("job_id") != job_id:
+        issues.append(Issue(0, BUNDLE_MANIFEST, f"job_id {manifest.get('job_id')!r} is not the folder's {job_id!r}"))
+    images = sorted(p.name for p in folder.iterdir() if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    if len(images) != BUNDLE_IMAGES:
+        issues.append(Issue(0, "images", f"{len(images)} image(s) in the folder, expected exactly {BUNDLE_IMAGES}"))
+    csvs = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".csv")
+    if len(csvs) != 1:
+        why = (manifest.get("csv") or {}).get("reasons") or []
+        issues.append(Issue(0, "csv", f"{len(csvs)} CSV file(s), expected exactly 1"
+                                      + (f" (not produced: {'; '.join(why)})" if why else "")))
+        return issues
+    data = csvs[0].read_bytes()
+    if data.startswith(b"\xef\xbb\xbf"):
+        return issues + [Issue(1, "*", "file starts with a UTF-8 BOM (the importer expects plain UTF-8)")]
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return issues + [Issue(1, "*", f"not valid UTF-8: {exc}")]
+    # row dates are checked against the folder below (first screenshot), not row by row: a recording that runs past
+    # midnight keeps all four checks of the job in one bundle
+    issues += validate_text(text, allowed_classes=allowed_classes, stores=stores,
+                            store_key=store_key if stores is not None else None)
+    rows = list(csv.reader(io.StringIO(text, newline="")))
+    if not rows or rows[0] != COLUMNS:
+        return issues
+    body = [dict(zip(COLUMNS, r)) for r in rows[1:] if len(r) == len(COLUMNS)]
+    if len(rows) - 1 != BUNDLE_IMAGES:
+        issues.append(Issue(0, "csv", f"{len(rows) - 1} row(s), expected one per screenshot ({BUNDLE_IMAGES})"))
+    names = [r["image_name"] for r in body]
+    for n, name in enumerate(names, start=2):
+        if not name:
+            issues.append(Issue(n, "image_name", "missing"))
+        elif name not in images:
+            issues.append(Issue(n, "image_name", f"{name!r} is not a file in the bundle folder"))
+    dup = sorted({x for x in names if names.count(x) > 1})
+    if dup:
+        issues.append(Issue(0, "image_name", f"image(s) used by more than one row: {dup}"))
+    unused = sorted(set(images) - set(names))
+    if unused:
+        issues.append(Issue(0, "images", f"image(s) without a row: {unused}"))
+    shots = [s.get("image") for s in manifest.get("screenshots") or []]
+    if sorted(x for x in shots if x) != sorted(names):
+        issues.append(Issue(0, BUNDLE_MANIFEST, "the manifest's screenshots do not match the CSV rows"))
+    if folder_date and body and TIMESTAMP_RE.match(body[0]["timestamp"]) \
+            and body[0]["timestamp"][:10] != folder_date:
+        issues.append(Issue(2, "timestamp", f"first screenshot date {body[0]['timestamp'][:10]} is not the folder "
+                                            f"date {folder_date}"))
+    return issues
 
 
 # ============================================================================================ writer + ledger
@@ -622,12 +725,15 @@ def sampled_source(query: Query, job_id: str) -> Source:
                   job.get("recording_start"), (counts.get("standard_outputs") or {}).get("analysis_id"))
 
 
-def sampled_checks(query: Query, src: Source, camera_id: str, tb: TimeBase) -> tuple[list[Check], list[str]]:
+def sampled_checks(query: Query, src: Source, camera_id: str, tb: Optional[TimeBase],
+                   time_reason: str = "") -> tuple[list[Check], list[str]]:
+    """One Check per screenshot that is a camera check. ``tb`` None: no recording time (dashboard rows only;
+    ``captured_at`` stays None and the remark says why) - such checks are never exported."""
     rejected = _rejected_boxes(query, src.analysis_id)
     checks, excluded = [], []
     for f in query("SELECT * FROM sampled_frames WHERE job_id=? ORDER BY idx", (src.source_id,)):
         outcome = f.get("outcome")
-        name = Path(f["original_path"]).name if f.get("original_path") else f"screenshot_{f['idx']}"
+        name = bundle_image_name(src.source_id, f["idx"])     # the annotated image's name in the result bundle
         if outcome in OUTCOME_NOT_A_CHECK:
             excluded.append(f"screenshot {f['idx']}: {OUTCOME_NOT_A_CHECK[outcome]}")
             continue
@@ -656,9 +762,11 @@ def sampled_checks(query: Query, src: Source, camera_id: str, tb: TimeBase) -> t
         if status == BLOCKED:
             litter, review = [], []
         offset = float(f["video_time_sec"])
-        checks.append(Check(camera_id, tb.start + dt.timedelta(seconds=offset), name, status, litter, review,
-                            reason=f.get("error") or "", notes=notes,
-                            time_note=f"time source: {tb.source} ({tb.detail}) + {offset:.3f} s"))
+        at = tb.start + dt.timedelta(seconds=offset) if tb else None
+        tnote = (f"time source: {tb.source} ({tb.detail}) + {offset:.3f} s" if tb
+                 else f"time unknown: {time_reason or 'no recording start'} (video offset {offset:.3f} s)")
+        checks.append(Check(camera_id, at, name, status, litter, review, reason=f.get("error") or "", notes=notes,
+                            time_note=tnote, idx=f.get("idx")))
     return checks, excluded
 
 
@@ -844,6 +952,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     va.add_argument("files", nargs="+", type=Path)
     va.add_argument("--db", type=Path, default=cfg.db_path, help="active model's class names are taken from here")
     va.add_argument("--no-store-check", action="store_true", help="skip store config / folder checks")
+    vb = sub.add_parser("validate-bundle", help="validate four-screenshot result bundle folder(s)")
+    vb.add_argument("folders", nargs="+", type=Path)
+    vb.add_argument("--db", type=Path, default=cfg.db_path, help="active model's class names are taken from here")
+    vb.add_argument("--no-store-check", action="store_true", help="skip store config checks")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "check-config":
@@ -863,6 +975,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         classes = _active_classes(sqlite_query(a.db)) if a.db and Path(a.db).is_file() else None
         stores = None if a.no_store_check else load_store_config(a.store_config)
         failed = 0
+        if a.cmd == "validate-bundle":
+            for d in a.folders:
+                issues = validate_bundle(d, allowed_classes=classes, stores=stores)
+                print(f"{'OK  ' if not issues else 'FAIL'} {d}" + ("" if not issues else f" ({len(issues)} issue(s))"))
+                for i in issues:
+                    print(f"     {i}")
+                failed += bool(issues)
+            return 1 if failed else 0
         for f in a.files:
             issues = validate_file(f, allowed_classes=classes, stores=stores)
             print(f"{'OK  ' if not issues else 'FAIL'} {f}" + ("" if not issues else f" ({len(issues)} issue(s))"))

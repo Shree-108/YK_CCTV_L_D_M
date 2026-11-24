@@ -2,9 +2,13 @@
 
 Every detection the model returned (above the weak confidence floor) is drawn, styled by its status:
   DETECTED (pipeline ``confirmed``)        solid orange-red box, ``Plastic Bag 87%``
-  UNDER_REVIEW (``candidate`` / ``weak``)   dashed amber box, ``REVIEW Plastic Bag 41%``
+  UNDER REVIEW (``candidate``)             dashed amber box, ``REVIEW Plastic Bag 41%``
+  LOW (``weak``, below the candidate rule)  dashed blue-grey box, ``LOW Plastic Bag 30%`` - drawn, never counted
   REJECTED (a filter: size/aspect/class)    dotted grey box (+ the reason on still images)
 so an operator always sees what the model saw - nothing is silently hidden.
+
+"Under review" counts ``candidate`` detections only - the same rule as the import CSV remark and the dashboard
+Results view (owner decision 2026-11-21); the ``weak`` count is kept in the result bundle's manifest.json only.
 """
 from __future__ import annotations
 
@@ -18,7 +22,8 @@ from backend.detection.types import CANDIDATE, CONFIRMED, REJECTED, WEAK, Detect
 COLORS = {CONFIRMED: (40, 40, 235), CANDIDATE: (0, 190, 255), WEAK: (200, 160, 120), REJECTED: (130, 130, 130)}
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 LITTER_BOX = (0, 90, 255)          # DETECTED: orange-red, solid
-REVIEW_BOX = (0, 215, 255)         # UNDER_REVIEW: amber, dashed
+REVIEW_BOX = (0, 215, 255)         # UNDER REVIEW (candidate): amber, dashed
+LOW_BOX = (200, 160, 120)          # LOW (weak): blue-grey, dashed, not counted
 REJECTED_BOX = (150, 150, 150)     # REJECTED by a filter: grey, dotted
 
 
@@ -124,6 +129,12 @@ def _tag(img: np.ndarray, text: str, x: int, y: int, color: tuple[int, int, int]
             return
 
 
+def hud_counts(dets: Sequence[Detection]) -> dict[str, int]:
+    """The counts written in the annotated image's header: litter = confirmed, under_review = candidate only."""
+    return {"litter": sum(1 for d in dets if d.status == CONFIRMED),
+            "under_review": sum(1 for d in dets if d.status == CANDIDATE)}
+
+
 def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequence[str] = (),
                     show_rejected: bool = True, label_rejected: bool = True, max_listed: int = 5) -> np.ndarray:
     """Operator view of one frame: every detection by status (see module doc) and a HUD with the counts.
@@ -134,7 +145,8 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequen
     thick = max(2, int(round(2 * s)))
     fs = 0.5 * s
     litter = sorted((d for d in dets if d.status == CONFIRMED), key=lambda d: -d.confidence)
-    review = sorted((d for d in dets if d.status in (CANDIDATE, WEAK)), key=lambda d: -d.confidence)
+    review = sorted((d for d in dets if d.status == CANDIDATE), key=lambda d: -d.confidence)
+    low = sorted((d for d in dets if d.status == WEAK), key=lambda d: -d.confidence)
     rejected = [d for d in dets if d.status == REJECTED] if show_rejected else []
     box = lambda d: tuple(int(round(v)) for v in d.bbox)     # noqa: E731
     litter_boxes = [box(d) for d in litter]
@@ -148,6 +160,11 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequen
         _dashed_rect(img, (x1, y1), (x2, y2), REVIEW_BOX, max(1, thick - 1), max(4, int(6 * s)))
         _tag(img, f"REVIEW {display_name(d.cls_name)} {d.confidence * 100:.0f}%", x1, y1, REVIEW_BOX, fs, placed,
              litter_boxes)
+    for d in low:
+        x1, y1, x2, y2 = box(d)
+        _dashed_rect(img, (x1, y1), (x2, y2), LOW_BOX, max(1, thick - 1), max(4, int(6 * s)))
+        _tag(img, f"LOW {display_name(d.cls_name)} {d.confidence * 100:.0f}%", x1, y1, LOW_BOX, fs * 0.9, placed,
+             litter_boxes)
     for d in rejected:
         x1, y1, x2, y2 = box(d)
         _dashed_rect(img, (x1, y1), (x2, y2), REJECTED_BOX, 1, 3)
@@ -158,8 +175,9 @@ def annotate_litter(frame: np.ndarray, dets: Sequence[Detection], header: Sequen
         cv2.rectangle(img, (x1, y1), (x2, y2), LITTER_BOX, thick + 1, cv2.LINE_AA)
 
     lines = [(t, (235, 235, 235)) for t in header]
-    lines += [(f"Litter detected: {len(litter)}", (255, 255, 255)),
-              (f"Under review: {len(review)}", REVIEW_BOX)]
+    counts = hud_counts(dets)
+    lines += [(f"Litter detected: {counts['litter']}", (255, 255, 255)),
+              (f"Under review: {counts['under_review']}", REVIEW_BOX)]
     if rejected:
         lines.append((f"Rejected by filters: {len(rejected)}", REJECTED_BOX))
     lines += [(f"{display_name(d.cls_name)} - {d.confidence * 100:.0f}%", (200, 200, 200)) for d in litter[:max_listed]]

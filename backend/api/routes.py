@@ -6,6 +6,7 @@ import asyncio
 import base64
 import datetime as dt
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
@@ -982,3 +983,36 @@ def _engine(state: AppState):
     if state.engine is None:
         raise HTTPException(503, state.engine_error or "Model not loaded")
     return state.engine
+
+
+# ================================================================ dashboard import rows (four-screenshot jobs)
+_SV_JOB_RE = re.compile(r"^[A-Za-z0-9_\-]{1,60}$")
+
+
+@router.get("/detect/video/{job_id}/report", dependencies=VIEWER)
+def video_dashboard_report(job_id: str, request: Request,
+                           format: Literal["table", "csv", "csv_full"] = "table", per_object: bool = False,
+                           authorization: Optional[str] = Header(default=None),
+                           x_admin_token: Optional[str] = Header(default=None),
+                           state: AppState = Depends(get_state)) -> Any:
+    """Dashboard import rows of a finished four-screenshot Video Analysis (backend/services/dashboard_rows.py).
+    ``table`` (JSON, viewer) and the two CSVs - ``csv`` = importer columns, ``csv_full`` = + store_name,source_file -
+    come from the same build_dashboard_rows(). CSV downloads keep the CSV rule (admin when login is on)."""
+    from backend.services import dashboard_rows as dbr
+    if format != "table":
+        require_admin_here(request, authorization, x_admin_token, state, off_mode="open")
+    if not _SV_JOB_RE.match(job_id):
+        raise HTTPException(404, "Analysis not found")
+    jobs = state.db._query("SELECT * FROM sampled_jobs WHERE id=?", (job_id,))
+    if not jobs:
+        raise HTTPException(404, "Analysis not found")
+    if jobs[0].get("state") != "done":
+        raise HTTPException(409, "The analysis has not completed yet")
+    rows = dbr.build_dashboard_rows(jobs[0], query=state.db._query, view_quality=state.settings().view_quality,
+                                    per_object=per_object)
+    if format == "table":
+        return dbr.table(rows)
+    full = format == "csv_full"
+    name = f"{job_id}_dashboard_import{'_full' if full else ''}{'_objects' if per_object else ''}.csv"
+    return Response(dbr.to_csv(rows, full=full).encode("utf-8"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})

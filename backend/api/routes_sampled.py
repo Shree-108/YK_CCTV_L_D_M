@@ -22,6 +22,7 @@ from backend.sampling import report
 from backend.sampling.media import Unreadable, new_media_id, probe, sha256_of
 from backend.sampling.reports import Reports, public_job
 from backend.sampling.runner import REPORT_FILES, DuplicateJob, JobError
+from backend.services import garbage_export as ge
 from backend.services.state import AppState
 
 router = APIRouter(prefix="/api/sampled")
@@ -46,6 +47,7 @@ def _csv(rows: list[dict[str, Any]], name: str) -> StreamingResponse:
 async def upload_media(request: Request, response: Response, file: UploadFile = File(...),
                        auto_analyze: bool = Form(False), store_id: Optional[str] = Form(None, max_length=64),
                        camera_id: Optional[str] = Form(None, max_length=40),
+                       recording_start: Optional[str] = Form(None, max_length=40),
                        state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Receive a CCTV video, check it is readable and return its metadata and a preview frame.
 
@@ -87,7 +89,8 @@ async def upload_media(request: Request, response: Response, file: UploadFile = 
     if not auto_analyze:
         return out
     try:
-        job, _ = r.create(mid, store_id=store_id, camera_id=camera_id, mode="auto")
+        job, _ = r.create(mid, store_id=store_id, camera_id=camera_id, recording_start=recording_start or None,
+                          mode="auto")
     except DuplicateJob as exc:              # a concurrent upload of the same file won the race (checked under lock)
         path.unlink(missing_ok=True)
         (state.cfg.media_dir / f"{mid}_preview.jpg").unlink(missing_ok=True)
@@ -208,8 +211,11 @@ def frame_image(job_id: str, idx: int, kind: str, download: bool = False,
     p = p.resolve()
     if root not in p.parents or not p.is_file():          # never serve anything outside the job folder
         raise HTTPException(404, "Image not available")
-    # ?download=1: saved as a file (the stored name carries screenshot number, frame and video time)
-    return FileResponse(p, media_type="image/jpeg", filename=p.name if download else None)
+    # ?download=1: saved as a file. The annotated screenshot is saved under its dashboard image_name
+    # (<job>_s<n>_annotated.jpg, the same as in the import CSV and result bundle); the original keeps its stored
+    # name (screenshot number, frame and video time)
+    name = ge.bundle_image_name(job_id, idx) if kind == "annotated" else p.name
+    return FileResponse(p, media_type="image/jpeg", filename=name if download else None)
 
 
 @router.get("/jobs/{job_id}/reports/{name}", dependencies=ADMIN_IF_LOGIN)

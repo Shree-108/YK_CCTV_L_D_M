@@ -6,9 +6,15 @@ import type {
   TestLabResponse, VideoResult, Store, Identity, LitterEvent, LitterEventQuery, LitterAnalysis, LitterAnalytics, LitterAnalyticsQuery, ReviewStatus,
 } from './types'
 import type {
-  SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
+  DashboardReport, SampledAnalysisRow, SampledAutoUpload, SampledCreateBody, SampledDetectionRow, SampledHourlyRow, SampledJob,
   SampledMedia, SampledMonth, SampledOverview,
 } from './sampledTypes'
+import type { ResultChecksQuery, ResultChecksResponse } from './resultsTypes'
+
+/** GET /api/detect/video/{job_id}/report - format table (JSON) | csv (importer columns) | csv_full (+ store, source). */
+export function videoDashboardReportPath(id: string, format: 'table' | 'csv' | 'csv_full', perObject = false): string {
+  return `/api/detect/video/${encodeURIComponent(id)}/report${qs({ format, per_object: perObject ? 'true' : undefined })}`
+}
 
 export type AlertQuery = {
   limit?: number; offset?: number; camera_id?: string; class?: string; severity?: string; status?: string
@@ -96,17 +102,21 @@ export const Api = {
   // four-screenshot video analysis
   sampledUpload: (form: FormData) => api<SampledMedia>('/api/sampled/media', { form }),
   /** Zero-click: upload + automatic analysis in one request (the server returns the job it created). */
-  sampledAutoUpload: (file: File, defaults: { camera_id?: string; store_id?: string }) => {
+  sampledAutoUpload: (file: File, defaults: { camera_id?: string; store_id?: string; recording_start?: string }) => {
     const form = new FormData()
     form.append('file', file)
     form.append('auto_analyze', 'true')
     if (defaults.camera_id) form.append('camera_id', defaults.camera_id)
     if (defaults.store_id) form.append('store_id', defaults.store_id)
+    if (defaults.recording_start) form.append('recording_start', defaults.recording_start)
     return api<SampledAutoUpload>('/api/sampled/media', { form })
   },
   sampledMedia: (id: string) => api<SampledMedia>(`/api/sampled/media/${encodeURIComponent(id)}`),
   sampledCreate: (body: SampledCreateBody) => api<{ job_id: string; reused: boolean; state: string }>('/api/sampled/jobs', { method: 'POST', body }),
   sampledJob: (id: string) => api<SampledJob>(`/api/sampled/jobs/${encodeURIComponent(id)}`),
+  // dashboard import rows of a finished four-screenshot job: the table (JSON) and the two CSV downloads
+  videoDashboardReport: (id: string, perObject = false) =>
+    api<DashboardReport>(videoDashboardReportPath(id, 'table', perObject)),
   sampledCancel: (id: string) => api<{ job_id: string; state: string }>(`/api/sampled/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   sampledOverview: () => api<SampledOverview>('/api/sampled/reports/overview'),
   sampledMonth: (month: string, by: 'completion' | 'recording') => api<SampledMonth>(`/api/sampled/reports/months/${month}${qs({ by })}`),
@@ -123,6 +133,9 @@ export const Api = {
     api<LitterEvent>(`/api/litter/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body }),
   litterAnalyses: (limit = 20) => api<{ analyses: LitterAnalysis[] }>(`/api/litter/analyses${qs({ limit })}`),
   litterAnalytics: (q: LitterAnalyticsQuery = {}) => api<LitterAnalytics>(`/api/litter/analytics${qs(q)}`),
+
+  // Results view: one row per camera check with the importer CSV fields
+  resultChecks: (q: ResultChecksQuery = {}) => api<ResultChecksResponse>(`/api/results/checks${qs(q)}`),
 
   hardExamples: (q: { kind?: string; status?: string; offset?: number; limit?: number }) =>
     api<{ items: HardExample[]; total: number; counts: { kind: string; review_status: string; n: number }[] }>(`/api/hard-examples${qs(q)}`),

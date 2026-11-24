@@ -11,7 +11,7 @@ broken ones 50 % or more).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import numpy as np
@@ -40,4 +40,33 @@ def problem(frame: Optional[np.ndarray]) -> Optional[str]:
                 "frame depends on is missing, e.g. a gap in the recording)")
     if flat.mean() >= BLANK_LIMIT:
         return "blank frame: the picture is one flat colour (no video signal, covered lens or complete darkness)"
+    return None
+
+
+# ---------------------------------------------------------------------- view quality (reporting only)
+def view_metrics(frame: np.ndarray) -> dict[str, float]:
+    """Sharpness (Laplacian variance), mean brightness and grey std of a 640-px-wide grey copy of ``frame``."""
+    h, w = frame.shape[:2]
+    small = cv2.resize(frame, (WIDTH, max(BLOCK, round(h * WIDTH / w))), interpolation=cv2.INTER_AREA)
+    grey = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
+    return {"laplacian_var": float(cv2.Laplacian(grey, cv2.CV_64F).var()), "mean": float(grey.mean()),
+            "std": float(grey.std())}
+
+
+def view_blocked_reason(frame: Optional[np.ndarray], q: Any) -> Optional[str]:
+    """Why a screenshot shows no usable view of the scene, or None. ``q`` is ViewQualitySettings (thresholds).
+    Used by the dashboard import rows only (``view_blocked``); it does not change what is analysed or detected.
+    The existing problem() check (decoder grey fill, blank frame) comes first and is unchanged."""
+    p = problem(frame)
+    if p:
+        return p
+    m = view_metrics(frame)
+    if m["mean"] < q.dark_max_mean:
+        return f"too dark (mean brightness {m['mean']:.0f} < {q.dark_max_mean:g})"
+    if m["mean"] > q.bright_min_mean:
+        return f"too bright (mean brightness {m['mean']:.0f} > {q.bright_min_mean:g})"
+    if m["std"] < q.uniform_max_std:
+        return f"mostly uniform picture (grey std {m['std']:.1f} < {q.uniform_max_std:g})"
+    if m["laplacian_var"] < q.blur_min_laplacian_var:
+        return f"blurred (sharpness {m['laplacian_var']:.0f} < {q.blur_min_laplacian_var:g})"
     return None

@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.api import authz, routes, routes_auth, routes_lab, routes_sampled
+from backend.api import authz, routes, routes_auth, routes_auto_roi, routes_lab, routes_results, routes_sampled
 from backend.core.config import AppConfig
 from backend.main import create_app
 
@@ -51,6 +51,7 @@ MATRIX = {
     ("GET", "/api/litter/analyses"): "viewer", ("GET", "/api/litter/analytics"): "viewer",
     ("GET", "/api/detections"): "viewer",
     ("POST", "/api/detect/image"): "operator", ("POST", "/api/detect/video"): "operator",
+    ("GET", "/api/detect/video/{job_id}/report"): "viewer",     # its csv / csv_full formats: admin_if_login
     ("GET", "/api/jobs"): "viewer", ("GET", "/api/jobs/{job_id}"): "viewer",
     ("GET", "/api/jobs/{job_id}/files/{kind}"): "viewer",
     ("GET", "/api/jobs/{job_id}/evidence/{event_id}.jpg"): "viewer",
@@ -90,7 +91,19 @@ MATRIX = {
     ("GET", "/api/sampled/reports/months/{month}"): "viewer",
     ("GET", "/api/sampled/reports/history"): "viewer", ("GET", "/api/sampled/reports/detections"): "viewer",
     ("GET", "/api/sampled/reports/hourly"): "viewer", ("GET", "/api/sampled/reports/all.csv"): "admin_if_login",
+    # Results view (one row per camera check, importer CSV fields) - 2026-11-21
+    ("GET", "/api/results/checks"): "viewer", ("GET", "/api/results/checks.csv"): "admin_if_login",
+    ("GET", "/api/results/checks/{job_id}/{idx}/image.jpg"): "viewer",
+    # automatic ground ROI (owner request 2026-11-24; backend/api/routes_auto_roi.py) - separate from the camera row
+    ("GET", "/api/auto-roi"): "viewer", ("PUT", "/api/auto-roi/global"): "admin",
+    ("DELETE", "/api/auto-roi/global"): "admin", ("POST", "/api/auto-roi/image"): "operator",
+    ("GET", "/api/cameras/{cam_id}/auto-roi"): "viewer", ("POST", "/api/cameras/{cam_id}/auto-roi"): "admin",
+    ("PUT", "/api/cameras/{cam_id}/auto-roi"): "admin", ("DELETE", "/api/cameras/{cam_id}/auto-roi"): "admin",
+    ("POST", "/api/cameras/{cam_id}/auto-roi/approve"): "admin",
+    ("GET", "/api/cameras/{cam_id}/auto-roi/frame.jpg"): "viewer",
+    ("GET", "/api/cameras/{cam_id}/auto-roi/overlay.jpg"): "viewer",
 }
+AUTO_ROI_PATHS = {p for _, p in MATRIX if "/auto-roi" in p}
 STREAMS = {("GET", "/api/stream")}      # infinite responses: checked separately
 PARAMS = {"cam_id": "nocam", "camera_id": "nocam", "cap_id": "nocap", "job_id": "nojob", "kind": "video",
           "alert_id": "999999", "action": "start", "table": "alerts", "name": "nodataset", "exp_id": "noexp",
@@ -189,7 +202,8 @@ def _call(c: TestClient, method: str, path: str, **kw):
 def test_every_route_declares_exactly_one_permission_and_matches_the_reviewed_matrix():
     found = {}
     for prefix, router in (("/api", routes.router), ("/api", routes_lab.router), ("", routes_auth.router),
-                           ("", routes_sampled.router)):
+                           ("", routes_sampled.router), ("", routes_results.router),
+                           ("", routes_auto_roi.router)):
         for r in router.routes:
             perms = [d.dependency for d in r.dependencies if isinstance(d.dependency, authz.Permission)]
             assert len(perms) == 1, f"{r.path} must declare exactly one permission, has {perms}"
@@ -203,7 +217,8 @@ def test_the_app_registers_no_route_outside_the_matrix(tmp_path):
         ops = {(m.upper(), p) for p, v in c.app.openapi()["paths"].items() for m in v}
     assert ops == set(MATRIX)
     assert not [p for _, p in ops if "invoice" in p]
-    assert not [p for _, p in ops if "roi" in p.lower() or "pavement" in p.lower()]   # ROI removed 2026-11-19
+    # the old ROI routes stay removed (2026-11-19); only the reviewed auto-ROI routes (2026-11-24) may mention roi
+    assert not [p for _, p in ops if ("roi" in p.lower() and p not in AUTO_ROI_PATHS) or "pavement" in p.lower()]
 
 
 def test_removed_roi_routes_are_gone_for_every_caller(on):
@@ -304,6 +319,20 @@ def test_csv_exports_are_admin_only(on):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     on.cookies.clear()
     assert on.get("/api/export/alerts.csv", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def test_video_dashboard_report_table_is_viewer_but_its_csv_downloads_are_admin(on):
+    url = "/api/detect/video/sv_missing/report"
+    on.cookies.clear()
+    assert on.get(url).status_code == 401
+    for role in ("viewer", "operator"):
+        _login(on, role)
+        assert on.get(url).status_code == 404                       # table: allowed (the job does not exist)
+        for fmt in ("csv", "csv_full"):
+            r = on.get(f"{url}?format={fmt}")
+            assert r.status_code == 403 and "needs the admin role" in r.json()["detail"]
+    _login(on, "admin")
+    assert on.get(f"{url}?format=csv").status_code == 404
 
 
 def test_stores_are_admin_managed_and_litter_review_is_operator(on):

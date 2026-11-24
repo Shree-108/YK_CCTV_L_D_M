@@ -18,6 +18,8 @@ from backend.api.routes_auth import router as auth_router
 from backend.api.routes import router
 from backend.api.routes_lab import router as lab_router
 from backend.api.routes_sampled import router as sampled_router
+from backend.api.routes_results import router as results_router
+from backend.api.routes_auto_roi import router as auto_roi_router
 from backend.core.config import AppConfig
 from backend.services.state import AppState
 
@@ -61,6 +63,8 @@ def create_app(cfg: Optional[AppConfig] = None, state: Optional[AppState] = None
     app.include_router(lab_router)
     app.include_router(router)
     app.include_router(sampled_router)
+    app.include_router(results_router)
+    app.include_router(auto_roi_router)
     return app
 
 

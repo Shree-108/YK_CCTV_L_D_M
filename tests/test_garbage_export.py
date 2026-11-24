@@ -322,7 +322,7 @@ def test_sampled_checks_map_outcomes_and_operator_rejections():
     assert [c.status for c in checks] == [ge.LITTER, ge.CLEAN, ge.BLOCKED, ge.CLEAN]
     assert excluded == ["screenshot 4: processing failed (not a camera check)"]
     rows = [ge.build_row(c, STORE, CLASSES) for c in checks]
-    assert rows[0]["timestamp"] == "2026-11-19T16:30:41+05:30" and rows[0]["image_name"] == "clip_s1.jpg"
+    assert rows[0]["timestamp"] == "2026-11-19T16:30:41+05:30" and rows[0]["image_name"] == "sv_1_s1_annotated.jpg"
     assert "rejected by an operator" in rows[3]["remark"] and rows[3]["litter_class"] == ""
     assert "time source: filename" in rows[1]["remark"]
 

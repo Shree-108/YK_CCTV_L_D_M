@@ -33,3 +33,25 @@ def safe_auto_export(state: Any, *, kind: str, source_id: str, out_dir: Optional
             except Exception:  # noqa: BLE001
                 log.exception("could not write %s for %s", STATUS_FILE, source_id)
         return res
+
+
+BUNDLE_STATUS_FILE = "result_bundle.json"
+
+
+def safe_result_bundle(state: Any, *, job_id: str, out_dir: Optional[Path]) -> dict[str, Any]:
+    """result_bundle.auto_bundle() (4 annotated images + import CSV + manifest of a four-screenshot job); never
+    raises. The outcome - folder, import_ready, why no CSV, or the error - is written to
+    ``<out_dir>/result_bundle.json``."""
+    try:
+        from backend.services import result_bundle
+        res = result_bundle.summary(result_bundle.auto_bundle(state, job_id))
+    except Exception as exc:  # noqa: BLE001 - a bundle problem must never change the finished job
+        log.exception("result bundle of %s not produced; the job itself is unaffected", job_id)
+        res = {"ok": False, "job_id": job_id, "error": f"{type(exc).__name__}: {exc}"}
+    if out_dir is not None:
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            (Path(out_dir) / BUNDLE_STATUS_FILE).write_text(json.dumps(res, indent=2, default=str), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            log.exception("could not write %s for %s", BUNDLE_STATUS_FILE, job_id)
+    return res

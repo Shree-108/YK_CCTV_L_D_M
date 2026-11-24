@@ -69,6 +69,14 @@ def iou(a, b) -> float:
     return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-9)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_export_folder(tmp_path: Path, monkeypatch) -> None:
+    """Every AppConfig built in a test writes import CSVs / result bundles (and the export ledger) under tmp_path:
+    finished four-screenshot jobs now always produce a bundle, which must never land in the real storage/exports."""
+    monkeypatch.setenv("LDM_GARBAGE_EXPORT_DIR", str(tmp_path / "exports" / "ai_garbage_detection"))
+    monkeypatch.setenv("LDM_GARBAGE_EXPORT_LEDGER", str(tmp_path / "exports" / "ledger.db"))
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> AppConfig:
     c = AppConfig()

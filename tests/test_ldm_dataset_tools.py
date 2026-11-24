@@ -1,6 +1,7 @@
 """Dataset preparation tools (training/*ldm*, extract_frames, import_images): no model, no real data needed."""
 from __future__ import annotations
 
+import zlib
 from pathlib import Path
 
 import cv2
@@ -19,6 +20,16 @@ def scene(seed: int, w: int = 320, h: int = 240) -> np.ndarray:
     img = cv2.GaussianBlur(cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC), (5, 5), 0)
     grey = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
     return cv2.addWeighted(img, 0.35, grey, 0.65, 0)      # CCTV-like muted colours
+
+
+def clean_scene(key: str) -> np.ndarray:
+    """A scene for a fixture image: the same for the same key in every run (hash() of a str changes per process
+    with PYTHONHASHSEED, which made these tests flaky), and never one the overlay heuristic flags by chance (the
+    tests set overlay_suspect themselves where they need it)."""
+    seed = zlib.crc32(key.encode()) % 10**6
+    while overlay_suspect(img := scene(seed)):
+        seed += 1
+    return img
 
 
 @pytest.fixture
@@ -110,7 +121,7 @@ def _populate(ws: Path, tmp_path: Path, sessions: dict[str, int], source_type: s
         d = src / s
         d.mkdir(parents=True, exist_ok=True)
         for i in range(n):
-            cv2.imwrite(str(d / f"{i:03d}.jpg"), scene(hash((s, i)) % 10**6))
+            cv2.imwrite(str(d / f"{i:03d}.jpg"), clean_scene(f"{s}:{i}"))
     assert import_images.main([str(src), "--workspace", str(ws), "--source-type", source_type]) == 0
 
 

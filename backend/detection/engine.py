@@ -19,6 +19,23 @@ from backend.detection.tiling import merge_detections, tile_grid
 from backend.detection.types import Detection, InferenceInfo
 
 log = logging.getLogger(__name__)
+NEGATIVE_PREFIX = "fp_"
+
+
+def drop_negative_classes(xyxy: np.ndarray, conf: np.ndarray, cls: np.ndarray, negative_ids: set[int],
+                          ios_thr: float = 0.8) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Remove negative-class boxes, and litter boxes mostly inside (IoS > ios_thr) a MORE confident negative box."""
+    neg = np.isin(cls, list(negative_ids))
+    if not neg.any():
+        return xyxy, conf, cls
+    keep = ~neg
+    if keep.any():
+        from backend.detection.tiling import ios_matrix
+        ios = ios_matrix(xyxy[keep], xyxy[neg])
+        stronger = conf[neg][None, :] > conf[keep][:, None]
+        keep_idx = np.nonzero(keep)[0]
+        keep[keep_idx[((ios > ios_thr) & stronger).any(axis=1)]] = False
+    return xyxy[keep], conf[keep], cls[keep]
 
 
 def resolve_device(requested: str = "auto") -> str:
@@ -89,6 +106,10 @@ class YoloEngine:
             self.names = dict(enumerate(canon))
         else:
             self.names = raw
+        # Explicit negative classes from negative mining (fp_shadow, fp_carton, ...): they are learned so the model
+        # has somewhere to put shadows/cartons, but they are never litter - see drop_negative_classes.
+        self._negative_ids = {i for i, n in self.names.items() if str(n).startswith(NEGATIVE_PREFIX)}
+        self.names = {i: n for i, n in self.names.items() if i not in self._negative_ids}
         self.device = resolve_device(self.settings.inference.device)
         self.train_imgsz = int((getattr(model, "ckpt", None) or {}).get("train_args", {}).get("imgsz", 640))
         log.info("Loaded YOLO %s (%d classes) on %s", weights, len(self.names), self.device)
@@ -146,6 +167,8 @@ class YoloEngine:
                 keep[keep_idx[((ios > 0.8) & stronger).any(axis=1)]] = False
             xyxy, conf = xyxy[keep], conf[keep]
             cls = np.array([self._raw_to_cls[int(c)] for c in cls[keep]], dtype=int)
+        if self._negative_ids:
+            xyxy, conf, cls = drop_negative_classes(xyxy, conf, cls, self._negative_ids)
         return [Detection([float(b[0] + ox), float(b[1] + oy), float(b[2] + ox), float(b[3] + oy)], int(c),
                           self.names.get(int(c), str(c)), float(p), source=source)
                 for b, p, c in zip(xyxy, conf, cls)]

@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states
 import { StoresPanel } from '../stores/StoresPanel'
 import { useStoresAndCameras } from '../stores/StoreCameraSelect'
 import { CameraDrawer, CameraTile, DEFAULT_OVERLAY } from './live'
+import { AutoRoiPanel } from './AutoRoiPanel'
 
 export default function CamerasPage() {
   const params = useSearchParams()
@@ -106,7 +107,7 @@ export default function CamerasPage() {
   )
 }
 
-type Section = 'general' | 'stream' | 'model' | 'detection' | 'tracking' | 'alerts'
+type Section = 'general' | 'stream' | 'model' | 'detection' | 'tracking' | 'alerts' | 'roi'
 
 interface Form {
   id: string; name: string; source: string; location: string; latitude: string; longitude: string; enabled: boolean; store_id: string
@@ -188,6 +189,8 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
   const SECTIONS: { value: Section; label: string }[] = [
     { value: 'general', label: 'General' }, { value: 'stream', label: 'Stream' }, { value: 'model', label: 'AI model' }, { value: 'detection', label: 'Detection' },
     { value: 'tracking', label: 'Tracking' }, { value: 'alerts', label: 'Alerts' },
+    // the ground ROI needs a saved camera (its frames): not a step of the "Add camera" wizard
+    ...(cam ? [{ value: 'roi' as Section, label: 'Ground ROI' }] : []),
   ]
   const idx = SECTIONS.findIndex((s) => s.value === sec)
   const inherit = (v: unknown) => `inherit (${v ?? '—'})`
@@ -263,6 +266,7 @@ function CameraEditor({ open, cam, onClose, existingIds }: { open: boolean; cam:
             <Field label="Max age" hint="missed frames before a track ends"><Select value={f.maxMissed} onChange={(e) => setF({ ...f, maxMissed: e.target.value })}><option value="">{inherit(g?.tracking.max_missed_frames)}</option>{[5, 10, 15, 30, 60].map((v) => <option key={v}>{v}</option>)}</Select></Field>
           </div>
         )}
+        {sec === 'roi' && cam && <AutoRoiPanel camId={cam.id} />}
         {sec === 'alerts' && (
           <div className="flex flex-col gap-3">
             <Toggle label="Alerts enabled" checked={f.alertsEnabled ?? g?.alerts.enabled ?? true} onChange={(v) => setF({ ...f, alertsEnabled: v })} description={f.alertsEnabled === null ? 'inheriting global' : 'camera override'} />

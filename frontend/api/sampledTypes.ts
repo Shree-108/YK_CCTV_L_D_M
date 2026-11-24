@@ -207,3 +207,27 @@ export interface SampledCreateBody {
   new_run?: boolean
   mode?: 'manual' | 'auto'
 }
+
+/** One row of GET /api/detect/video/{job_id}/report?format=table (backend/services/dashboard_rows.py). */
+export type DashboardStatus = 'clean' | 'litter_detected' | 'view_blocked'
+export interface DashboardRow {
+  timestamp: string
+  camera_id: string
+  image_name: string
+  litter_class: string
+  confidence_score: string
+  detection_status: DashboardStatus
+  remark: string
+  store_name: string
+  source_file: string
+  job_id: string
+  screenshot: number
+  row_kind: 'screenshot' | 'object'
+  image_url: string
+}
+export interface DashboardReport {
+  columns: string[]
+  rows: DashboardRow[]
+  total: number
+  summary: Record<DashboardStatus, number>
+}
