@@ -14,6 +14,7 @@ pyyaml>=6.0
 pandas>=2.1
 matplotlib>=3.8
 httpx>=0.27
+boto3>=1.35                     # S3 upload (backend/core/s3.py); conditional writes need >=1.35
 pytest>=8.0
 # legacy baseline engine only
 scikit-learn>=1.4

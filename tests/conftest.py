@@ -79,6 +79,10 @@ def _isolated_export_folder(tmp_path: Path, monkeypatch) -> None:
     # real config/camera_roi.json. tests/test_roi_service.py switches it on.
     monkeypatch.setenv("LDM_ROI", "off")
     monkeypatch.setenv("LDM_ROI_STORE", str(tmp_path / "config" / "camera_roi.json"))
+    # S3 upload: never from tests (.env may switch it on and hold real keys). tests/test_s3.py uses a fake client.
+    monkeypatch.setenv("LDM_S3_UPLOAD", "off")
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "LDM_S3_BUCKET"):
+        monkeypatch.delenv(k, raising=False)
 
 
 @pytest.fixture

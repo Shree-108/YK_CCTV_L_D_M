@@ -82,12 +82,21 @@ class AppConfig:
     roi_mode: str = field(default_factory=lambda: os.getenv("LDM_ROI", "on").strip().lower())
     roi_store_path: Path = field(
         default_factory=lambda: _env_path("LDM_ROI_STORE", PROJECT_ROOT / "config" / "camera_roi.json"))
+    # S3 upload of finished four-screenshot jobs (backend/services/s3_sync.py). OFF by default; credentials and bucket
+    # come from .env (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, LDM_S3_BUCKET).
+    s3_upload_mode: str = field(default_factory=lambda: os.getenv("LDM_S3_UPLOAD", "off").strip().lower())
 
     @property
     def garbage_export_enabled(self) -> bool:
         return self.garbage_export_mode == "on"
 
+    @property
+    def s3_upload_enabled(self) -> bool:
+        return self.s3_upload_mode == "on"
+
     def __post_init__(self) -> None:
+        if self.s3_upload_mode not in ("off", "on"):
+            raise ValueError(f"LDM_S3_UPLOAD must be 'off' or 'on' (got {self.s3_upload_mode!r})")
         if self.garbage_export_mode not in ("off", "on"):
             raise ValueError(f"LDM_GARBAGE_EXPORT must be 'off' or 'on' (got {self.garbage_export_mode!r})")
         if self.roi_mode not in ("off", "on"):

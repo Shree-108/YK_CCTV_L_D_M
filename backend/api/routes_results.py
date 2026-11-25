@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, Response
 
 from backend.api.authz import ADMIN_IF_LOGIN, VIEWER
 from backend.api.deps import get_state
+from backend.services import daily_csv as dc
 from backend.services import garbage_export as ge
 from backend.services import results_view as rv
 from backend.services.state import AppState
@@ -65,6 +66,22 @@ def checks_csv(store: Optional[str] = Query(None, max_length=64), camera: Option
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "X-Rows-Written": str(n),
                              "X-Rows-Excluded": str(left_out),
                              "Access-Control-Expose-Headers": "X-Rows-Written, X-Rows-Excluded"})
+
+
+@router.get("/daily", dependencies=ADMIN_IF_LOGIN)
+def daily_days(state: AppState = Depends(get_state)) -> dict[str, Any]:
+    """Days that have a daily store CSV (storage/daily_csv/YYYY-MM-DD.csv), newest first."""
+    return {"days": dc.days(state.cfg.storage_dir)}
+
+
+@router.get("/daily/{day}.csv", dependencies=ADMIN_IF_LOGIN)
+def daily_file(day: str, state: AppState = Depends(get_state)) -> FileResponse:
+    if not re.match(DAY_RE, day):
+        raise HTTPException(404, "Not found")
+    p = dc.daily_dir(state.cfg.storage_dir) / dc.file_name(day)
+    if not p.is_file():
+        raise HTTPException(404, f"No CSV for {day}")
+    return FileResponse(p, media_type="text/csv; charset=utf-8", filename=p.name)
 
 
 @router.get("/checks/{job_id}/{idx}/image.jpg", dependencies=VIEWER)

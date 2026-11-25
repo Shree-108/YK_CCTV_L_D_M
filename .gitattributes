@@ -1,0 +1,2 @@
+# Shell scripts run on Linux servers: always LF, whatever the committer's core.autocrlf
+*.sh text eol=lf

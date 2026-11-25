@@ -97,6 +97,7 @@ MATRIX = {
     # Results view (one row per camera check, importer CSV fields) - 2026-11-21
     ("GET", "/api/results/checks"): "viewer", ("GET", "/api/results/checks.csv"): "admin_if_login",
     ("GET", "/api/results/checks/{job_id}/{idx}/image.jpg"): "viewer",
+    ("GET", "/api/results/daily"): "admin_if_login", ("GET", "/api/results/daily/{day}.csv"): "admin_if_login",
     # automatic ground ROI (owner request 2026-11-24; backend/api/routes_auto_roi.py) - separate from the camera row
     ("GET", "/api/auto-roi"): "viewer", ("PUT", "/api/auto-roi/global"): "admin",
     ("DELETE", "/api/auto-roi/global"): "admin", ("POST", "/api/auto-roi/image"): "operator",

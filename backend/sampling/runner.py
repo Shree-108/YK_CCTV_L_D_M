@@ -375,3 +375,15 @@ class SampledRunner:
                 safe_result_bundle(self.state, job_id=job_id, out_dir=rdir)
             except Exception:  # noqa: BLE001
                 log.exception("result bundle guard failed for %s", job_id)
+            # daily store CSV (storage/daily_csv/YYYY-MM-DD.csv). Never fails the job.
+            try:
+                from backend.services.daily_csv import safe_append_job
+                safe_append_job(self.state, job_id)
+            except Exception:  # noqa: BLE001
+                log.exception("daily CSV guard failed for %s", job_id)
+            # S3 upload (backend/services/s3_sync.py), background worker; off unless LDM_S3_UPLOAD=on.
+            try:
+                from backend.services.s3_sync import submit_job
+                submit_job(self.state, job_id)
+            except Exception:  # noqa: BLE001
+                log.exception("S3 upload guard failed for %s", job_id)

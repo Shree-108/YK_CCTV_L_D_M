@@ -8,7 +8,7 @@
 // Pages that do not pass ``importerQuery`` render exactly the button they always had.
 import { useState } from 'react'
 import { Download, type LucideIcon } from 'lucide-react'
-import { ApiError, downloadAuthed } from '../../api/client'
+import { ApiError, api, downloadAuthed } from '../../api/client'
 import { Button, Select } from '../../components/ui/primitives'
 import { lockedFor, useApp } from '../../stores/app'
 
@@ -35,7 +35,12 @@ export function ExportCsvButton({ table, query, label = 'Export CSV', icon = Dow
       onClick={async () => {
         setBusy(true)
         try {
-          if (importer) await downloadAuthed(`/api/results/checks.csv${importerQuery ? `?${importerQuery}` : ''}`, `ai_garbage_detection_${stamp()}.csv`)
+          if (importer) {
+            // the day file storage/daily_csv/YYYY-MM-DD.csv: the page's "From" date, else the newest day
+            const day = new URLSearchParams(importerQuery).get('date_from') || (await api<{ days: string[] }>('/api/results/daily')).days[0]
+            if (!day) throw new ApiError(404, 'No daily CSV exists yet: it is written when a scan finishes.')
+            await downloadAuthed(`/api/results/daily/${day}.csv`, `${day}.csv`)
+          }
           else await downloadAuthed(`/api/export/${table}.csv${query ? `?${query}` : ''}`, `${table}_${stamp()}.csv`)
         } catch (e) {
           const status = e instanceof ApiError ? e.status : -1
