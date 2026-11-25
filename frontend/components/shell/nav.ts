@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, Cctv, BarChart3, Boxes, Camera, ClipboardCheck, Database, FileBarChart, FileVideo,
-  FlaskConical, History, ImageIcon, LifeBuoy, LayoutGrid, ListChecks, Microscope, ScanSearch, Settings, Sparkles, Target, type LucideIcon,
+  FlaskConical, History, ImageIcon, LifeBuoy, LayoutGrid, ListChecks, Microscope, ScanSearch, Settings, Sparkles, Tags, Target, type LucideIcon,
 } from 'lucide-react'
 
 export type BadgeKey = 'online' | 'newAlerts' | 'cameras' | 'hardPending'
@@ -37,6 +37,7 @@ export const NAV: NavGroup[] = [
     { href: '/datasets', label: 'Dataset Lab', icon: Database, description: 'Dataset versions, stats and validation' },
     { href: '/ground-truth', label: 'Ground Truth', icon: ClipboardCheck, description: 'Review and edit annotations' },
     { href: '/hard-examples', label: 'Hard Examples', icon: ScanSearch, badge: 'hardPending', description: 'Mined failure cases for retraining' },
+    { href: '/labeling', label: 'Label mined detections', icon: Tags, description: 'Keyboard review of low-confidence mining (TP / FP types / missed boxes)' },
     { href: '/reports', label: 'Reports', icon: FileBarChart, description: 'Exports and evaluation reports' },
     { href: '/system', label: 'System Health', icon: Activity, description: 'Services and resources' },
     { href: '/live', label: 'Live cameras', icon: Camera, description: 'Live camera wall (requires real cameras)' },
