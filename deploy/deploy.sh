@@ -10,7 +10,7 @@
 #   - the release changes models/ (ALLOW_MODEL_CHANGE=1 accepts)
 #   - the production model file does not match its SHA-256 (models are never changed by this script)
 #   - an untracked file would be replaced, or runtime data (storage, .env, .env.local) is tracked by git
-#   - .env problems (missing, no ADMIN_API_TOKEN, CORS_ORIGINS without the dashboard, S3 on without keys)
+#   - .env problems (missing, LM_AUTH_MODE=off, S3 on without keys)
 #   - jobs are queued or running (FORCE_RESTART=1 accepts: they are interrupted)
 #   - a running app does not answer its health check (ALLOW_UNHEALTHY=1 accepts)
 #   - the backup cannot be made completely

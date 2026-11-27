@@ -13,6 +13,7 @@ import { useAuth } from '../../features/auth/AuthGate'
 import { useQuery } from '../../hooks/useQuery'
 import { ago, cx, className as cls, pct } from '../../lib/format'
 import { BRAND, MODULE_NAME } from '../../lib/module'
+import { asset } from '../../lib/paths'
 import { useApp, type UiRole } from '../../stores/app'
 import { Dot, IconButton, Kbd } from '../ui/primitives'
 import { Drawer, Toaster } from '../ui/overlay'
@@ -39,12 +40,12 @@ function Brand({ collapsed }: { collapsed?: boolean }) {
     <div className={cx('flex h-14 shrink-0 items-center border-b border-line', collapsed ? 'justify-center px-0' : 'px-5')}>
       {collapsed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src="/brand/yatrikart-mark.png" alt={`${BRAND} · ${MODULE_NAME}`} title={`${BRAND} · ${MODULE_NAME}`}
+        <img src={asset('/brand/yatrikart-mark.png')} alt={`${BRAND} · ${MODULE_NAME}`} title={`${BRAND} · ${MODULE_NAME}`}
           className="brand-logo h-6 w-auto select-none" draggable={false} />
       ) : (
         <div className="flex min-w-0 flex-col gap-1">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/yatrikart-wordmark.png" alt={BRAND} className="brand-logo h-[18px] w-auto self-start select-none" draggable={false} />
+          <img src={asset('/brand/yatrikart-wordmark.png')} alt={BRAND} className="brand-logo h-[18px] w-auto self-start select-none" draggable={false} />
           <div className="truncate text-[9.5px] font-semibold uppercase tracking-[0.26em] text-fg-3">{MODULE_NAME}</div>
         </div>
       )}

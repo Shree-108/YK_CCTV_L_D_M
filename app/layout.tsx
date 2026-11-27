@@ -9,7 +9,7 @@ import { BRAND, MODULE_NAME } from '@/frontend/lib/module'
 export const metadata: Metadata = {
   title: { default: `${BRAND} | ${MODULE_NAME}`, template: `%s · ${BRAND}` },
   description: 'CCTV litter detection: live monitoring, alert investigation, model evaluation and dataset management.',
-  icons: { icon: [{ url: '/icon.svg', type: 'image/svg+xml' }] },
+  icons: { icon: [{ url: '/ldm/icon.svg', type: 'image/svg+xml' }] },
 }
 
 export const viewport: Viewport = {

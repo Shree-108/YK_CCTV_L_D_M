@@ -5,41 +5,30 @@
 //   ('strict-dynamic' lets the nonced bootstrap load its own chunks). No third-party scripts, no eval in production.
 // - styles: the compiled Tailwind stylesheet (same origin) and nonced inline <style> from Next.js. React `style={...}`
 //   attributes cannot carry a nonce, so only *attributes* are allowed inline (style-src-attr), not <style> elements.
-// - API (separate origin, NEXT_PUBLIC_API_URL): fetch + the live event stream (connect-src), alert snapshots, camera
-//   frames and MJPEG streams (img-src), processed videos (media-src).
+// - API: same origin (/ldm-api behind Nginx), so 'self' covers fetch + the live event stream, alert snapshots,
+//   camera frames, MJPEG streams and processed videos.
 // - blob: object URLs for local previews and downloads; data: for live frames (base64 JPEG).
 // - nothing may frame the UI; no plugins; forms and <base> only to this origin.
 // Development only adds what Next.js dev needs: 'unsafe-eval' (React dev tooling), inline styles (hot reload) and
-// the hot-reload websocket. Not used: 'upgrade-insecure-requests' (the app is served over plain HTTP on this PC; add
-// it together with HTTPS).
+// the hot-reload websocket. Not used: 'upgrade-insecure-requests' (the app may be served over plain HTTP; add it
+// together with HTTPS).
 //
 // Plain TypeScript with no imports, so it can be unit-tested with Node's built-in test runner.
 
 export interface CspOptions {
   nonce: string
-  apiOrigin: string          // e.g. http://localhost:8000
   dev: boolean
 }
 
-/** Origin (scheme://host:port) of the API base URL; falls back to the documented default on a bad value. */
-export function apiOriginOf(apiBase: string | undefined): string {
-  try {
-    return new URL(apiBase || 'http://localhost:8000').origin
-  } catch {
-    return 'http://localhost:8000'
-  }
-}
-
-export function buildCsp({ nonce, apiOrigin, dev }: CspOptions): string {
-  const api = apiOrigin
+export function buildCsp({ nonce, dev }: CspOptions): string {
   const directives: Record<string, string[]> = {
     'default-src': ["'self'"],
     'script-src': ["'self'", `'nonce-${nonce}'`, "'strict-dynamic'", ...(dev ? ["'unsafe-eval'"] : [])],
     'style-src': dev ? ["'self'", "'unsafe-inline'"] : ["'self'", `'nonce-${nonce}'`],
     'style-src-attr': ["'unsafe-inline'"],
-    'img-src': ["'self'", 'data:', 'blob:', api],
-    'media-src': ["'self'", 'blob:', api],
-    'connect-src': ["'self'", api, ...(dev ? ['ws://localhost:*', 'ws://127.0.0.1:*'] : [])],
+    'img-src': ["'self'", 'data:', 'blob:'],
+    'media-src': ["'self'", 'blob:'],
+    'connect-src': ["'self'", ...(dev ? ['ws://localhost:*', 'ws://127.0.0.1:*'] : [])],
     'font-src': ["'self'", 'data:'],
     'object-src': ["'none'"],
     'base-uri': ["'self'"],

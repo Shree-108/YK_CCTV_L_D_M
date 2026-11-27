@@ -49,14 +49,12 @@ class AppConfig:
     cors_origins: list[str] = field(default_factory=lambda: [
         o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
         if o.strip()])
-    start_cameras: bool = field(default_factory=lambda: os.getenv("LM_START_CAMERAS", "true").lower() == "true")
-    # /docs, /redoc and /openapi.json are off unless explicitly enabled (and even then only reachable locally)
+    # Live RTSP cameras are opened at start-up only when explicitly enabled (a cloud server cannot reach the store NVR)
+    start_cameras: bool = field(default_factory=lambda: os.getenv("LM_START_CAMERAS", "false").lower() == "true")
+    # /docs, /redoc and /openapi.json are off unless explicitly enabled (keep them off on a public server)
     enable_api_docs: bool = field(default_factory=lambda: os.getenv("LM_ENABLE_API_DOCS", "false").lower() == "true")
-    # Client names treated as local by the local-only safeguard in addition to loopback IPs. Tests only
-    # (Starlette's TestClient reports "testclient"); deliberately not configurable from the environment.
-    local_extra_hosts: tuple[str, ...] = ()
-    # Login / sessions (API security plan Step 2). OFF by default; when on, routes need a role (Step 4, api/authz.py).
-    auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "off").strip().lower())
+    # Login / sessions. ON by default: every route needs a signed-in role (api/authz.py). "off" is for tests only.
+    auth_mode: str = field(default_factory=lambda: os.getenv("LM_AUTH_MODE", "on").strip().lower())
     auth_db_path: Path = field(default_factory=lambda: _env_path("LM_AUTH_DB_PATH", PROJECT_ROOT / "storage" / "auth.db"))
     auth_idle_minutes: int = field(default_factory=lambda: _env_int("LM_AUTH_IDLE_MINUTES", 30))
     auth_max_session_hours: int = field(default_factory=lambda: _env_int("LM_AUTH_MAX_SESSION_HOURS", 12))

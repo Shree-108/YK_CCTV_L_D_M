@@ -232,14 +232,14 @@ def test_removed_roi_routes_are_gone_for_every_caller(on):
         assert r.status_code in (404, 405), (method, url, r.status_code)
 
 
-# ---------------------------------------------------------------- login off (the default): unchanged behaviour
-def test_login_is_off_by_default(monkeypatch):
+# ---------------------------------------------------------------- login off (tests only): unchanged behaviour
+def test_login_is_on_by_default(monkeypatch):
     monkeypatch.delenv("LM_AUTH_MODE", raising=False)
-    assert AppConfig().auth_mode == "off"
+    assert AppConfig().auth_mode == "on"
 
 
 def test_login_off_keeps_pre_step4_behaviour(tmp_path):
-    cfg = _cfg(tmp_path, AppConfig().auth_mode)
+    cfg = _cfg(tmp_path, "off")
     with _client(cfg) as c:
         for (method, path), perm in MATRIX.items():
             if (method, path) in STREAMS:

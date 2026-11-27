@@ -11,8 +11,8 @@
   Safe to run twice: running LDM processes are detected and re-used, nothing is started twice.
   Stop with deploy\stop-ldm.ps1 (only processes started by this script are stopped).
 
-  Local only (127.0.0.1). -Lan (reachable from other PCs) is DISABLED until login protection is enabled
-  (API security plan Step 2-4): the API itself also rejects every non-local request until then.
+  Binds to 127.0.0.1; -Lan makes it reachable from other PCs. Sign in with an account created with
+  `python -m backend.auth add-user <name> --role admin` (login is on by default).
   CCTV cameras are NOT started (LM_START_CAMERAS=false) unless -EnableCameras is given.
   The model used is whatever is active in the app (production: v3_store_cctv); this script never changes it.
 
@@ -59,7 +59,7 @@ function Test-LdmBackend([int]$port) {
   return ($h -ne $null -and $h.PSObject.Properties.Name -contains 'uptime_sec' -and $h.PSObject.Properties.Name -contains 'model')
 }
 function Test-LdmFrontend([int]$port) {
-  try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -TimeoutSec 20 -UseBasicParsing; return ($r.StatusCode -eq 200 -and $r.Content -match 'Yatrikart') }
+  try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/ldm" -TimeoutSec 20 -UseBasicParsing; return ($r.StatusCode -eq 200 -and $r.Content -match 'Yatrikart') }
   catch { return $false }
 }
 function Save-Pid([string]$name, $proc, [int]$port, [string]$what) {
@@ -82,13 +82,6 @@ function Show-LogTail([string]$path, [int]$n = 30) {
 
 Write-Host "Yatrikart Litter Detection - demo startup" -ForegroundColor Cyan
 Write-Host "project: $Root"
-
-# The API has no user login yet: never offer it to the network (API security plan, Step 1).
-if ($Lan) {
-  Fail ("-Lan is disabled: the application has no login protection yet, so CCTV video, snapshots and data would be " +
-        "readable by anyone on the network. The API also rejects non-local requests until then. Run without -Lan and " +
-        "open the demo on this PC (http://localhost:$FrontendPort).")
-}
 
 # ------------------------------------------------------------------ 1. checks
 Step "1/5 Checking dependencies and configuration"
@@ -171,7 +164,7 @@ if ($Lan) {
   Warn "LAN mode: the demo will be reachable from other PCs on this network at http://${ip}:$FrontendPort (Windows may ask to allow it through the firewall). Do not use on public networks."
 }
 $ApiUrl = "http://${PublicHost}:$BackendPort"
-$UiUrl = "http://${PublicHost}:$FrontendPort"
+$UiUrl = "http://${PublicHost}:$FrontendPort/ldm"
 $origins = @("http://localhost:$FrontendPort", "http://127.0.0.1:$FrontendPort")
 if ($Lan) { $origins += "http://${PublicHost}:$FrontendPort" }
 
@@ -239,7 +232,7 @@ Ok "Backend allows requests from $($origins[0])"
 Step "4/5 Web UI on port $FrontendPort"
 $feLog = Join-Path $LogDir 'frontend.log'
 $feErr = Join-Path $LogDir 'frontend.err.log'
-$env:NEXT_PUBLIC_API_URL = $ApiUrl
+$env:LDM_API_ORIGIN = "http://127.0.0.1:$BackendPort"   # server-side /ldm-api rewrite (next.config.mjs)
 $env:NEXT_DIST_DIR = '.next-demo'
 $env:NEXT_TELEMETRY_DISABLED = '1'
 $fl = Get-Listener $FrontendPort

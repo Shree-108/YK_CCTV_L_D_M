@@ -20,8 +20,8 @@
 #  10. Makes pm2 start on boot (systemd service pm2-<user>, via `pm2 startup`; needs sudo).
 #
 # Never touches application data, never overwrites model weights, never opens ports, never configures Nginx.
-# Both apps listen on 127.0.0.1 only: the API is local-only by design (backend/api/local_only.py) until login
-# protection is enabled - use an SSH tunnel (deploy/SERVER_DEPLOY.md).
+# Both apps listen on 127.0.0.1 only; the public site is the Nginx reverse proxy in deploy/nginx/yk-cctv.conf
+# (http://<server>/ldm and /ldm-api), protected by the app's login (LM_AUTH_MODE=on).
 #
 # Usage (as the normal deploy user, NOT root - sudo is used only for apt and the boot service):
 #   git clone https://github.com/Shree-108/YK_CCTV_L_D_M.git ~/yk-cctv-ldm && cd ~/yk-cctv-ldm
@@ -276,17 +276,17 @@ pm2_boot_service
 say "Setup complete$([[ $registered == 1 ]] && echo ' (apps restarted with the rebuilt code)')"
 cat <<EOF
     App dir      : $APP_DIR  (branch $BRANCH @ $(git -C "$APP_DIR" rev-parse --short HEAD))
-    API          : $API_NAME  ->  http://127.0.0.1:$APP_PORT  (one process, loopback only)
-    Dashboard    : $WEB_NAME  ->  http://127.0.0.1:$WEB_PORT  (loopback only)
+    API          : $API_NAME  ->  http://127.0.0.1:$APP_PORT  (one process; public at /ldm-api via Nginx)
+    Dashboard    : $WEB_NAME  ->  http://127.0.0.1:$WEB_PORT/ldm  (public at /ldm via Nginx)
     Data         : $STORAGE_DIR  (database $DB_PATH)
     Runtimes     : $("$APP_DIR/.venv/bin/python" --version 2>&1), Node $(node --version), pm2 $(pm2 --version)
     Backups      : $BACKUP_DIR  (newest $BACKUP_KEEP kept)
     Boot service : pm2-$(id -un)  ($(systemctl is-enabled --quiet "pm2-$(id -un)" && echo enabled || echo 'not enabled - run pm2 startup'))
     Status/logs  : pm2 list   |   pm2 logs $API_NAME   |   pm2 logs $WEB_NAME
 
-Open the dashboard from your PC through an SSH tunnel (the API accepts local requests only):
-    ssh -i <key.pem> -L $WEB_PORT:127.0.0.1:$WEB_PORT -L $APP_PORT:127.0.0.1:$APP_PORT $(id -un)@<server-ip>
-    then browse to http://localhost:$WEB_PORT
+Public access: install the Nginx site once (deploy/nginx/yk-cctv.conf, steps in deploy/SERVER_DEPLOY.md), create the
+admin login once:  .venv/bin/python -m backend.auth add-user admin --role admin
+then browse to http://<server-ip>/ldm
 Releases: bash deploy/deploy.sh
 EOF
 say "pm2 apps"

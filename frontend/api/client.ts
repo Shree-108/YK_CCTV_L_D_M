@@ -4,7 +4,8 @@
 import { getAdminToken } from './adminToken'
 export { getAdminToken, setAdminToken } from './adminToken'
 
-export const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+// Same-origin API: Nginx routes /ldm-api/ to the FastAPI backend (next.config.mjs does the same for `next dev`).
+export const API_BASE = '/ldm-api'
 
 /** Fired on any 401 from the API; the login gate listens and re-checks the session. */
 export const AUTH_REQUIRED_EVENT = 'ldm-auth-required'

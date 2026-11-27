@@ -8,6 +8,7 @@ import { AlertTriangle, Info, LogIn } from 'lucide-react'
 import { login, type AuthMe } from '../../api/auth'
 import { Button, Field, Input } from '../../components/ui/primitives'
 import { BRAND, MODULE_NAME } from '../../lib/module'
+import { asset } from '../../lib/paths'
 
 export type LoginNotice = 'expired' | 'logged_out' | null
 
@@ -59,7 +60,7 @@ export function LoginScreen({ notice, onSignedIn, onModeOff }: {
       <div className="w-full max-w-[380px]">
         <div className="mb-6 flex flex-col items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/yatrikart-wordmark.png" alt={BRAND} className="brand-logo h-[22px] w-auto select-none" draggable={false} />
+          <img src={asset('/brand/yatrikart-wordmark.png')} alt={BRAND} className="brand-logo h-[22px] w-auto select-none" draggable={false} />
           <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-fg-3">{MODULE_NAME}</div>
         </div>
         <section aria-labelledby="signin-title" className="rounded-lg border border-line bg-panel p-6 shadow-[var(--shadow)]">

@@ -8,8 +8,10 @@ Double-click **`deploy\start-ldm.cmd`**, or in PowerShell from the project folde
 powershell -ExecutionPolicy Bypass -File deploy\start-ldm.ps1
 ```
 
-Wait for **`Open: http://localhost:3010`**. The first start builds the web UI, which takes 1–3 minutes. Later starts
-take seconds to about a minute (loading the AI model). Then open **http://localhost:3010** in Chrome or Edge.
+Wait for **`Open: http://localhost:3010/ldm`**. The first start builds the web UI, which takes 1–3 minutes. Later
+starts take seconds to about a minute (loading the AI model). Then open **http://localhost:3010/ldm** in Chrome or
+Edge and sign in. Create the admin account once (password asked at a hidden prompt):
+`py -m backend.auth add-user admin --role admin`.
 
 The sidebar must show a green **"Connected to backend"**. A red "Backend offline" badge means the UI cannot reach
 the API; hover over it for the exact reason, or see `TROUBLESHOOTING.md`.
@@ -48,10 +50,8 @@ Good demo inputs: short clips from `C:\SHREE\Screen Captures\cctv_litter_poc_3mi
   database). Use the Alerts page to mark test alerts resolved or false positive.
 - **No messages are sent.** No email, webhook or Telegram provider is configured.
 - **No CCTV cameras are connected.** `start-ldm` starts the API with `LM_START_CAMERAS=false`.
-- **Local only:** the demo is reachable only from this PC. Opening it from other PCs is **disabled** until login
-  protection is added (`-Lan` refuses to start, and the API rejects non-local requests).
-- **Admin functions** (cameras, settings, model activation, saving labels) need the admin token from `.env`, entered
-  in Settings → Security. Do not share the token.
+- **This PC by default:** `-Lan` makes the demo reachable from other PCs on the network; everyone signs in.
+- **Admin functions** (cameras, settings, model activation, saving labels) need an account with the admin role.
 - Typical speed on this laptop (CPU): about 0.13–0.14 s per frame for detection, and about 4 s to process a
   10-second clip.
 

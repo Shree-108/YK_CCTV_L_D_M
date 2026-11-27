@@ -248,9 +248,13 @@ def _client(cfg: AppConfig) -> TestClient:
     return TestClient(create_app(cfg), client=("127.0.0.1", 50000))
 
 
-def test_auth_off_is_default_and_inert(tmp_path):
-    cfg = _cfg(tmp_path, AppConfig().auth_mode)
-    assert cfg.auth_mode == "off"
+def test_login_is_on_by_default(monkeypatch):
+    monkeypatch.delenv("LM_AUTH_MODE", raising=False)
+    assert AppConfig().auth_mode == "on"
+
+
+def test_auth_off_is_inert(tmp_path):
+    cfg = _cfg(tmp_path, "off")
     with _client(cfg) as c:
         r = c.post("/api/auth/login", json={"username": "alice", "password": PASS})
         assert r.status_code == 404 and "disabled" in r.json()["detail"]
@@ -277,14 +281,14 @@ def test_login_cookie_me_logout_flow(tmp_path):
         sid = c.cookies.get("ldm_session")
         assert sid and sid not in r.text                         # session ID only in Set-Cookie
         low = cookie.lower()
-        assert "httponly" in low and "samesite=strict" in low and "path=/api" in low and "secure" not in low
+        assert "httponly" in low and "samesite=strict" in low and "path=/;" in low and "secure" not in low
         assert r.headers["cache-control"] == "no-store"
         me = c.get("/api/auth/me").json()
         assert (me["authenticated"], me["username"], me["role"], me["via"]) == (True, "alice", "operator", "session")
         assert "ldm_session" not in str(me) and sid not in str(me)
         assert c.post("/api/auth/logout").status_code == 204
         assert c.get("/api/auth/me").json()["authenticated"] is False
-        c.cookies.set("ldm_session", sid, path="/api")           # replaying the old cookie does not work
+        c.cookies.set("ldm_session", sid, path="/")           # replaying the old cookie does not work
         assert c.get("/api/auth/me").json()["authenticated"] is False
 
 
@@ -332,9 +336,34 @@ def test_auth_on_keeps_admin_token_and_protects_routes(tmp_path):
         assert c.get("/api/classes", headers={"Authorization": "Bearer test-admin-token"}).status_code == 200
 
 
-def test_auth_endpoints_respect_local_only(tmp_path):
-    with TestClient(create_app(_cfg(tmp_path, "on")), client=("192.168.1.20", 50000)) as c:
-        assert c.post("/api/auth/login", json={"username": "a", "password": PASS}).status_code == 403
+def test_remote_clients_use_login_not_an_ip_rule(tmp_path):
+    """The old local-only middleware is gone: a client on any address is judged by its login alone."""
+    with TestClient(create_app(_cfg(tmp_path, "on")), client=("203.0.113.7", 50000)) as c:
+        assert c.get("/api/health").status_code == 200                        # public health check
+        assert c.get("/api/classes").status_code == 401                       # unauthenticated -> 401
+        c.app.state.auth.add_user("admin", "admin", PASS)
+        c.app.state.auth.add_user("viewer", "viewer", OTHER)
+        r = c.post("/api/auth/login", json={"username": "viewer", "password": OTHER})
+        assert r.status_code == 200
+        assert c.get("/api/classes").status_code == 200                       # authenticated read
+        assert c.put("/api/settings", json={}).status_code == 403             # viewer -> admin-only route: 403
+        assert c.post("/api/auth/logout").status_code == 204
+        assert c.get("/api/classes").status_code == 401                       # logout ended the session
+        assert c.post("/api/auth/login", json={"username": "admin", "password": PASS}).status_code == 200
+        assert c.get("/api/auth/me").json()["role"] == "admin"
+
+
+def test_proxied_login_uses_forwarded_origin_and_client(tmp_path):
+    """Behind Nginx (/ldm-api/ -> :8000) the browser's Origin is the public host; the login and the rate limit work
+    on that host and on the forwarded client address."""
+    app = create_app(_cfg(tmp_path, "on"))
+    headers = {"Origin": "http://13.201.186.162", "Host": "13.201.186.162"}
+    with TestClient(app, base_url="http://13.201.186.162", client=("127.0.0.1", 50000)) as c:
+        c.app.state.auth.add_user("alice", "admin", PASS)
+        r = c.post("/api/auth/login", json={"username": "alice", "password": PASS}, headers=headers)
+        assert r.status_code == 200 and "path=/;" in r.headers["set-cookie"].lower()
+        evil = c.post("/api/auth/logout", headers={"Origin": "http://evil.example"})
+        assert evil.status_code == 403                                        # foreign page cannot sign out
 
 
 # ---------------------------------------------------------------- config + CLI

@@ -43,9 +43,10 @@ HOLDOUT_PREFIX = "20261110"
 
 def tiles_for(frame: np.ndarray, polygons: Optional[list[dict[str, Any]]], tile: int, overlap: float
               ) -> tuple[np.ndarray, int, int, list[tuple[int, int, int, int]]]:
-    """(crop, x0, y0, tiles in crop coordinates) - the inference geometry."""
-    if polygons:
-        mask = rs.polygons_mask(polygons, frame.shape)
+    """(crop, x0, y0, tiles in crop coordinates) - the inference geometry (``rs.roi_crop`` is the function
+    ``roi_detect`` itself calls). No polygons, or polygons covering no pixel -> the full frame."""
+    mask = rs.polygons_mask(polygons, frame.shape) if polygons else None
+    if mask is not None and mask.any():
         crop, x0, y0 = rs.roi_crop(frame, mask)
     else:
         crop, x0, y0 = frame, 0, 0

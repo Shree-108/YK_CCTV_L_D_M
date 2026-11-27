@@ -164,7 +164,7 @@ $node = (Get-Command node).Source
 $nextBin = Join-Path $Root 'node_modules\next\dist\bin\next'
 if (-not (Test-Path $nextBin)) { Fail "node_modules missing (npm install)" }
 $ApiUrl = "http://localhost:$BackendPort"
-$env:NEXT_PUBLIC_API_URL = $ApiUrl
+$env:LDM_API_ORIGIN = "http://127.0.0.1:$BackendPort"   # server-side /ldm-api rewrite (next.config.mjs)
 $env:NEXT_DIST_DIR = 'deploy/run/demo/next-ui'
 $env:NEXT_TELEMETRY_DISABLED = '1'
 $dist = Join-Path $Root 'deploy\run\demo\next-ui'
@@ -190,7 +190,7 @@ $fp = Start-Hidden $node @($nextBin, 'start', '-p', "$FrontendPort", '-H', '127.
 Save-Pid 'frontend' $fp $FrontendPort
 $deadline = (Get-Date).AddSeconds($FrontendTimeoutSec); $up = $false
 while ((Get-Date) -lt $deadline) {
-  try { $r = Invoke-WebRequest "http://127.0.0.1:$FrontendPort/" -UseBasicParsing -TimeoutSec 20; if ($r.StatusCode -eq 200) { $up = $true; break } } catch { }
+  try { $r = Invoke-WebRequest "http://127.0.0.1:$FrontendPort/ldm" -UseBasicParsing -TimeoutSec 20; if ($r.StatusCode -eq 200) { $up = $true; break } } catch { }
   if ($fp.HasExited) { Fail "demo UI stopped during start-up (see $LogDir\ui.err.log)" }
   Start-Sleep -Seconds 2
 }
@@ -200,7 +200,7 @@ Ok "demo UI answering"
 # ------------------------------------------------------------------ 6. summary
 Step "6/6 Ready - DEMO instance"
 Write-Host ""
-Write-Host "  Open:          http://localhost:$FrontendPort" -ForegroundColor Green
+Write-Host "  Open:          http://localhost:$FrontendPort/ldm" -ForegroundColor Green
 Write-Host "  Demo data:     $DemoRoot   (database, uploads, alerts, snapshots, job outputs)"
 Write-Host "  Admin token:   $tokFile   (demo-only; paste in Settings when an admin action is needed)"
 Write-Host "  Not isolated:  saving a CCTV camera password on the Live CCTV page writes the project .env - do not use it in the demo."

@@ -3,19 +3,19 @@
 Every route declares exactly one permission with ``dependencies=PUBLIC | VIEWER | OPERATOR | ADMIN | ADMIN_IF_LOGIN``
 (tests/test_authz.py fails when a route has none). Roles are ordered viewer < operator < admin.
 
-LM_AUTH_MODE=on
+LM_AUTH_MODE=on (the default)
   * The caller is identified by the session cookie, or by the existing ADMIN_API_TOKEN (which identifies an admin,
     exactly as before - it is not given anything it could not already do).
   * No identity -> 401. Identity with a lower role than the route needs -> 403.
   * Cookie-authenticated writes (POST/PUT/PATCH/DELETE) must come from an allowed origin (CORS_ORIGINS or the API's
-    own origin) when the browser sends an Origin header. SameSite=Strict does not stop other pages on localhost
-    (any port is "same-site"), so this check is what blocks cross-port form posts.
+    own origin, as seen through Nginx's Host / X-Forwarded-Proto) when the browser sends an Origin header.
+    SameSite=Strict does not separate ports or apps on the same host, so this check is what blocks cross-app posts.
   * Long-lived streams re-check the session every STREAM_RECHECK_SEC and end when it has expired or been revoked.
   * Idle timeout (approved policy, all roles): no request extends a session - not polling, health, /me, streams or
     any other API call. Only POST /api/auth/activity does, which the browser sends on real user input.
 
-LM_AUTH_MODE=off (the default) - unchanged from before Step 4
-  * VIEWER, OPERATOR and ADMIN_IF_LOGIN routes are open (the local-only safeguard still applies).
+LM_AUTH_MODE=off - automated tests only, never on a reachable server
+  * VIEWER, OPERATOR and ADMIN_IF_LOGIN routes are open.
   * ADMIN routes need ADMIN_API_TOKEN exactly as require_admin always did (503 when it is not set).
 
 Nothing here logs or returns a session ID, password or token.

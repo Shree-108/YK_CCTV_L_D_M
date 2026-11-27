@@ -3,7 +3,7 @@
 # common.sh - functions shared by deploy/server-setup.sh and deploy/deploy.sh (sourced, never run directly).
 # Ported from the uniform project's deploy scripts (YK_CCTV_U_D_M) and adapted to the litter app:
 # LM_* data paths, the litter_monitor / auth SQLite databases, the v3_store_cctv model checksum, the
-# monitored-region (ROI) segmenter and the API's local-only guard.
+# monitored-region (ROI) segmenter. Public access goes through Nginx (deploy/nginx/yk-cctv.conf) and the app's login.
 #
 # The calling script sets the configuration variables (APP_DIR, APP_PORT, WEB_PORT, ...) before sourcing.
 
@@ -203,19 +203,22 @@ build_frontend() {
 
 # ---------------------------------------------------------------------------------------- env checks
 check_env() {   # $1 = strict (stop on problems) | warn ; prints key NAMES and paths, never values
-  local mode="$1" url cors cams s3 problems=()
+  local mode="$1" auth cams s3 problems=()
   if [[ ! -f "$APP_DIR/.env" ]]; then
     problems+=("$APP_DIR/.env is missing. Create it from .env.example (see deploy/SERVER_DEPLOY.md, step 3).")
   else
-    [[ -n "$(env_value "$APP_DIR/.env" ADMIN_API_TOKEN)" ]] \
-      || problems+=("ADMIN_API_TOKEN is empty in .env: admin pages (cameras, settings, models) will refuse every change.")
     [[ "$(stat -c %a "$APP_DIR/.env")" =~ ^[67]00$ ]] || warn ".env is readable by other users: chmod 600 $APP_DIR/.env"
   fi
 
+  auth="$(app_env LM_AUTH_MODE)"
+  if [[ "${auth,,}" == "off" ]]; then
+    problems+=("LM_AUTH_MODE=off in .env: login would be disabled and the public API open. Set LM_AUTH_MODE=on.")
+  fi
+
   cams="$(app_env LM_START_CAMERAS)"
-  if [[ "${cams,,}" != "false" ]]; then
+  if [[ "${cams,,}" == "true" ]]; then
     warn "LM_START_CAMERAS is not 'false': the API will try to open the configured RTSP cameras. A cloud server
-  normally cannot reach the store NVR - set LM_START_CAMERAS=false in .env unless it is on the store network / VPN."
+  normally cannot reach the store NVR - set LM_START_CAMERAS=false unless the server is on the store network / VPN."
   fi
 
   s3="$(app_env LDM_S3_UPLOAD)"
@@ -224,25 +227,6 @@ check_env() {   # $1 = strict (stop on problems) | warn ; prints key NAMES and p
       problems+=("LDM_S3_UPLOAD=on but AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not set in .env.")
     fi
   fi
-
-  # The dashboard bakes NEXT_PUBLIC_API_URL in at BUILD time; unset = http://localhost:8000.
-  url="$(env_value "$APP_DIR/.env.local" NEXT_PUBLIC_API_URL)"
-  [[ -n "$url" ]] || url="$(env_value "$APP_DIR/.env" NEXT_PUBLIC_API_URL)"
-  if [[ -z "$url" ]]; then
-    [[ "$APP_PORT" == "8000" ]] || problems+=("NEXT_PUBLIC_API_URL is unset (dashboard calls http://localhost:8000) but APP_PORT=$APP_PORT.
-  Set NEXT_PUBLIC_API_URL=http://localhost:$APP_PORT in .env.local.")
-  elif [[ ! "$url" =~ ^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?/?$ ]]; then
-    warn "NEXT_PUBLIC_API_URL ($url) is not localhost. The API is LOCAL-ONLY (backend/api/local_only.py): it answers
-  403 to every request that does not come from this server itself, including requests forwarded by Nginx.
-  Browsers will show 'Backend offline' until login protection is enabled and that guard is lifted.
-  Supported today: SSH tunnel access (deploy/SERVER_DEPLOY.md, step 5)."
-  fi
-
-  cors="$(app_env CORS_ORIGINS)"
-  [[ -n "$cors" ]] || cors="http://localhost:3000,http://127.0.0.1:3000"     # backend/core/config.py default
-  [[ ",$cors," == *",http://localhost:$WEB_PORT,"* ]] \
-    || problems+=("CORS_ORIGINS does not contain http://localhost:$WEB_PORT - the browser will block every API call
-  from the dashboard. Add it to CORS_ORIGINS in .env.")
 
   if (( ${#problems[@]} )); then
     local p msg=""
@@ -298,8 +282,8 @@ check_running_health() {   # before changing anything: do the apps that pm2 runs
     bad+=("$API_NAME (http://127.0.0.1:$APP_PORT/api/health)")
   fi
   if [[ "$(pm2_status "$WEB_NAME")" == "online" ]] \
-     && ! curl -fsS -m 10 -o /dev/null "http://127.0.0.1:$WEB_PORT/"; then
-    bad+=("$WEB_NAME (http://127.0.0.1:$WEB_PORT/)")
+     && ! curl -fsS -m 10 -o /dev/null "http://127.0.0.1:$WEB_PORT/ldm"; then
+    bad+=("$WEB_NAME (http://127.0.0.1:$WEB_PORT/ldm)")
   fi
   if (( ${#bad[@]} )); then
     [[ "$ALLOW_UNHEALTHY" == "1" ]] || die "Running but not answering: ${bad[*]}. Look at 'pm2 logs' first;
@@ -363,8 +347,8 @@ wait_healthy() {   # the API loads YOLO + the ROI segmenter at start-up: allow u
   local i
   for i in $(seq 1 120); do
     if curl -fsS -o /dev/null "http://127.0.0.1:$APP_PORT/api/health" 2>/dev/null \
-       && curl -fsS -o /dev/null "http://127.0.0.1:$WEB_PORT/" 2>/dev/null; then
-      say "Healthy: API http://127.0.0.1:$APP_PORT/api/health and dashboard http://127.0.0.1:$WEB_PORT/"
+       && curl -fsS -o /dev/null "http://127.0.0.1:$WEB_PORT/ldm" 2>/dev/null; then
+      say "Healthy: API http://127.0.0.1:$APP_PORT/api/health and dashboard http://127.0.0.1:$WEB_PORT/ldm"
       curl -fsS -m 10 "http://127.0.0.1:$APP_PORT/api/health" | pyexec -c '
 import json, sys
 h = json.load(sys.stdin); m = h.get("model") or {}

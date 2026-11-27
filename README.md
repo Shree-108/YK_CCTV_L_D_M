@@ -17,7 +17,7 @@ with tracking, temporal confirmation, deduplicated alerts, snapshots, and a REST
 | M1 | Backend: YOLO engine, tiling, filters/ROI, tracking, temporal confirmation, alerts/dedup/snapshots, DB, cameras + reconnect, API, tests | **done** |
 | M2 | Frontend pages wired to the real API (dashboard, image/video analysis, alerts, history, analytics, reports/CSV, cameras, models, settings) | **done** (browser walkthrough 2026-11-13: 17/17 steps) |
 | M3 | Dataset tools, evaluation, threshold sweep, hard examples, model deploy/rollback | tools **done**; **no labelled real evaluation data yet** (0/215 workspace frames labelled) |
-| M4 | Login (optional, `LM_AUTH_MODE=on`), local-only guard, retention/cleanup, notifications hardening | login + local-only **done**; retention cleanup and video-job cancellation **not implemented** |
+| M4 | Login (`LM_AUTH_MODE=on`, default), retention/cleanup, notifications hardening | login **done**; retention cleanup and video-job cancellation **not implemented** |
 
 ## Quick start
 ```bash
@@ -45,19 +45,18 @@ current `v3_store_cctv` model and a synthetic fixture (`tests/fixtures/v3/`); up
 and 1 clean-frame test that waits for human-verified litter-free CCTV frames in `tests/fixtures/clean/` (kept out of Git).
 Frontend: `npm run test:frontend` (17 tests; 13 on 2026-11-13) and `node node_modules/typescript/bin/tsc --noEmit` (0 errors).
 
-**Local only.** Bind to `127.0.0.1` (as above or via the deploy scripts); do not use `--host 0.0.0.0`. The API rejects
-every request that does not come from this computer (`backend/api/local_only.py`). Optional login/sessions exist
-(`LM_AUTH_MODE=on`, off by default); with login off, viewer and operator actions are open to local users and admin
-actions need `ADMIN_API_TOKEN`.
+**Access and login.** The apps bind to `127.0.0.1`; on the server, Nginx publishes the dashboard at `/ldm` and the
+API at `/ldm-api` on one address (`deploy/nginx/yk-cctv.conf`, `deploy/SERVER_DEPLOY.md`). Login is on by default
+(`LM_AUTH_MODE=on`): unauthenticated API calls get 401, a role that is too low gets 403. Create the admin with
+`python -m backend.auth add-user admin --role admin`. `LM_AUTH_MODE=off` exists for automated tests only.
 
 **Report downloads are admin-only when login is on (by design).** With `LM_AUTH_MODE=on`, an operator can upload
 images and videos, start analyses and view all results in the browser, but downloading reports (the alerts/detections
 CSV export, the four-screenshot report CSVs, the monthly and all-time report CSVs, and any JSON report download) needs
-an admin account (`ADMIN_IF_LOGIN` in `backend/api/authz.py`). With login off, these downloads stay open to local
-users, as before.
+an admin account (`ADMIN_IF_LOGIN` in `backend/api/authz.py`).
 
 Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are **off by default**. For local development set
-`LM_ENABLE_API_DOCS=true` in `.env` and open http://localhost:8000/docs (still local-only).
+`LM_ENABLE_API_DOCS=true` in `.env`; keep them off on a public server.
 
 ## Architecture
 ```

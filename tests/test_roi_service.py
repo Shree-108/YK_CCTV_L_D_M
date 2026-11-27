@@ -181,6 +181,27 @@ def test_keep_rule_bottom_centre_and_half_overlap():
     assert kept == [inside, straddle_ok] and dropped == 2
 
 
+def test_roi_crop_is_the_detector_input_and_leaves_the_frame_alone():
+    rng = np.random.default_rng(7)
+    frame = rng.integers(0, 255, (H, W, 3), np.uint8)
+    mask = np.zeros((H, W), bool)
+    mask[200:350, 100:600] = True
+    mask[300:350, 100:150] = False                            # a hole: filled, not cropped away
+    before = frame.copy()
+    crop, x0, y0 = rs.roi_crop(frame, mask)
+    pad = int(0.01 * max(H, W))                               # the inline geometry roi_detect used before the helper
+    ref = frame[200 - pad:min(H, 350 + pad), 100 - pad:600 + pad].copy()
+    ref[~mask[200 - pad:min(H, 350 + pad), 100 - pad:600 + pad]] = np.median(frame[mask], axis=0).astype(np.uint8)
+    assert (x0, y0) == (100 - pad, 200 - pad) and np.array_equal(crop, ref)
+    assert np.array_equal(frame, before)                      # the caller's frame is never modified
+    eng = FakeEngine([])
+    ctx = rs.RoiContext("C", {"polygons": rs.mask_to_polygons(mask, settings().roi)}, "manual")
+    _, info, _ = rs.roi_detect(eng, frame, settings(gate_enabled=False), ctx)
+    c2, a, b = rs.roi_crop(frame, ctx.mask(frame.shape))
+    assert info.extra["roi_crop"] == [a, b, a + c2.shape[1], b + c2.shape[0]]
+    assert len(eng.seen) == 1 and np.array_equal(eng.seen[0], c2)   # the detector got exactly roi_crop's pixels
+
+
 def test_failure_uses_on_failure_with_warning_and_remark(tmp_path, fake_seg):
     img = np.full((H, W, 3), SHOP, np.uint8)                  # no ground at all
     svc = rs.RoiService(tmp_path / "camera_roi.json")

@@ -21,10 +21,18 @@ They create these pm2 apps:
 
 The ports differ from the uniform app (8010 / 3010), so both apps can run on the same server.
 
-> **Access: SSH tunnel only (for now).** The API is local-only by design (`backend/api/local_only.py`). It returns
-> 403 to every request that does not come from the server itself, including requests forwarded by Nginx. This
-> stays in place until login protection is enabled and that guard is lifted, which needs a code change. Until
-> then, open the dashboard through an SSH tunnel (step 5). Do **not** open ports 8000 or 3000 in the security group.
+Visitors open the app in an ordinary browser through **one Nginx reverse proxy** (`deploy/nginx/yk-cctv.conf`):
+
+| Public URL | Application |
+|---|---|
+| `http://<server-ip>/` | UDM frontend (`127.0.0.1:3010`) |
+| `http://<server-ip>/api/` | UDM backend (`127.0.0.1:8010`) |
+| `http://<server-ip>/ldm` | LDM frontend (`127.0.0.1:3000`) |
+| `http://<server-ip>/ldm-api/` | LDM backend (`127.0.0.1:8000`) |
+
+The four app ports stay private (bound to `127.0.0.1`, closed in the security group). The LDM API is protected by its
+own login (`LM_AUTH_MODE=on`, the default): without a session every protected route answers 401, a role that is too
+low gets 403.
 
 ## 1. Launch the instance
 
@@ -32,7 +40,8 @@ The ports differ from the uniform app (8010 / 3010), so both apps can run on the
 - **Size:** at least 2 vCPU and **8 GB RAM** (e.g. `t3.large`). YOLO, the SegFormer ROI model and `next build`
   together need more than 4 GB. Disk: **40 GB+** gp3.
 - **Region:** ap-south-1, the same region as the `yk-litter-detection-data` bucket.
-- **Security group:** SSH (22) from your office IP only. Nothing else is needed.
+- **Security group:** HTTP (80) from anywhere (443 too once HTTPS is added); SSH (22) from your office IP only.
+  Never open 3000, 3010, 8000 or 8010.
 
 ## 2. Get the code onto the server
 
@@ -60,8 +69,7 @@ chmod 600 .env
 Minimum for a server:
 
 ```ini
-ADMIN_API_TOKEN=<long random value>        # e.g. from: openssl rand -hex 32
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+LM_AUTH_MODE=on                            # login required (the default; deploy refuses "off")
 LM_START_CAMERAS=false                     # a cloud server cannot reach the store NVR
 # S3 upload of results (optional)
 LDM_S3_UPLOAD=on
@@ -71,8 +79,8 @@ AWS_REGION=ap-south-1
 LDM_S3_BUCKET=yk-litter-detection-data
 ```
 
-`NEXT_PUBLIC_API_URL` can stay unset. The dashboard then calls `http://localhost:8000`, which the SSH tunnel
-forwards to the server. `config/store_config.json` comes from git. Fill in the real store and cart values in git,
+No API URL or `CORS_ORIGINS` is needed: the dashboard calls `/ldm-api` on the same address it was loaded from.
+`config/store_config.json` comes from git. Fill in the real store and cart values in git,
 not on the server; otherwise S3 uploads go to `cart_unassigned/`.
 
 ## 4. Run the setup
@@ -99,22 +107,31 @@ To change a setting, put it in front of the command, e.g. `APP_PORT=8001 WEB_POR
 Other options include `INSTALL_PM2=0`, `PM2_STARTUP=0` and `TORCH_VARIANT=cuda` (GPU instance). The top of each
 script lists every option.
 
-## 5. Open the dashboard (SSH tunnel)
-
-On your PC:
+## 5. Nginx and the admin login (once)
 
 ```bash
-ssh -i <key.pem> -N -L 3000:127.0.0.1:3000 -L 8000:127.0.0.1:8000 ubuntu@<server-ip>
+sudo apt-get install -y nginx
+sudo cp deploy/nginx/yk-cctv.conf /etc/nginx/sites-available/yk-cctv
+sudo ln -sf /etc/nginx/sites-available/yk-cctv /etc/nginx/sites-enabled/yk-cctv
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+
+.venv/bin/python -m backend.auth add-user admin --role admin    # asks for the password (min. 12 characters)
 ```
 
-Leave that window open, then go to **http://localhost:3000**. The sidebar should show "Connected to backend".
-Both ports are needed: the browser loads the dashboard from 3000 and calls the API on 8000.
+If the UDM app already has an Nginx site for port 80, merge the two LDM `location` blocks (and the
+`limit_req_zone` line) into it instead of adding a second server.
 
-If something already uses port 3000 or 8000 on your PC, choose other local ports, for example
-`-L 3100:127.0.0.1:3000 -L 8100:127.0.0.1:8000`. In that case, before setup or deploy, add both of these to the
-server's config:
-- `http://localhost:3100` to `CORS_ORIGINS` in `.env`
-- `NEXT_PUBLIC_API_URL=http://localhost:8100` in `.env.local`
+Check from any PC:
+
+```bash
+curl -s http://<server-ip>/ldm-api/api/health                 # {"status": ...}  (public health check)
+curl -s -o /dev/null -w '%{http_code}\n' http://<server-ip>/ldm-api/api/summary   # 401 (not signed in)
+```
+
+Then open **http://<server-ip>/ldm** and sign in as `admin`. More accounts:
+`.venv/bin/python -m backend.auth add-user <name> --role viewer|operator|admin`; `... list`, `disable <name>`,
+`set-password <name>` (ends that user's sessions).
 
 ## 6. Every release
 
@@ -149,6 +166,6 @@ Restoring data is a manual step.
 
 ## What these scripts never do
 
-- They don't open ports, configure Nginx or HTTPS, or expose the app beyond `127.0.0.1`.
+- They don't open ports or configure Nginx / HTTPS (step 5 is done by hand once); the apps bind to `127.0.0.1`.
 - They don't replace, download or re-register the YOLO model. The only download is the ROI segmenter, when it is missing.
 - They don't delete application data. Pruning only removes old backups that these scripts created themselves.

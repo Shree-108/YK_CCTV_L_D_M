@@ -236,7 +236,7 @@ function General() {
         <dt className="text-fg-3">Active model</dt><dd className="font-mono text-fg">{h.data?.model?.version ?? '—'}</dd>
         <dt className="text-fg-3">Classes in model</dt><dd className="text-fg">{h.data?.model?.classes.length ?? '—'}</dd>
       </dl>
-      <p className="mt-3 text-[12px] text-fg-3">The frontend reads <span className="font-mono">NEXT_PUBLIC_API_URL</span> at build/start time.</p>
+      <p className="mt-3 text-[12px] text-fg-3">The API is served on this same address under <span className="font-mono">{API_BASE}</span> (Nginx reverse proxy).</p>
     </Section>
   )
 }

@@ -2,15 +2,11 @@
 // CSP header and attaches it to its own scripts; the root layout passes it to the inline theme script. Policy:
 // frontend/lib/csp.ts. Pages are therefore rendered per request (a nonce cannot be baked into a static page).
 import { NextResponse, type NextRequest } from 'next/server'
-import { apiOriginOf, buildCsp } from './frontend/lib/csp'
+import { buildCsp } from './frontend/lib/csp'
 
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
-  const csp = buildCsp({
-    nonce,
-    apiOrigin: apiOriginOf(process.env.NEXT_PUBLIC_API_URL),
-    dev: process.env.NODE_ENV === 'development',
-  })
+  const csp = buildCsp({ nonce, dev: process.env.NODE_ENV === 'development' })
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('x-nonce', nonce)
   requestHeaders.set('Content-Security-Policy', csp)

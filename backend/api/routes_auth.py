@@ -4,8 +4,9 @@ These four are public (POST /api/auth/activity added in Step 4); every other rou
 backend/api/authz.py. With LM_AUTH_MODE=off, login, logout and activity answer 404 "login is disabled" and /me reports auth_mode "off" (the existing ADMIN_API_TOKEN still identifies an
 admin, exactly as require_admin accepts it).
 
-* The session ID travels only in the Set-Cookie header (HttpOnly, SameSite=Strict, Path=/api; Secure over HTTPS or
-  when LM_AUTH_COOKIE_SECURE=true). It is never in a response body or a log.
+* The session ID travels only in the Set-Cookie header (HttpOnly, SameSite=Strict, Path=/; Secure over HTTPS or
+  when LM_AUTH_COOKIE_SECURE=true). It is never in a response body or a log. Path=/ because the browser reaches the
+  API under a proxy prefix (/ldm-api/api/...), which a Path=/api cookie would never be sent to.
 * The login body is parsed by hand: FastAPI's default 422 errors echo the submitted values, which would put a
   password into the response.
 * Every response here carries Cache-Control: no-store.
@@ -25,6 +26,7 @@ from backend.auth.service import AuthService, LoginFailed, LoginLocked
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 MAX_BODY = 4096
+COOKIE_PATH = "/"
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
@@ -89,7 +91,7 @@ async def login(request: Request) -> Response:
     max_age = int(svc.s.max_session_hours * 3600)
     resp = JSONResponse({"username": p.username, "role": p.role, "idle_expires_at": _iso(p.session_expires_at)},
                         headers=NO_STORE)
-    resp.set_cookie(COOKIE, session_id, max_age=max_age, path="/api", httponly=True, samesite="strict",
+    resp.set_cookie(COOKIE, session_id, max_age=max_age, path=COOKIE_PATH, httponly=True, samesite="strict",
                     secure=_secure(request))
     return resp
 
@@ -103,7 +105,7 @@ def logout(request: Request) -> Response:
         return _error(403, "Request origin not allowed")
     svc.logout(request.cookies.get(COOKIE))
     resp = Response(status_code=204, headers=NO_STORE)
-    resp.delete_cookie(COOKIE, path="/api", httponly=True, samesite="strict", secure=_secure(request))
+    resp.delete_cookie(COOKIE, path=COOKIE_PATH, httponly=True, samesite="strict", secure=_secure(request))
     return resp
 
 

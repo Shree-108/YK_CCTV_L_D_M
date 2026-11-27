@@ -1009,6 +1009,22 @@ def _crop_settings(settings: Any) -> Any:
     return settings.model_copy(update={"inference": inf})
 
 
+def roi_crop(frame: np.ndarray, mask: np.ndarray, pad_frac: float = 0.01) -> tuple[np.ndarray, int, int]:
+    """(crop, x0, y0): the exact pixels ``roi_detect`` hands the detector. The mask's bounding box + ``pad_frac`` of
+    the longer frame side, clipped to the frame; pixels outside the mask are filled with the region's median colour.
+    Pure geometry (no filtering, no gate) - shared with the offline tile export so training sees inference pixels.
+    ``mask`` must be a non-empty bool array of the frame's height x width."""
+    h, w = frame.shape[:2]
+    ys, xs = np.nonzero(mask)
+    pad = int(pad_frac * max(h, w))
+    x1, y1 = max(0, int(xs.min()) - pad), max(0, int(ys.min()) - pad)
+    x2, y2 = min(w, int(xs.max()) + 1 + pad), min(h, int(ys.max()) + 1 + pad)
+    crop = frame[y1:y2, x1:x2].copy()
+    cm = mask[y1:y2, x1:x2]
+    crop[~cm] = np.median(frame[mask], axis=0).astype(np.uint8)   # the shop interior never reaches the detector
+    return crop, x1, y1
+
+
 def roi_detect(engine: Any, frame: np.ndarray, settings: Any, ctx: Optional[RoiContext],
                force_tiling: Optional[bool] = None, people: Any = "auto") -> tuple[list, Any, Optional[dict[str, Any]]]:
     """Detect litter with the ROI rules. Returns (raw detections in full-frame pixels, InferenceInfo, roi block).
@@ -1028,7 +1044,6 @@ def roi_detect(engine: Any, frame: np.ndarray, settings: Any, ctx: Optional[RoiC
             return [], InferenceInfo(), block
         dets, info = engine.detect_many([frame], settings, force_tiling)[0]
         return dets, info, block
-    h, w = frame.shape[:2]
     mask = ctx.mask(frame.shape)
     if not mask.any():
         block.update(status="clean", detector_run=False, message=NO_LITTER_MSG)
@@ -1043,14 +1058,8 @@ def roi_detect(engine: Any, frame: np.ndarray, settings: Any, ctx: Optional[RoiC
         if gate.uniform:
             block.update(status="clean", detector_run=False, message=UNIFORM_MSG)
             return [], InferenceInfo(), block
-    ys, xs = np.nonzero(mask)
-    pad = int(0.01 * max(h, w))
-    x1, y1 = max(0, int(xs.min()) - pad), max(0, int(ys.min()) - pad)
-    x2, y2 = min(w, int(xs.max()) + 1 + pad), min(h, int(ys.max()) + 1 + pad)
-    crop = frame[y1:y2, x1:x2].copy()
-    cm = mask[y1:y2, x1:x2]
-    fill = np.median(frame[mask], axis=0).astype(np.uint8)
-    crop[~cm] = fill                                       # the shop interior never reaches the detector
+    crop, x1, y1 = roi_crop(frame, mask)
+    x2, y2 = x1 + crop.shape[1], y1 + crop.shape[0]
     s2 = _crop_settings(settings)
     tiled = force_tiling if force_tiling is not None else {"on": True, "off": False, "auto": None}[r.tiling]
     dets, info = engine.detect(crop, s2, tiled)
